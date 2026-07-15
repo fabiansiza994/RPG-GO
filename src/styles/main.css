@@ -1,0 +1,1511 @@
+:root{
+    --bg:#0b0e14;
+    --panel:#131826;
+    --panel2:#1a2133;
+    --line:#2a3348;
+    --accent:#5ee1c9;
+    --accent2:#c98bf0;
+    --danger:#ef5d6f;
+    --gold:#e8c468;
+    --text:#e7ecf5;
+    --dim:#8b93a7;
+    --hp:#e0596b;
+    --mp:#4aa3e0;
+    --xp:#5ee1c9;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif; overflow:hidden;}
+  #map{position:absolute; inset:0; z-index:1; touch-action:none;}
+
+  /* ---------- Viñeta + marco interior: acabado premium, puramente decorativo ----------
+     Ambos son overlays livianos (gradiente/box-shadow, sin filter ni backdrop-filter) y
+     pointer-events:none, así que nunca interfieren con el mapa ni los controles. */
+  #mapVignette{position:absolute; inset:0; z-index:2; pointer-events:none;
+    background:radial-gradient(ellipse at center, rgba(8,14,28,0) 55%, rgba(8,14,28,.12) 100%);}
+  #mapInnerFrame{position:absolute; inset:0; z-index:2; pointer-events:none;
+    box-shadow:inset 0 0 0 1px rgba(148,168,200,.16), inset 0 0 22px rgba(94,225,201,.045);}
+
+  /* ---------- Flash de encuentro sorpresa (Lobo Sombrío y similares) ---------- */
+  #wildEncounterFlash{position:absolute; inset:0; z-index:500; background:#fff; opacity:0; pointer-events:none;}
+  #wildEncounterFlash.flashing{animation:wildEncounterFlash .9s ease-in-out;}
+  @keyframes wildEncounterFlash{0%{opacity:0;} 15%{opacity:1;} 30%{opacity:0;} 45%{opacity:1;} 62%{opacity:0;} 100%{opacity:0;}}
+  /* Etiqueta de "Súper ataque cargado 1/2" que aparece sobre el enemigo mientras carga */
+  .charge-label{position:absolute; top:-14px; left:50%; transform:translateX(-50%); white-space:nowrap;
+    background:rgba(157,120,255,.92); color:#fff; font-size:10.5px; font-weight:800; padding:3px 8px;
+    border-radius:8px; box-shadow:0 4px 10px rgba(0,0,0,.35); animation:chargeLabelPulse 1s ease-in-out infinite;}
+  @keyframes chargeLabelPulse{0%,100%{transform:translateX(-50%) scale(1);} 50%{transform:translateX(-50%) scale(1.08);}}
+
+  #updateBanner{position:fixed; top:0; left:0; right:0; z-index:400; background:#1a2e1f; color:#eafff0;
+    border-bottom:2px solid #4fd67a; padding:10px 14px; font-size:13px; text-align:center;
+    display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap;
+    box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  #updateBanner button{background:#4fd67a; color:#062b12; border:none; border-radius:8px; padding:6px 12px;
+    font-weight:800; font-size:12.5px; cursor:pointer;}
+
+  /* ---------- Efectos de clima real sobre el mapa ---------- */
+  #weatherEffects{position:absolute; inset:0; z-index:3; pointer-events:none; overflow:hidden;}
+
+  /* Sol: un brillo cálido en una esquina, sutil */
+  #weatherSun{position:absolute; top:-10%; right:-10%; width:55%; height:40%;
+    background:radial-gradient(circle, rgba(255,224,140,.35) 0%, rgba(255,224,140,.12) 45%, transparent 75%);
+    display:none; animation:sunPulse 6s ease-in-out infinite;}
+  #weatherEffects.weather-clear #weatherSun{display:block;}
+  @keyframes sunPulse{0%,100%{opacity:.75;}50%{opacity:1;}}
+
+  /* Nubes: un par de manchas oscuras y difusas que se arrastran lentamente por el mapa */
+  #weatherClouds{position:absolute; inset:-20% -20% -20% -20%; display:none;}
+  #weatherEffects.weather-cloudy #weatherClouds{display:block;}
+  #weatherClouds::before, #weatherClouds::after{content:""; position:absolute; width:60%; height:45%;
+    background:radial-gradient(ellipse, rgba(20,24,32,.32) 0%, rgba(20,24,32,.14) 55%, transparent 80%);
+    border-radius:50%; filter:blur(6px);}
+  #weatherClouds::before{top:5%; left:-30%; animation:cloudDrift1 70s linear infinite;}
+  #weatherClouds::after{top:45%; left:-50%; animation:cloudDrift2 95s linear infinite;}
+  @keyframes cloudDrift1{0%{transform:translateX(0);} 100%{transform:translateX(220vw);}}
+  @keyframes cloudDrift2{0%{transform:translateX(0);} 100%{transform:translateX(240vw);}}
+
+  /* Lluvia: gotas finas cayendo en diagonal, generadas por JS como divs individuales */
+  #weatherRain{position:absolute; inset:0; display:none;}
+  #weatherEffects.weather-rain #weatherRain{display:block;}
+  /* Realza el agua durante la lluvia: no puede recolorear SOLO el agua (el mapa es una imagen ya
+     dibujada), pero este tinte azul con mezcla de color hace que las zonas azules destaquen más
+     sin aplanar el resto del mapa. */
+  #weatherWaterBoost{position:absolute; inset:0; display:none; pointer-events:none;
+    background:rgba(40,110,190,.16); mix-blend-mode:color;}
+  #weatherEffects.weather-rain #weatherWaterBoost{display:block;}
+  .raindrop{position:absolute; top:-5%; width:1.5px; height:16px; background:linear-gradient(rgba(180,210,255,0), rgba(180,210,255,.55));
+    animation:raindropFall linear infinite;}
+  @keyframes raindropFall{0%{transform:translate(0,0) rotate(12deg); opacity:0;} 10%{opacity:1;} 100%{transform:translate(18vh,120vh) rotate(12deg); opacity:.7;}}
+
+  /* Nieve: copos cayendo lento y a la deriva (generados por JS, igual que la lluvia) — solo
+     aparece cuando el clima real del lugar donde estás jugando reporta nieve. */
+  #weatherSnow{position:absolute; inset:0; display:none;}
+  #weatherEffects.weather-snow #weatherSnow{display:block;}
+  .snowflake{position:absolute; top:-5%; border-radius:50%; background:rgba(255,255,255,.85);
+    box-shadow:0 0 3px rgba(255,255,255,.6); animation:snowfall linear infinite;}
+  @keyframes snowfall{0%{transform:translate(0,0) rotate(0deg); opacity:0;} 8%{opacity:.9;}
+    100%{transform:translate(14vh,120vh) rotate(220deg); opacity:.7;}}
+
+  /* ============================================================
+     EFECTOS AMBIENTALES — no afectan el gameplay, solo hacen que el mapa nunca se vea estático:
+     niebla mágica tenue, polvo flotando, hojas cruzando la pantalla, y luciérnagas de noche.
+     Todo generado con CSS puro (sin JS), así que no cuesta nada de rendimiento.
+     ============================================================ */
+  #ambientEffects{position:absolute; inset:0; z-index:4; pointer-events:none; overflow:hidden;}
+
+  /* Niebla mágica: dos manchas de color muy tenues, difuminadas, que respiran y se desplazan
+     lentísimo — apenas perceptible, pero le da al mapa esa sensación de "mundo vivo". */
+  #ambientFog{position:absolute; inset:-25% -35%; opacity:.55; filter:blur(22px);
+    background:
+      radial-gradient(ellipse 55% 40% at 28% 35%, rgba(157,120,255,.10), transparent 70%),
+      radial-gradient(ellipse 50% 38% at 72% 62%, rgba(94,225,201,.08), transparent 70%);
+    animation:fogDrift 55s ease-in-out infinite alternate;}
+  @keyframes fogDrift{0%{transform:translate(0,0) scale(1);} 100%{transform:translate(4%,3%) scale(1.1);}}
+
+  /* Polvo: motitas subiendo muy lento, siempre presentes pero casi invisibles */
+  #ambientDust span{position:absolute; bottom:-5%; width:3px; height:3px; border-radius:50%;
+    background:rgba(255,255,255,.32); animation:dustRise linear infinite;}
+  #ambientDust span:nth-child(1){left:6%;  animation-duration:19s; animation-delay:0s;}
+  #ambientDust span:nth-child(2){left:16%; animation-duration:23s; animation-delay:2.5s;}
+  #ambientDust span:nth-child(3){left:27%; animation-duration:17s; animation-delay:5s;}
+  #ambientDust span:nth-child(4){left:38%; animation-duration:25s; animation-delay:1s;}
+  #ambientDust span:nth-child(5){left:49%; animation-duration:20s; animation-delay:4s;}
+  #ambientDust span:nth-child(6){left:60%; animation-duration:22s; animation-delay:6.5s;}
+  #ambientDust span:nth-child(7){left:71%; animation-duration:18s; animation-delay:3s;}
+  #ambientDust span:nth-child(8){left:82%; animation-duration:24s; animation-delay:7s;}
+  #ambientDust span:nth-child(9){left:91%; animation-duration:21s; animation-delay:1.8s;}
+  #ambientDust span:nth-child(10){left:5%; animation-duration:26s; animation-delay:9s;}
+  @keyframes dustRise{
+    0%{transform:translateY(0) translateX(0); opacity:0;}
+    12%{opacity:.5;}
+    50%{transform:translateY(-52vh) translateX(8px); opacity:.32;}
+    100%{transform:translateY(-104vh) translateX(-10px); opacity:0;}}
+
+  /* Hojas: cruzan la pantalla en diagonal, girando lentamente, de forma ocasional */
+  #ambientLeaves span{position:absolute; top:-8%; font-size:14px; opacity:0; animation:leafDrift linear infinite;}
+  #ambientLeaves span:nth-child(1){left:-6%;  animation-duration:27s; animation-delay:1s;}
+  #ambientLeaves span:nth-child(2){left:12%;  animation-duration:31s; animation-delay:9s;}
+  #ambientLeaves span:nth-child(3){left:-4%;  animation-duration:24s; animation-delay:17s;}
+  #ambientLeaves span:nth-child(4){left:30%;  animation-duration:29s; animation-delay:5s;}
+  #ambientLeaves span:nth-child(5){left:-8%;  animation-duration:33s; animation-delay:22s;}
+  #ambientLeaves span:nth-child(6){left:18%;  animation-duration:26s; animation-delay:13s;}
+  @keyframes leafDrift{
+    0%{transform:translate(0,0) rotate(0deg); opacity:0;}
+    8%{opacity:.5;}
+    90%{opacity:.45;}
+    100%{transform:translate(112vw, 90vh) rotate(430deg); opacity:0;}}
+
+  /* Luciérnagas: solo visibles de noche (se controla agregando/quitando la clase .ambient-night
+     desde JS, según la misma hora real que ya usa el resto del ciclo día/noche del juego) */
+  #ambientFireflies{opacity:0; transition:opacity 2.5s ease;}
+  #ambientEffects.ambient-night #ambientFireflies{opacity:1;}
+  #ambientFireflies span{position:absolute; width:4px; height:4px; border-radius:50%;
+    background:radial-gradient(circle, #f3ffb0, #b8e986);
+    box-shadow:0 0 7px 2px rgba(200,255,120,.75);
+    animation:fireflyFloat ease-in-out infinite, fireflyBlink ease-in-out infinite;}
+  #ambientFireflies span:nth-child(1){left:12%; top:58%; animation-duration:8s,2.2s; animation-delay:0s,.2s;}
+  #ambientFireflies span:nth-child(2){left:24%; top:74%; animation-duration:9.5s,2.6s; animation-delay:1s,.9s;}
+  #ambientFireflies span:nth-child(3){left:37%; top:44%; animation-duration:7.5s,2.1s; animation-delay:2s,.4s;}
+  #ambientFireflies span:nth-child(4){left:52%; top:66%; animation-duration:10s,2.8s; animation-delay:.5s,1.3s;}
+  #ambientFireflies span:nth-child(5){left:64%; top:38%; animation-duration:8.8s,2.4s; animation-delay:3s,.7s;}
+  #ambientFireflies span:nth-child(6){left:76%; top:70%; animation-duration:9s,2.5s; animation-delay:1.6s,0s;}
+  #ambientFireflies span:nth-child(7){left:85%; top:52%; animation-duration:7.8s,2.3s; animation-delay:2.4s,1.1s;}
+  #ambientFireflies span:nth-child(8){left:44%; top:80%; animation-duration:10.5s,2.7s; animation-delay:.2s,1.8s;}
+  @keyframes fireflyFloat{0%,100%{transform:translate(0,0);} 50%{transform:translate(18px,-24px);}}
+  @keyframes fireflyBlink{0%,100%{opacity:.12;} 50%{opacity:.9;}}
+
+  /* el filtro va SOLO en los mosaicos de fondo (imágenes), nunca en el contenedor interactivo completo —
+     aplicarlo ahí podía interferir con la detección de toques en algunos navegadores móviles. */
+  .map-tiles-bright{filter:saturate(0.85) brightness(0.88) contrast(1.05); transition:filter 3s ease;}
+  .map-tiles-bright.time-dusk{filter:saturate(0.75) brightness(0.72) sepia(0.35) hue-rotate(-8deg) contrast(1.08);}
+  .map-tiles-bright.time-night{filter:saturate(0.5) brightness(0.38) hue-rotate(8deg) contrast(1.15);}
+  .map-tiles-bright.time-morning{filter:saturate(0.8) brightness(0.92) sepia(0.4) hue-rotate(-4deg) contrast(1.04);}
+
+  /* ---------- Punto de luz de luna/sol anclado a un lugar REAL del mapa (no a la pantalla) ---------- */
+  #mapLightBeam{position:absolute; inset:0; z-index:2; pointer-events:none; opacity:0; transition:opacity 3s ease;
+    overflow:hidden; --spot-scale:1;}
+  #mapLightBeam.beam-moon, #mapLightBeam.beam-sun{opacity:1;}
+  .beam-spot{position:absolute; width:300px; height:300px; border-radius:50%;
+    transform:translate(-50%,-50%) scale(var(--spot-scale));
+    filter:blur(8px); transition:transform 1.2s ease, left .05s linear, top .05s linear;}
+  #mapLightBeam.beam-moon .beam-spot{background:radial-gradient(circle, rgba(200,222,255,.4), rgba(180,210,255,.14) 55%, transparent 75%);}
+  #mapLightBeam.beam-sun .beam-spot{background:radial-gradient(circle, rgba(255,232,185,.4), rgba(255,224,160,.14) 55%, transparent 75%);}
+  /* Sombra de nubes: pasa lentamente sobre el punto de luz, tapándolo y destapándolo — cuando
+     "se cierran" las nubes, oscurece esa zona; cuando se abren, vuelve a verse la luz de lleno.
+     Se ancla a la MISMA coordenada real que el punto de luz (JS actualiza left/top de ambos). */
+  .beam-cloud{position:absolute; width:460px; height:460px; border-radius:50%; margin-left:-230px; margin-top:-230px;
+    background:radial-gradient(circle, rgba(6,8,14,.6), transparent 70%);
+    mix-blend-mode:multiply; animation:cloudDrift 34s ease-in-out infinite;}
+  @keyframes cloudDrift{
+    0%{   transform:translate(-70%,-160%); opacity:.12;}
+    28%{  transform:translate(15%,-15%);   opacity:.6;}
+    52%{  transform:translate(65%,25%);    opacity:.15;}
+    78%{  transform:translate(-25%,55%);   opacity:.5;}
+    100%{ transform:translate(-70%,-160%); opacity:.12;}
+  }
+  /* Con la cámara inclinada, el punto de luz se ve más grande y notorio (le da profundidad
+     a la escena, como si realmente estuviera cayendo sobre el terreno inclinado). */
+  #mapLightBeam.pitched{--spot-scale:1.5;}
+  .eyebrow{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);}
+
+  /* ---------- HUD ---------- */
+  #hud{position:absolute; top:0; left:0; right:0; z-index:20; padding:10px 12px;
+    display:flex; flex-direction:column; gap:6px; pointer-events:none;}
+  #hud > *{pointer-events:auto;}
+  .hud-card{
+    border:1px solid transparent; border-radius:14px; padding:9px 12px;
+    background-image:
+      linear-gradient(180deg, rgba(19,24,38,.94), rgba(19,24,38,.86)),
+      linear-gradient(135deg, rgba(232,196,104,.5), rgba(94,225,201,.22) 45%, rgba(255,255,255,.1) 70%, rgba(232,196,104,.45));
+    background-origin:border-box; background-clip:padding-box, border-box;
+    backdrop-filter:blur(6px); box-shadow:0 8px 20px rgba(0,0,0,.22);
+    position:relative; overflow:hidden;}
+  /* Brillo superior suave (efecto cristal) */
+  .hud-card::before{content:""; position:absolute; top:0; left:0; right:0; height:42%; z-index:0; pointer-events:none;
+    background:linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,0)); border-radius:14px 14px 0 0;}
+  /* Textura metálica casi invisible (líneas diagonales finísimas) */
+  .hud-card::after{content:""; position:absolute; inset:0; z-index:0; pointer-events:none; opacity:.045;
+    background-image:repeating-linear-gradient(115deg, #fff 0px, #fff 1px, transparent 1px, transparent 8px);}
+  .hud-card > *{position:relative; z-index:1;}
+  .player-row{display:flex; align-items:center; gap:10px;}
+  .p-icon{width:38px;height:38px;border-radius:10px;background:var(--panel2);
+    display:flex;align-items:center;justify-content:center;font-size:20px;border:1px solid var(--line);flex-shrink:0;}
+  .p-info{flex:1; min-width:0;}
+  .p-name-row{display:flex; justify-content:space-between; align-items:baseline; gap:6px;}
+  .p-name{font-weight:700; font-size:14px;}
+  .p-lvl{font-size:11px; color:var(--accent); font-weight:700;}
+  .bar-wrap{height:7px; border-radius:5px; background:#0c0f18; overflow:hidden; margin-top:3px; border:1px solid var(--line); position:relative;}
+  .bar-wrap::after{content:""; position:absolute; inset:0; z-index:2; pointer-events:none;
+    background-image:repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), rgba(0,0,0,.4) 10%);}
+  .bar-fill{height:100%; border-radius:5px; transition:width .9s ease;}
+  .bar-hp{background:linear-gradient(90deg,#ff7a86,var(--hp));}
+  .bar-mp{background:linear-gradient(90deg,#7fc6f5,var(--mp));}
+  .bar-xp{background:linear-gradient(90deg,#8ff2df,var(--xp));}
+  /* Tramo extra de XP pagado con oro — se superpone a la barra normal (posicionada aparte con
+     "left"), en un color bien distinto (dorado) para que se note claramente que ese pedazo vino
+     de pagar, no del combate en sí. */
+  .bar-xp-bonus{position:absolute; top:0; height:100%; background:linear-gradient(90deg,#ffe9a8,var(--gold,#e8c468));
+    box-shadow:0 0 8px rgba(232,196,104,.7); transition:width 1.1s cubic-bezier(.25,.9,.4,1), left 1.1s cubic-bezier(.25,.9,.4,1);}
+  .mini-stats{display:flex; gap:10px; font-size:10px; color:var(--dim); margin-top:4px;
+    padding-top:4px; border-top:1px solid rgba(255,255,255,.06);}
+  .mini-stats b{color:var(--text);}
+  .gold{color:var(--gold); font-weight:700;}
+
+  /* ============================================================
+     HUD REDISEÑADO — más compacto para la pantalla de exploración.
+     Los ATK/AT.MÁG/DEF/VEL se quitaron de aquí (siguen en tu Perfil);
+     el resto de elementos e IDs se mantienen para no tocar refreshHud().
+     ============================================================ */
+  .hud-card-v2{padding:7px 10px;} /* ~25% menos alto que antes */
+  .hud-res-inline{display:flex; gap:8px; font-size:11px; margin-left:auto;}
+  .bar-wrap-v2{height:6px; margin-top:2px;}
+  .bar-wrap-v2 .bar-fill{transition:width .6s cubic-bezier(.25,.9,.4,1), box-shadow .3s ease;}
+  .gps-status-v2{font-size:9.5px; color:var(--dim); margin-top:3px; display:flex; align-items:center; gap:4px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+
+  .hud-context-bar{
+    border:1px solid transparent; border-radius:10px;
+    background-image:
+      linear-gradient(180deg, rgba(10,14,22,.72), rgba(10,14,22,.72)),
+      linear-gradient(135deg, rgba(232,196,104,.3), rgba(94,225,201,.15) 50%, rgba(255,255,255,.06) 80%);
+    background-origin:border-box; background-clip:padding-box, border-box;
+    padding:5px 10px; display:flex; gap:10px; font-size:10.5px; color:var(--text); backdrop-filter:blur(4px);
+    align-items:center; overflow:hidden; white-space:nowrap; position:relative;}
+  .hud-context-bar::before{content:""; position:absolute; top:0; left:0; right:0; height:55%; z-index:0; pointer-events:none;
+    background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0)); border-radius:10px 10px 0 0;}
+  .hud-context-bar span{position:relative; z-index:1;}
+  .hud-context-bar span{display:flex; align-items:center; gap:3px;}
+  .hud-context-bar span:not(:last-child)::after{content:"·"; margin-left:10px; color:var(--dim);}
+
+
+  #topbtns{display:flex; flex-direction:column; align-items:center; gap:8px;}
+  .iconbtn{background:var(--panel); border:1px solid var(--line); color:var(--text);
+    width:40px;height:40px;border-radius:12px; font-size:17px; display:flex;align-items:center;justify-content:center;
+    box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  .iconbtn.active{border-color:var(--accent); color:var(--accent);}
+
+  /* ---------- GPS banner / status ---------- */
+  #gpsBanner{background:linear-gradient(180deg, rgba(19,24,38,.96), rgba(19,24,38,.9));
+    border:1px solid var(--accent); border-radius:14px; padding:10px 12px; display:flex; align-items:center; gap:10px;}
+  #gpsBanner .gtxt{flex:1; font-size:12px; line-height:1.35; color:var(--text);}
+  #gpsBanner .gtxt b{color:var(--accent);}
+  #gpsBanner button{background:var(--accent); color:#04231d; border:none; border-radius:10px;
+    padding:8px 12px; font-weight:800; font-size:12px; white-space:nowrap;}
+  .gps-status{font-size:9.5px; color:var(--dim); margin-top:2px; display:flex; align-items:center; gap:4px;}
+  .gps-dot{width:6px;height:6px;border-radius:50%; background:var(--dim); flex-shrink:0;}
+  .gps-dot.on{background:var(--accent); box-shadow:0 0 6px var(--accent);}
+  .gps-dot.searching{background:var(--gold); animation:blink 1s infinite;}
+  @keyframes blink{50%{opacity:.3;}}
+
+  /* ---------- Continuar partida ---------- */
+  .continue-card{background:var(--panel2); border:1px solid var(--accent); border-radius:16px; padding:14px; margin-bottom:14px;}
+  .continue-card .cc-row{display:flex; align-items:center; gap:10px;}
+  .continue-card button.btn-delete-char{margin-left:auto; width:34px; height:34px; margin-top:0;
+    background:transparent; border:1px solid var(--line); border-radius:8px; font-size:15px; color:var(--dim); flex-shrink:0;}
+  .btn-delete-char:active{background:rgba(239,93,111,.15); border-color:var(--danger); color:var(--danger);}
+  .continue-card .cc-emoji{font-size:30px;}
+  .continue-card .cc-info{flex:1;}
+  .continue-card .cc-name{font-weight:800; font-size:14px;}
+  .continue-card .cc-meta{font-size:11px; color:var(--dim); margin-top:2px;}
+  .continue-card button{width:100%; margin-top:10px; background:var(--accent); color:#04231d; border:none;
+    border-radius:12px; padding:10px; font-weight:800; font-size:13px;}
+  .newgame-link{display:block; text-align:center; font-size:11.5px; color:var(--dim); margin-top:8px; text-decoration:underline;}
+
+  /* ---------- Bottom controls ---------- */
+  #bottombar{position:absolute; bottom:16px; left:12px; right:82px; z-index:20;
+    display:flex; flex-wrap:wrap; justify-content:flex-start; gap:8px; align-items:flex-end; pointer-events:none;}
+  #bottombar > *{pointer-events:auto;}
+  /* ---------- Modo Constructor (solo Hacker994) ---------- */
+  #builderModeBar{position:absolute; left:12px; top:20px; z-index:27; display:flex; align-items:flex-start; gap:8px;}
+  /* El botón que activa el Modo Constructor ahora se agrega dinámicamente en la fila secundaria
+     del menú ☰ (ver setupBuilderModeUI en main.js) — este toque dorado lo distingue del resto. */
+  .wheel-secondary-btn#btnBuilderToggle{border-color:var(--gold, #e8c468);}
+  .wheel-secondary-btn#btnBuilderToggle.active{background:var(--gold, #e8c468); color:#1a1206;}
+  #builderToolbar{display:flex; align-items:center; gap:6px; background:rgba(10,12,18,.9); border:1px solid var(--gold, #e8c468);
+    border-radius:12px; padding:6px 8px;}
+  #builderToolbar button{background:var(--panel2); border:1px solid var(--line); border-radius:8px; color:var(--text);
+    font-size:13px; padding:5px 8px;}
+  #builderHint{font-size:9.5px; color:var(--dim); max-width:110px; line-height:1.2;}
+
+  /* ---------- Lista flotante de jefes con tiempo límite cerca ---------- */
+  #nearbyBossPanel{position:absolute; right:8px; top:120px; z-index:24; display:flex; flex-direction:column;
+    gap:6px; max-width:150px; pointer-events:none;}
+  .nearby-boss-chip{pointer-events:auto; cursor:pointer; background:rgba(20,10,10,.85); border:1px solid var(--gold, #e8c468);
+    border-radius:10px; padding:6px 8px; font-size:10.5px; color:var(--text); box-shadow:0 8px 20px rgba(0,0,0,.22);
+    display:flex; flex-direction:column; gap:1px;}
+  .nearby-boss-chip .nbc-name{font-weight:800; color:var(--gold, #e8c468); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .nearby-boss-chip .nbc-meta{font-size:9.5px; color:var(--dim); display:flex; justify-content:space-between; gap:6px;}
+
+  .fab{background:var(--accent); color:#04231d; border:none; border-radius:16px;
+    padding:12px 16px; font-weight:800; font-size:13px; box-shadow:0 8px 20px rgba(94,225,201,.25);
+    transition:transform .16s cubic-bezier(.3,.9,.4,1.4);}
+  .fab:active{transform:scale(.9);}
+  .toast{position:absolute; bottom:88px; left:50%; transform:translateX(-50%); z-index:200;
+    background:var(--panel2); border:1px solid var(--line); padding:9px 16px; border-radius:20px;
+    font-size:12.5px; color:var(--text); opacity:0; transition:opacity .3s, transform .3s; pointer-events:none;
+    white-space:nowrap; max-width:88vw; overflow:hidden; text-overflow:ellipsis;}
+  .toast.show{opacity:1;}
+
+  /* ---------- Popup flotante al usar poción/maná desde el inventario (fuera de combate) ---------- */
+  .heal-feedback-popup{position:absolute; top:14%; left:50%; transform:translate(-50%,-14px) scale(.9);
+    z-index:210; display:flex; align-items:center; gap:10px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:16px; padding:10px 16px; box-shadow:0 10px 26px rgba(0,0,0,.4);
+    opacity:0; pointer-events:none; transition:opacity .25s, transform .25s;}
+  .heal-feedback-popup.show{opacity:1; transform:translate(-50%,0) scale(1);}
+  .heal-feedback-popup .hfp-icon{font-size:26px; line-height:1;}
+  .heal-feedback-popup .hfp-label{font-size:11px; color:var(--dim); font-weight:700; text-transform:uppercase; letter-spacing:.03em;}
+  .heal-feedback-popup .hfp-bar-track{width:150px; height:8px; border-radius:5px; background:rgba(255,255,255,.1); overflow:hidden; margin:4px 0;}
+  .heal-feedback-popup .hfp-bar-fill{height:100%; width:0%; border-radius:5px; background:#e0596b;}
+  .heal-feedback-popup.hfp-mp .hfp-bar-fill{background:#4aa3e0;}
+  .heal-feedback-popup .hfp-numbers{font-size:12.5px; color:var(--text); font-weight:600;}
+  .heal-feedback-popup .hfp-gain{color:var(--accent); font-weight:800;}
+
+  /* ---------- Diálogo del Lobo Sombrío — mucho más visible que la narración normal de batalla ---------- */
+  .shadow-wolf-dialogue{position:absolute; top:22%; left:50%; transform:translate(-50%,-16px) scale(.85);
+    z-index:215; display:flex; align-items:center; gap:10px; max-width:86vw;
+    background:linear-gradient(135deg, rgba(40,20,70,.95), rgba(15,10,35,.95));
+    border:1px solid rgba(180,140,255,.55); border-radius:18px; padding:12px 20px;
+    box-shadow:0 0 24px rgba(140,90,255,.45), 0 10px 26px rgba(0,0,0,.5);
+    opacity:0; pointer-events:none; transition:opacity .3s, transform .3s;}
+  .shadow-wolf-dialogue.show{opacity:1; transform:translate(-50%,0) scale(1); animation:shadowWolfDialoguePulse 2.6s ease;}
+  .shadow-wolf-dialogue .swd-icon{font-size:24px; filter:drop-shadow(0 0 8px rgba(180,140,255,.8));}
+  .shadow-wolf-dialogue .swd-text{color:#e8dcff; font-weight:700; font-size:14px; font-style:italic; line-height:1.3;}
+  @keyframes shadowWolfDialoguePulse{
+    0%{box-shadow:0 0 24px rgba(140,90,255,.45), 0 10px 26px rgba(0,0,0,.5);}
+    50%{box-shadow:0 0 36px rgba(140,90,255,.75), 0 10px 26px rgba(0,0,0,.5);}
+    100%{box-shadow:0 0 24px rgba(140,90,255,.45), 0 10px 26px rgba(0,0,0,.5);}
+  }
+  /* Variante "aviso de carga" — mismo popup, tema ámbar/eléctrico y pulso más urgente/rápido en vez
+     del morado tranquilo de un diálogo hablado. */
+  .shadow-wolf-dialogue.charge-warning{
+    background:linear-gradient(135deg, rgba(80,50,10,.95), rgba(40,20,5,.95));
+    border-color:rgba(255,190,80,.65);}
+  .shadow-wolf-dialogue.charge-warning .swd-text{color:#ffe8b8; font-style:normal;}
+  .shadow-wolf-dialogue.charge-warning .swd-icon{filter:drop-shadow(0 0 8px rgba(255,190,80,.9));}
+  .shadow-wolf-dialogue.charge-warning.show{animation:shadowWolfChargePulse 1s ease infinite;}
+  @keyframes shadowWolfChargePulse{
+    0%{box-shadow:0 0 22px rgba(255,190,80,.5), 0 10px 26px rgba(0,0,0,.5);}
+    50%{box-shadow:0 0 42px rgba(255,190,80,.9), 0 10px 26px rgba(0,0,0,.5);}
+    100%{box-shadow:0 0 22px rgba(255,190,80,.5), 0 10px 26px rgba(0,0,0,.5);}
+  }
+  .shadow-wolf-charging-badge{display:inline-block; color:#ffc85e; font-weight:800; font-size:11px;
+    animation:shadowWolfBadgeBlink 1s ease infinite;}
+  @keyframes shadowWolfBadgeBlink{0%{opacity:1;} 50%{opacity:.45;} 100%{opacity:1;}}
+
+  #slideNoticeWrap{position:absolute; left:0; right:0; bottom:88px; z-index:200; display:flex;
+    justify-content:center; pointer-events:none; overflow:hidden;}
+  #slideNoticeWrap .snc{background:linear-gradient(90deg, var(--panel2), var(--panel)); border:2px solid var(--gold);
+    border-radius:10px; padding:9px 18px; font-weight:700; font-size:12.5px; color:var(--text);
+    box-shadow:0 8px 20px rgba(0,0,0,.22); white-space:nowrap; transform:translateX(-130vw); opacity:0; position:absolute;}
+  #slideNoticeWrap .snc.show{animation:slideAcross 3.6s ease forwards;}
+  @keyframes slideAcross{
+    0%{transform:translateX(-130vw); opacity:0;}
+    12%{transform:translateX(0); opacity:1;}
+    80%{transform:translateX(0); opacity:1;}
+    100%{transform:translateX(130vw); opacity:0;}
+  }
+
+  /* ---------- Menú de opciones (FAB inferior derecho) ---------- */
+  /* ---------- Botones flotantes fijos (Tienda, Inventario, Coliseo) al lado izquierdo ---------- */
+  #floatingSideBtns{position:absolute; left:12px; top:45%; transform:translateY(-50%); z-index:26;
+    display:flex; flex-direction:column; gap:12px;}
+  .floating-side-btn{width:50px; height:50px; border-radius:50%; position:relative;
+    color:var(--text); font-size:22px; display:flex; align-items:center; justify-content:center;
+    border:1px solid transparent;
+    background-image:
+      linear-gradient(160deg, rgba(26,33,51,.55), rgba(19,24,38,.42)),
+      linear-gradient(160deg, rgba(255,255,255,.28), rgba(94,225,201,.12) 55%, rgba(255,255,255,.05));
+    background-origin:border-box; background-clip:padding-box, border-box;
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    box-shadow:0 8px 20px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.12);
+    transition:transform .16s cubic-bezier(.3,.9,.4,1.4), box-shadow .16s ease;}
+  .floating-side-btn:active{transform:scale(.88);
+    box-shadow:0 4px 10px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.1);}
+  /* Punto rojo animado — se muestra agregando la clase .show al span.notif-dot dentro del botón */
+  .notif-dot{position:absolute; top:2px; right:2px; width:11px; height:11px; border-radius:50%;
+    background:radial-gradient(circle, #ff8a7a, var(--danger)); border:1.5px solid var(--bg);
+    opacity:0; transform:scale(.5); transition:opacity .2s ease, transform .2s ease; pointer-events:none;}
+  .notif-dot.show{opacity:1; transform:scale(1); animation:notifDotPulse 1.4s ease-in-out infinite;}
+  @keyframes notifDotPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,93,111,.55);} 50%{box-shadow:0 0 0 5px rgba(239,93,111,0);}}
+
+  /* ============================================================
+     MENÚ PRINCIPAL — rueda circular de 8 secciones (Amigos/Grupo/Atributos/Bases/Constructor/
+     Mercado/Mascotas/Regiones), con Equipo y Menú principal como fila secundaria debajo. Reutiliza
+     la paleta ya existente del juego (--bg/--panel/--gold/--accent) para quedar cohesivo con el
+     resto de la interfaz.
+     ============================================================ */
+  #fabMenuBackdrop{position:absolute; inset:0; z-index:25; background:rgba(0,0,0,.6);
+    opacity:0; pointer-events:none; transition:opacity .25s ease;}
+  #fabMenuBackdrop.show{opacity:1; pointer-events:auto;}
+
+  #fabMenu{position:absolute; inset:0; z-index:26; pointer-events:none;}
+  .wheel-overlay-content{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:14px; opacity:0; pointer-events:none; transform:scale(.92);
+    transition:opacity .28s ease, transform .3s cubic-bezier(.2,.9,.3,1.2);}
+  #fabMenu.open .wheel-overlay-content{opacity:1; pointer-events:auto; transform:scale(1);}
+
+  .wheel-menu{position:relative; width:min(88vw,380px); height:min(88vw,380px); flex-shrink:0;}
+  .wheel-ring{position:absolute; inset:0; border-radius:50%; overflow:hidden;
+    background:radial-gradient(circle, #161c2c 0%, #10141f 68%, #0b0e16 100%);
+    border:3px solid var(--gold); box-shadow:0 0 0 1px rgba(0,0,0,.5), 0 14px 40px rgba(0,0,0,.55), inset 0 0 26px rgba(0,0,0,.6);}
+  .wheel-slice{position:absolute; inset:0; padding:0; border:none; background:none; cursor:pointer; -webkit-tap-highlight-color:transparent;}
+  .wheel-slice-bg{position:absolute; inset:0; transition:background .15s ease;}
+  .wheel-slice:active .wheel-slice-bg{background:rgba(94,225,201,.22);}
+  @media (hover:hover){ .wheel-slice:hover .wheel-slice-bg{background:rgba(94,225,201,.13);} }
+  /* divisiones radiales entre secciones (líneas doradas finas) + aro interior alrededor del centro */
+  .wheel-ring::before{content:""; position:absolute; inset:0; pointer-events:none; z-index:2;
+    background:repeating-conic-gradient(from -22.5deg, transparent 0deg 44.4deg, rgba(232,196,104,.55) 44.4deg 45.6deg);}
+  .wheel-ring::after{content:""; position:absolute; inset:29.5%; border-radius:50%; pointer-events:none; z-index:2;
+    border:2px solid rgba(232,196,104,.45); box-shadow:0 0 12px rgba(94,225,201,.2);}
+
+  /* Los 8 sectores, en orden horario desde arriba: Amigos, Grupo, Atributos, Bases, Constructor,
+     Mercado, Mascotas, Regiones — mismo orden y ubicación que la referencia de diseño. El
+     clip-path va en el BOTÓN mismo (no solo en el fondo decorativo) para que el área táctil
+     coincida exactamente con la forma visible de cada sector — si no, al estar los 8 botones
+     superpuestos en el mismo cuadrado completo, solo el último del DOM recibiría los toques. */
+  .wheel-slice-0{clip-path:polygon(50% 50%, 30.87% 3.81%, 50% 0%, 69.13% 3.81%);}
+  .wheel-slice-1{clip-path:polygon(50% 50%, 69.13% 3.81%, 85.36% 14.65%, 96.19% 30.87%);}
+  .wheel-slice-2{clip-path:polygon(50% 50%, 96.19% 30.87%, 100% 50%, 96.19% 69.13%);}
+  .wheel-slice-3{clip-path:polygon(50% 50%, 96.19% 69.13%, 85.36% 85.36%, 69.13% 96.19%);}
+  .wheel-slice-4{clip-path:polygon(50% 50%, 69.13% 96.19%, 50% 100%, 30.87% 96.19%);}
+  .wheel-slice-5{clip-path:polygon(50% 50%, 30.87% 96.19%, 14.65% 85.36%, 3.81% 69.13%);}
+  .wheel-slice-6{clip-path:polygon(50% 50%, 3.81% 69.13%, 0% 50%, 3.81% 30.87%);}
+  .wheel-slice-7{clip-path:polygon(50% 50%, 3.81% 30.87%, 14.65% 14.65%, 30.87% 3.81%);}
+
+  .wheel-slice-content{position:absolute; z-index:3; display:flex; flex-direction:column; align-items:center;
+    gap:2px; font-size:min(7vw,26px); pointer-events:none; transform:translate(-50%,-50%); text-align:center;
+    filter:drop-shadow(0 2px 4px rgba(0,0,0,.5)); white-space:nowrap;}
+  .wheel-slice-content span{font-size:11px; font-weight:800; color:var(--text); text-shadow:0 1px 3px rgba(0,0,0,.85);}
+  .wheel-slice-content-0{left:50%; top:15%;}
+  .wheel-slice-content-1{left:74.75%; top:25.25%;}
+  .wheel-slice-content-2{left:85%; top:50%;}
+  .wheel-slice-content-3{left:74.75%; top:74.75%;}
+  .wheel-slice-content-4{left:50%; top:85%;}
+  .wheel-slice-content-5{left:25.25%; top:74.75%;}
+  .wheel-slice-content-6{left:15%; top:50%;}
+  .wheel-slice-content-7{left:25.25%; top:25.25%;}
+
+  .wheel-gem{position:absolute; z-index:4; width:9px; height:9px; background:var(--accent);
+    transform:translate(-50%,-50%) rotate(45deg); box-shadow:0 0 8px var(--accent), 0 0 2px #fff;
+    border-radius:2px; pointer-events:none;}
+  .wheel-gem-0{left:30.87%; top:3.81%;} .wheel-gem-1{left:69.13%; top:3.81%;}
+  .wheel-gem-2{left:96.19%; top:30.87%;} .wheel-gem-3{left:96.19%; top:69.13%;}
+  .wheel-gem-4{left:69.13%; top:96.19%;} .wheel-gem-5{left:30.87%; top:96.19%;}
+  .wheel-gem-6{left:3.81%; top:69.13%;} .wheel-gem-7{left:3.81%; top:30.87%;}
+
+  .wheel-hub{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:5;
+    width:29%; height:29%; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle, #1b2438 0%, #10141f 75%); border:2px solid var(--gold);
+    box-shadow:0 0 22px rgba(94,225,201,.45), inset 0 0 14px rgba(0,0,0,.6); pointer-events:none;}
+  .wheel-hub-star{font-size:min(11vw,46px); color:var(--gold); line-height:1;
+    text-shadow:0 0 14px var(--accent), 0 0 28px var(--accent);}
+
+  .wheel-secondary-row{display:flex; flex-wrap:wrap; justify-content:center; gap:10px; pointer-events:auto; max-width:88vw;}
+  .wheel-secondary-btn{display:flex; align-items:center; gap:6px; padding:9px 16px; border-radius:20px;
+    background:rgba(19,24,38,.88); border:1px solid var(--line); color:var(--text); font-size:12.5px; font-weight:700;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);}
+  .wheel-secondary-btn:active{filter:brightness(1.25);}
+
+  .fab-main{position:absolute; right:14px; bottom:16px; width:54px; height:54px; border-radius:50%;
+    background:var(--accent); color:#04231d; border:none; font-size:22px;
+    box-shadow:0 8px 20px rgba(94,225,201,.3), inset 0 1px 0 rgba(255,255,255,.25);
+    transition:transform .2s ease, filter .15s ease, width .25s ease, height .25s ease, font-size .25s ease, box-shadow .25s ease;
+    pointer-events:auto; z-index:27;}
+  .fab-main:active{filter:brightness(1.15);}
+  #fabMenu.open .fab-main{width:60px; height:60px; font-size:26px;
+    box-shadow:0 0 10px 2px rgba(94,225,201,.5), 0 0 26px rgba(94,225,201,.55), 0 8px 20px rgba(0,0,0,.4);}
+
+
+  /* ---------- Enemigos agresivos / en manada ---------- */
+  .aggro-ring{width:44px;height:44px;border-radius:50%;border:2px solid var(--danger); position:absolute;
+    top:50%;left:50%; transform:translate(-50%,-50%); animation:pulseAggro 1.3s infinite;}
+  @keyframes pulseAggro{0%{transform:translate(-50%,-50%) scale(.6);opacity:.9;}100%{transform:translate(-50%,-50%) scale(1.4);opacity:0;}}
+  /* Círculo mágico rúnico bajo enemigos agresivos: tenue, gira lento, sensación de "mundo vivo" */
+  .magic-circle{width:46px; height:46px; border-radius:50%; position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%); border:1.5px dashed rgba(200,120,255,.5);
+    box-shadow:0 0 10px rgba(180,100,255,.3) inset; pointer-events:none;
+    animation:magicCircleSpin 7s linear infinite;}
+  @keyframes magicCircleSpin{from{transform:translate(-50%,-50%) rotate(0deg);} to{transform:translate(-50%,-50%) rotate(360deg);}}
+  /* Glow dorado tenue bajo NPC especiales (mercader, vagabundo, misión) — más discreto que el de
+     un jefe, solo para que se sientan "elementos importantes" a primera vista. */
+  .special-npc-glow{width:70px; height:70px; border-radius:50%; position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%); pointer-events:none; filter:blur(4px);
+    background:radial-gradient(circle, rgba(232,196,104,.28) 0%, rgba(232,196,104,.08) 50%, transparent 75%);
+    animation:bossGroundBreathe 3.6s ease-in-out infinite;}
+  .mon-lvl.pack{border-color:var(--danger); color:var(--danger);}
+  .mon-lvl.special{border-color:var(--gold); color:var(--gold);}
+
+  /* ---------- Jefe de zona: aura por dificultad + cuenta regresiva ---------- */
+  .boss-aura{width:54px;height:54px;border-radius:50%; position:absolute; top:50%;left:50%;
+    transform:translate(-50%,-50%); animation:pulseBoss 1.6s infinite;}
+  .boss-aura-green{border:3px solid #4fd67a; box-shadow:0 0 10px rgba(79,214,122,.8);}
+  .boss-aura-orange{border:3px solid #e8983a; box-shadow:0 0 12px rgba(232,152,58,.85);}
+  .boss-aura-red{border:3px solid var(--danger); box-shadow:0 0 14px rgba(239,93,111,.9);}
+  @keyframes pulseBoss{0%{transform:translate(-50%,-50%) scale(.65);opacity:1;}100%{transform:translate(-50%,-50%) scale(1.5);opacity:0;}}
+  /* Luz tenue que el jefe proyecta sobre el suelo (respira lento, sin parpadear) — vive en el
+     mismo plano inclinado que el aro pulsante, así se ve apoyada en el piso desde cualquier ángulo. */
+  .boss-ground-glow{width:150px; height:150px; border-radius:50%; position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%); filter:blur(5px); pointer-events:none;
+    animation:bossGroundBreathe 3.2s ease-in-out infinite;}
+  .boss-ground-glow-green{background:radial-gradient(circle, rgba(79,214,122,.32) 0%, rgba(79,214,122,.1) 45%, transparent 75%);}
+  .boss-ground-glow-orange{background:radial-gradient(circle, rgba(232,152,58,.34) 0%, rgba(232,152,58,.11) 45%, transparent 75%);}
+  .boss-ground-glow-red{background:radial-gradient(circle, rgba(239,93,111,.38) 0%, rgba(239,93,111,.12) 45%, transparent 75%);}
+  @keyframes bossGroundBreathe{0%,100%{opacity:.65; transform:translate(-50%,-50%) scale(.92);} 50%{opacity:1; transform:translate(-50%,-50%) scale(1.08);}}
+  .boss-timer{position:absolute; top:-22px; left:50%; transform:translateX(-50%); white-space:nowrap;
+    background:rgba(10,12,18,.85); border:1px solid var(--line); color:#ffde59; font-weight:800; font-size:10px;
+    padding:1px 6px; border-radius:8px; z-index:2;}
+
+  /* monster / player map markers */
+  .mon-marker{display:flex; flex-direction:column; align-items:center; justify-content:flex-end; width:100%; height:100%; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));
+    transform:scale(var(--enemy-zoom-scale, 1)); transform-origin:center bottom; transition:transform .2s ease;}
+  .mon-marker.mon-marker-fixed{transform:none;} /* los jefes NUNCA se achican, se ven siempre a su tamaño completo */
+  .mon-emoji{font-size:26px; line-height:1;}
+
+  /* ---------- Zonas de Neiva y parques ---------- */
+  .zone-label-wrap{display:flex; flex-direction:column; align-items:center; pointer-events:none;}
+  /* ---------- Presentación de región (Mapa Vivo, Capa 5): ahora reemplaza temporalmente TODA la
+     tarjeta del HUD del jugador (#hudCardNormal: ícono de perfil, nombre/oro/barras/GPS, campana
+     y botón de GPS) por el nombre de la región — ocupa todo el ancho y alto de la tarjeta mientras
+     se muestra, ya que es solo por unos segundos. */
+  .hud-region-reveal{display:flex; align-items:center; justify-content:center; gap:12px;
+    min-height:54px; padding:8px 14px; border-radius:10px;
+    background:linear-gradient(90deg, color-mix(in srgb, var(--region-color, var(--gold)) 22%, transparent), transparent);
+    border:1px solid var(--region-color, var(--gold));
+    animation:hudRegionRevealIn .35s cubic-bezier(.2,.9,.3,1.2);}
+  @keyframes hudRegionRevealIn{0%{opacity:0; transform:scale(.85);} 100%{opacity:1; transform:scale(1);}}
+  .hrr-icon{font-size:36px; line-height:1; filter:drop-shadow(0 0 7px var(--region-color, var(--gold)));}
+  .hrr-text{min-width:0;}
+  .hrr-name{font-weight:900; font-size:18px; color:var(--region-color, var(--gold)); letter-spacing:.2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .hrr-level{font-size:12px; color:var(--dim); font-weight:700; margin-top:2px;}
+
+
+  /* ---------- Coliseo: localización permanente del mundo (Mapa Vivo, Capa 1) ---------- */
+  /* ---------- Mercader Ambulante y futuros NPC dinámicos (Mapa Vivo, Capa 2) ---------- */
+  .dynamic-entity-marker{font-size:32px; cursor:pointer; animation:dynamicNpcBob 2.4s ease-in-out infinite;
+    filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 7px rgba(232,196,104,.5)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  @keyframes dynamicNpcBob{0%,100%{transform:translateY(0);} 50%{transform:translateY(-4px);}}
+
+  /* ---------- Eventos Aleatorios (Mapa Vivo, Capa 3) — discretos, sin etiqueta grande ---------- */
+  .world-event-marker{font-size:28px; cursor:pointer; animation:worldEventPulse 1.8s ease-in-out infinite;
+    filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 8px rgba(239,93,111,.5)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  @keyframes worldEventPulse{0%,100%{transform:scale(1); opacity:.92;} 50%{transform:scale(1.12); opacity:1;}}
+
+  .poi-location-wrap{position:relative; width:100%; height:100%; display:flex; flex-direction:column;
+    align-items:center; justify-content:flex-end;}
+  .poi-location-label{position:absolute; top:0; left:50%; transform:translateX(-50%); white-space:nowrap;
+    background:rgba(10,12,18,.88); border:1px solid var(--gold,#e8c468); color:var(--gold,#e8c468);
+    font-size:10.5px; font-weight:800; padding:3px 10px; border-radius:10px;
+    box-shadow:0 8px 20px rgba(0,0,0,.22); pointer-events:none;}
+  .coliseo-marker{font-size:36px; cursor:pointer;
+    filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 9px rgba(232,196,104,.6)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+
+  .zone-label{white-space:nowrap; font-weight:900; font-size:12px; letter-spacing:.5px; text-transform:uppercase;
+    background:rgba(10,12,18,.85); border:1px solid; border-radius:8px; padding:3px 9px;
+    box-shadow:0 8px 20px rgba(0,0,0,.22); pointer-events:none;}
+  .zone-label-arrow{width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent;
+    border-top:7px solid; margin-top:-1px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32));}
+  .zone-label-stem{width:0; height:44px;}
+  .park-marker{position:relative; font-size:26px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16)); cursor:pointer;}
+  .upgrade-station-marker{font-size:24px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 6px rgba(232,196,104,.6)) drop-shadow(0 -3px 3px rgba(255,255,255,.16)); cursor:pointer;}
+
+  #questTracker{position:absolute; top:150px; right:10px; z-index:22; max-width:200px;
+    background:linear-gradient(180deg,#1c2438,#131a29); border:2px solid var(--gold); border-radius:12px;
+    padding:9px 10px; box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  #questTracker .qt-row{display:flex; align-items:center; gap:8px;}
+  #questTracker .qt-emoji{font-size:22px;}
+  #questTracker .qt-title{font-weight:800; font-size:11.5px; color:var(--gold);}
+  #questTracker .qt-sub{font-size:10px; color:var(--dim); margin-top:1px;}
+  #questTracker .qt-turnin{width:100%; margin-top:8px; padding:7px; border-radius:8px; border:none;
+    background:var(--accent); color:#04231d; font-weight:800; font-size:11.5px;}
+  #questTracker .qt-cancel{width:100%; margin-top:6px; padding:6px; border-radius:8px; border:1px solid var(--line);
+    background:transparent; color:var(--dim); font-size:10.5px;}
+  #questTracker .qt-cancel:active{border-color:var(--danger); color:var(--danger);}
+  .quest-dest-marker{font-size:30px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 10px rgba(232,196,104,.8)) drop-shadow(0 -3px 3px rgba(255,255,255,.16)); animation:questPulse 1.6s ease-in-out infinite;}
+  @keyframes questPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.15);}}
+
+  .capture-btn.capture-ready{animation:capturePulse 1.1s ease-in-out infinite; box-shadow:0 0 14px rgba(201,139,240,.7);}
+  @keyframes capturePulse{0%,100%{background:rgba(201,139,240,.08); box-shadow:0 0 8px rgba(201,139,240,.4);}
+    50%{background:rgba(201,139,240,.28); box-shadow:0 0 20px rgba(201,139,240,.9);}}
+
+  /* ---------- Animación de captura ---------- */
+  #captureFxOverlay{position:absolute; inset:0; z-index:250; display:flex; align-items:center; justify-content:center;
+    pointer-events:none; opacity:0;}
+  #captureFxOverlay.show{animation:captureFxFade 2.6s ease forwards;}
+  @keyframes captureFxFade{0%{opacity:0;}8%{opacity:1;}85%{opacity:1;}100%{opacity:0;}}
+  .capture-card-fx{font-size:70px; animation:captureCardFly 2.6s ease forwards;}
+  @keyframes captureCardFly{
+    0%{transform:translateY(120px) scale(.5) rotate(0deg); opacity:0;}
+    18%{transform:translateY(0) scale(1.1) rotate(15deg); opacity:1;}
+    35%{transform:translateY(0) scale(1) rotate(-10deg);}
+    55%{transform:translateY(0) scale(.7) rotate(360deg);}
+    70%{transform:translateY(0) scale(.4) rotate(720deg); opacity:1;}
+    85%{transform:translateY(0) scale(1.3) rotate(720deg); opacity:1;}
+    100%{transform:translateY(0) scale(0); opacity:0;}}
+  .capture-burst{position:absolute; font-size:40px; opacity:0;}
+  .capture-burst.show{animation:captureBurst 1s ease-out .8s forwards;}
+  @keyframes captureBurst{0%{opacity:0; transform:scale(.3);}40%{opacity:1; transform:scale(1.6);}100%{opacity:0; transform:scale(2.4);}}
+  .capture-result-text{position:absolute; bottom:22%; font-size:20px; font-weight:900; color:#c98bf0; opacity:0;
+    text-shadow:0 2px 8px rgba(0,0,0,.8);}
+  .capture-result-text.show{animation:captureTextIn .8s ease 1.6s forwards;}
+  @keyframes captureTextIn{0%{opacity:0; transform:translateY(10px);}100%{opacity:1; transform:translateY(0);}}
+
+  /* el monstruo se encoge, gira y se desvanece "absorbido" hacia la carta (captura exitosa) */
+  .capture-suck-in{animation:captureSuckIn 1.8s ease-in forwards .5s;}
+  @keyframes captureSuckIn{
+    0%{transform:scale(1) translate(0,0) rotate(0deg); opacity:1; filter:brightness(1);}
+    60%{transform:scale(.7) translate(0,10%) rotate(-20deg); opacity:1; filter:brightness(1.4);}
+    85%{transform:scale(.25) translate(0,25%) rotate(-160deg); opacity:.8; filter:brightness(2);}
+    100%{transform:scale(0) translate(0,30%) rotate(-320deg); opacity:0; filter:brightness(2.4);}  }
+  /* si falla, el monstruo solo se sacude un poco (se resiste) y vuelve a la normalidad */
+  .capture-escape{animation:captureEscape .6s ease-in-out 2;}
+  @keyframes captureEscape{0%,100%{transform:translateX(0);}25%{transform:translateX(-6px) rotate(-4deg);}75%{transform:translateX(6px) rotate(4deg);}}
+
+  /* ---------- Animación de invocar mascota: sale la carta, brilla, y se abre para soltarla ---------- */
+  #summonFxOverlay{position:absolute; inset:0; z-index:245; display:flex; align-items:center; justify-content:center;
+    pointer-events:none; opacity:0;}
+  #summonFxOverlay.show{animation:summonFxFade 1.4s ease forwards;}
+  @keyframes summonFxFade{0%{opacity:0;}10%{opacity:1;}75%{opacity:1;}100%{opacity:0;}}
+  .summon-card-fx{font-size:60px; animation:summonCardPop 1.4s ease forwards;}
+  @keyframes summonCardPop{
+    0%{transform:scale(.3) rotate(-15deg); opacity:0; filter:brightness(1);}
+    25%{transform:scale(1.15) rotate(8deg); opacity:1; filter:brightness(1);}
+    45%{transform:scale(1) rotate(0deg); opacity:1; filter:brightness(1);}
+    70%{transform:scale(1.05) rotate(0deg); opacity:1; filter:brightness(1.7);}
+    100%{transform:scale(.3) rotate(10deg); opacity:0; filter:brightness(2.3);}}
+  .summon-burst{position:absolute; font-size:44px; opacity:0;}
+  .summon-burst.show{animation:summonBurst .9s ease-out .55s forwards;}
+  @keyframes summonBurst{0%{opacity:0; transform:scale(.3);}40%{opacity:1; transform:scale(1.7);}100%{opacity:0; transform:scale(2.6);}}
+  .park-marker.revealed{font-size:32px; border:2px solid; border-radius:50%; padding:5px;
+    background:rgba(10,12,18,.55); animation:parkPulse 1.8s infinite ease-in-out;}
+  @keyframes parkPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}
+  .park-badge{position:absolute; bottom:-4px; right:-8px; font-size:14px;}
+
+  .region-card{border-radius:12px; padding:12px 14px; border-left:5px solid; background:var(--panel2);
+    display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .region-card .rc-name{font-weight:800; font-size:14px;}
+  .region-card .rc-status{font-size:10.5px; color:var(--dim); margin-top:2px;}
+  .rc-explore-bar{height:5px; border-radius:4px; background:#0c0f18; overflow:hidden; margin-top:5px; border:1px solid var(--line); max-width:160px;}
+  .rc-explore-fill{height:100%; transition:width .5s ease;}
+
+  .attr-stepper{display:flex; align-items:center; gap:6px;}
+  .attr-step-btn{width:28px; height:28px; border-radius:8px; border:1px solid var(--line); background:var(--panel2);
+    color:var(--text); font-size:16px; font-weight:800; line-height:1; padding:0;}
+  .attr-step-btn:disabled{opacity:.35;}
+  .attr-step-val{min-width:22px; text-align:center; font-weight:800; color:var(--gold); font-size:13px;}
+
+  #notifBellBadge{position:relative; background:var(--panel); border:1px solid var(--line); color:var(--text);
+    border-radius:12px; width:40px; height:40px; display:flex; align-items:center; justify-content:center;
+    font-size:17px; cursor:pointer; box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  #notifBellBadge span{position:absolute; top:-6px; right:-6px; background:var(--danger); color:#fff; border-radius:8px;
+    font-size:9px; font-weight:900; padding:0 4px; min-width:14px; text-align:center; border:2px solid var(--bg,#0a0c12);}
+
+  /* ---------- Tienda: ventana completa en vez de modal chico ---------- */
+  #shopOverlay{padding:0; align-items:stretch;}
+  #shopOverlay .shop-sheet{max-width:100%; width:100%; height:100%; max-height:100%; border-radius:0;
+    padding:16px 14px 100px; position:relative;}
+  .floating-close-btn{position:fixed; top:14px; left:14px; z-index:130; width:38px; height:38px; border-radius:50%;
+    background:var(--panel2); border:1px solid var(--line); color:var(--text); font-size:16px; box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  .floating-gold-badge{position:fixed; top:14px; right:14px; z-index:130; background:linear-gradient(180deg,#1c2438,#131a29);
+    border:2px solid var(--gold); border-radius:20px; padding:8px 14px; font-weight:900; color:var(--gold); font-size:14px;
+    box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  #shopOverlay h1.title, #shopOverlay p.sub{margin-left:48px; margin-right:70px;}
+  .shop-mode-tabs{display:flex; gap:8px; margin-bottom:10px;}
+  .gift-code-row{display:flex; gap:8px; margin-bottom:10px;}
+  .gift-code-row input{flex:1; background:#0c0f18; border:1px solid var(--line); border-radius:8px;
+    padding:9px 11px; color:var(--text); font-size:13px; text-transform:uppercase;}
+  .gift-code-row input::placeholder{text-transform:none;}
+  .shop-mode-btn{flex:1; background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:9px;
+    color:var(--dim); font-weight:700; font-size:13px;}
+  .shop-mode-btn.active{background:var(--accent); color:#04231d; border-color:var(--accent);}
+  .shop-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+  .shop-pager{display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:12px;}
+  .shop-card{grid-column:span 1; background:var(--panel2); border:1px solid var(--line); border-radius:12px;
+    padding:10px; display:flex; flex-direction:column; align-items:center; text-align:center; gap:4px; position:relative;}
+  .shop-card .sc-emoji{font-size:26px;}
+  .shop-card .sc-name{font-size:11.5px; font-weight:700; line-height:1.2;}
+  .shop-card .sc-desc{font-size:9.5px; color:var(--dim); line-height:1.25;}
+  .shop-card button{width:100%; margin-top:4px;}
+  .shop-card.rarity-epic, .shop-card.rarity-legendary{grid-column:1 / -1; flex-direction:row; text-align:left; align-items:center;}
+  .shop-card.rarity-epic .sc-info, .shop-card.rarity-legendary .sc-info{flex:1;}
+
+  .region-card .rc-mons{font-size:20px; letter-spacing:2px;}
+  .region-card.locked{opacity:.55;}
+  .region-card .rc-mons.blurred{filter:blur(3px); opacity:.6;}
+  .mon-real-sprite{height:40px; width:auto; border-radius:8px; border:2px solid var(--danger);
+    background:rgba(120,40,50,.35); padding:2px;
+    box-shadow:0 0 8px rgba(239,93,111,.7), 0 3px 6px rgba(0,0,0,.6); object-fit:cover;}
+  .mon-lvl{font-size:9px; background:var(--panel); border:1px solid var(--line); color:var(--accent);
+    border-radius:8px; padding:0 5px; margin-top:-2px; font-weight:700;}
+  .me-marker{font-size:36px; filter:drop-shadow(0 0 10px rgba(94,225,201,.65)) drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  /* ---------- Postes de luz junto al jugador (más notorios de noche) ---------- */
+  /* ---------- Fogatas de curación en el mapa ---------- */
+  .campfire-marker{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;}
+
+  .campfire-range-ring{position:absolute; top:0; left:0; border-radius:50%; border:2px solid rgba(255,150,60,.55);
+    background:radial-gradient(circle, rgba(255,140,50,.16) 0%, rgba(255,100,30,.06) 60%, transparent 80%);
+    animation:campfirePulse 2.4s ease-in-out infinite;}
+  @keyframes campfirePulse{0%,100%{opacity:.7; transform:scale(.96);}50%{opacity:1; transform:scale(1.02);}}
+  .campfire-flame{font-size:22px; z-index:1; filter:drop-shadow(0 0 8px rgba(255,140,40,.9)) drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+
+  /* ---------- Santuarios ---------- */
+  .shrine-marker{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;}
+  .shrine-range-ring{position:absolute; top:0; left:0; border-radius:50%; border:2px solid rgba(157,120,255,.5);
+    background:radial-gradient(circle, rgba(157,120,255,.14) 0%, rgba(120,90,220,.05) 60%, transparent 80%);
+    animation:campfirePulse 2.6s ease-in-out infinite;}
+  .shrine-icon{position:relative; font-size:24px; z-index:1; filter:drop-shadow(0 0 8px rgba(157,120,255,.8)) drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  .shrine-type-emoji{position:absolute; bottom:-4px; right:-8px; font-size:13px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32));}
+
+  /* ---------- Tarjeta de compra de Base personal en la tienda ---------- */
+  .base-shop-card{display:flex; align-items:center; gap:10px; background:linear-gradient(180deg, rgba(232,196,104,.12), rgba(232,196,104,.04));
+    border:1px solid var(--gold,#e8c468); border-radius:14px; padding:10px 12px; margin-bottom:12px;}
+  .bsc-icon{font-size:28px; flex-shrink:0;}
+  .bsc-info{flex:1; min-width:0;}
+  .bsc-title{font-weight:800; font-size:13px; color:var(--gold,#e8c468);}
+  .bsc-desc{font-size:10.5px; color:var(--dim); line-height:1.3; margin-top:2px;}
+  .bsc-costs{font-size:10.5px; color:var(--text); font-weight:700; margin-top:4px; letter-spacing:.2px;}
+
+  /* ---------- Pico de recolección: 3 tiers, se compra pero no se equipa ---------- */
+  .pickaxe-tier-row{display:flex; gap:8px; margin-bottom:12px;}
+  .pickaxe-tier-btn{flex:1; background:var(--panel2); border:1px solid var(--line); border-radius:10px;
+    color:var(--text); font-size:11px; font-weight:700; text-align:center; padding:8px 4px; line-height:1.5;}
+  .pickaxe-tier-btn small{color:var(--gold,#e8c468); font-weight:800;}
+  .pickaxe-tier-btn.owned{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset;}
+  .pickaxe-tier-btn:disabled{opacity:.5;}
+  /* Estado del pico actual — el color del borde/punto refleja qué tan gastado está */
+  .pickaxe-durability-chip{display:inline-flex; align-items:center; gap:5px; padding:2px 8px;
+    border-radius:10px; border:1px solid; font-weight:700;}
+  .pickaxe-durability-dot{width:7px; height:7px; border-radius:50%; flex-shrink:0;}
+  .pickaxe-durability-green{color:#4fd67a; border-color:#4fd67a; background:rgba(79,214,122,.1);}
+  .pickaxe-durability-green .pickaxe-durability-dot{background:#4fd67a; box-shadow:0 0 5px rgba(79,214,122,.8);}
+  .pickaxe-durability-orange{color:#e8983a; border-color:#e8983a; background:rgba(232,152,58,.1);}
+  .pickaxe-durability-orange .pickaxe-durability-dot{background:#e8983a; box-shadow:0 0 5px rgba(232,152,58,.8);}
+  .pickaxe-durability-red{color:var(--danger); border-color:var(--danger); background:rgba(239,93,111,.1);}
+  .pickaxe-durability-red .pickaxe-durability-dot{background:var(--danger); box-shadow:0 0 5px rgba(239,93,111,.8); animation:pulseAggro 1.3s infinite;}
+
+  /* ---------- Durabilidad del equipo (arma/escudo/armadura/casco/botas) ---------- */
+  .durability-row{margin-top:6px; width:100%;}
+  .durability-bar-wrap{height:6px; border-radius:4px; background:#0c0f18; overflow:hidden; border:1px solid var(--line);}
+  .durability-bar-fill{height:100%; transition:width .4s ease;}
+  .durability-green{background:linear-gradient(90deg,#3fa866,#4fd67a);}
+  .durability-yellow{background:linear-gradient(90deg,#c9a83a,#e8c468);}
+  .durability-orange{background:linear-gradient(90deg,#c97a2a,#e8983a);}
+  .durability-red{background:linear-gradient(90deg,#c94a5a,var(--danger));}
+  .durability-label{font-size:9.5px; color:var(--dim); margin-top:3px; font-weight:700;}
+  .durability-damaged-icon{color:var(--danger); font-weight:800;}
+
+  /* ---------- Base personal en el mapa: emoji de casa con el nombre del dueño arriba ---------- */
+  .base-marker-simple{position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end;}
+  .bms-label{font-size:9px; font-weight:800; color:#fff; background:rgba(0,0,0,.6); border-radius:6px;
+    padding:1px 6px; white-space:nowrap; margin-bottom:2px;}
+  .bms-emoji{font-size:32px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  .base-preview{opacity:.7; animation:baseBob 1s ease-in-out infinite;}
+  @keyframes baseBob{0%,100%{transform:translateY(0);} 50%{transform:translateY(-5px);}}
+
+  /* ---------- Botones flotantes para confirmar/cancelar dónde colocar la base ---------- */
+  #basePlacementControls{position:absolute; bottom:110px; left:50%; transform:translateX(-50%); z-index:30;
+    display:flex; gap:20px;}
+  #basePlacementControls button{width:58px; height:58px; border-radius:50%; font-size:26px; border:none;
+    box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  #btnBasePlaceCancel{background:var(--danger); color:#fff;}
+  #btnBasePlaceConfirm{background:var(--accent); color:#04231d;}
+
+  /* ---------- Pantalla de la base: inventario arriba, cofre abajo ---------- */
+  .base-section-label{font-size:12px; font-weight:800; color:var(--dim); margin:10px 0 6px;
+    display:flex; justify-content:space-between; align-items:center;}
+  .base-half-grid{max-height:26vh;}
+  .base-transfer-btn{width:100%; font-size:9.5px; padding:5px 2px; margin-top:4px;}
+
+  /* ---------- Cofres del tesoro ---------- */
+  .chest-marker{font-size:26px; cursor:pointer; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 10px var(--chest-glow, rgba(200,200,200,.6))) drop-shadow(0 -3px 3px rgba(255,255,255,.16));
+    animation:chestBob 2.2s ease-in-out infinite;}
+  @keyframes chestBob{0%,100%{transform:translateY(0);} 50%{transform:translateY(-4px);}}
+  .chest-legendario{font-size:30px; animation:chestBobLegendary 1.6s ease-in-out infinite;}
+  @keyframes chestBobLegendary{0%,100%{transform:translateY(0) scale(1);} 50%{transform:translateY(-6px) scale(1.08);}}
+
+  .tower-marker{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+    font-size:42px; cursor:pointer; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 8px rgba(157,120,255,.6)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  .tower-owned-light{position:absolute; top:-6px; left:50%; transform:translateX(-50%); width:14px; height:14px;
+    border-radius:50%; background:radial-gradient(circle, #fff3c0, #e8c468); opacity:0;
+    box-shadow:0 0 10px 4px rgba(232,196,104,.8); transition:opacity .3s ease;}
+  .tower-marker.tower-owned .tower-owned-light{opacity:1; animation:towerLightPulse 1.6s ease-in-out infinite;}
+  @keyframes towerLightPulse{0%,100%{transform:translateX(-50%) scale(1);}50%{transform:translateX(-50%) scale(1.3);}}
+
+  #campfireHealBadge{position:absolute; bottom:96px; left:50%; transform:translateX(-50%); z-index:200;
+    background:linear-gradient(180deg, rgba(60,28,10,.95), rgba(35,16,6,.95)); border:1px solid #e8983a;
+    color:#ffd9a0; padding:8px 16px; border-radius:20px; font-size:12.5px; font-weight:700;
+    box-shadow:0 8px 20px rgba(0,0,0,.22);}
+
+  /* ---------- Recursos recolectables: árboles, rocas y vetas de hierro ---------- */
+  /* El emoji se ve igual de grande que antes (28px), pero vive centrado dentro de una caja
+     invisible más grande — así el área donde SÍ registra el toque es mucho más generosa,
+     sin que el árbol/roca se vea más grande de lo que ya se veía. */
+  .resource-node-marker{width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+    font-size:28px; cursor:pointer;
+    filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  .resource-node-marker.resource-wood{filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 7px rgba(120,220,140,.55)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  .resource-node-marker.resource-stone{filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 6px rgba(200,200,210,.5)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  .resource-node-marker.resource-iron{filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 7px rgba(140,180,230,.6)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+
+  #gatherProgressWrap{position:absolute; bottom:96px; left:50%; transform:translateX(-50%); z-index:200;
+    background:linear-gradient(180deg, rgba(19,24,38,.95), rgba(19,24,38,.88)); border:1px solid var(--gold, #e8c468);
+    color:var(--text); padding:8px 16px; border-radius:14px; font-size:12.5px; font-weight:700;
+    box-shadow:0 8px 20px rgba(0,0,0,.25); text-align:center; min-width:180px;}
+  #gatherProgressBarWrap{width:100%; height:8px; margin-top:6px; background:rgba(0,0,0,.5);
+    border:1px solid var(--line); border-radius:5px; overflow:hidden;}
+  #gatherProgressFill{height:100%; width:0%; background:linear-gradient(90deg, var(--gold,#e8c468), #fff3c0);}
+
+  .street-lamp{font-size:15px; opacity:0; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)); z-index:1;
+    transition:opacity 1.5s ease, filter 1.5s ease;}
+  .street-lamp.lit{opacity:1; filter:drop-shadow(0 0 6px rgba(255,200,100,.9)) drop-shadow(0 0 14px rgba(255,170,60,.6));}
+
+  /* El aura/anillo de personajes y enemigos "nace" de sus pies y se inclina igual que la
+     cámara — así se ve como un círculo de verdad apoyado en el suelo, no una etiqueta plana
+     pegada en el aire. A pitch=0 (cámara mirando derecho hacia abajo) se ve como un círculo
+     normal; entre más se incline la cámara, más se aplana (como se vería un círculo real en
+     el piso visto de más lejos/costado). */
+  .ring-tilt-wrap{position:absolute; left:50%; top:100%; width:0; height:0;
+    transform:translate(-50%,-50%) rotateX(var(--ring-tilt-deg,0deg));
+    transform-style:preserve-3d; transition:transform .3s ease; pointer-events:none;}
+  /* Igual que arriba, pero para cosas cuyo punto real es el CENTRO del ícono (como una fogata),
+     no la base de un personaje más alto — el aro se inclina alrededor de ese mismo centro. */
+  .ring-tilt-wrap-center{position:absolute; left:50%; top:50%; width:0; height:0;
+    transform:translate(-50%,-50%) rotateX(var(--ring-tilt-deg,0deg));
+    transform-style:preserve-3d; transition:transform .3s ease; pointer-events:none;}
+
+  .pulse-ring{width:calc(var(--engage-range-px, 65px)*2); height:calc(var(--engage-range-px, 65px)*2); border-radius:50%; border:5px solid var(--accent); position:absolute;
+    top:50%;left:50%; transform:translate(-50%,-50%); animation:pulse 1.8s ease-out infinite; pointer-events:none;}
+  @keyframes pulse{0%{transform:translate(-50%,-50%) scale(.08); opacity:.95;} 100%{transform:translate(-50%,-50%) scale(1); opacity:0;}}
+
+  /* otro jugador real (multijugador por proximidad) */
+  .op-marker{display:flex; flex-direction:column; align-items:center; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  .op-emoji{font-size:26px; line-height:1;}
+  .op-tag{font-size:9px; background:var(--panel); border:1px solid var(--accent2); color:var(--accent2);
+    border-radius:8px; padding:0 5px; margin-top:-2px; font-weight:700; white-space:nowrap;}
+  .op-ring{width:14px;height:14px;border-radius:50%;border:2px solid var(--accent2); position:absolute;
+    top:-6px;left:50%; transform:translateX(-50%); animation:pulse2 1.6s infinite;}
+  @keyframes pulse2{0%{transform:translateX(-50%) scale(.5);opacity:.9;}100%{transform:translateX(-50%) scale(2.2);opacity:0;}}
+
+  /* ---------- Overlays generic ---------- */
+  .overlay{position:absolute; inset:0; z-index:120; background:rgba(6,8,13,.72);
+    backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; padding:16px;}
+  /* Pantalla completa (perfil): aprovecha todo el espacio en vez de quedar como una ventanita centrada. */
+  .overlay.fullscreen{padding:0; align-items:stretch; backdrop-filter:none; background:var(--bg);}
+  .overlay.fullscreen .sheet{max-width:none; max-height:none; width:100%; height:100%; border-radius:0;
+    border:none; box-shadow:none; padding:16px 16px 24px; overflow-y:auto;}
+  /* estos se pueden abrir ENCIMA de otra pantalla ya abierta (inventario, lista de mascotas, etc.) —
+     necesitan quedar por delante de esa, no detrás. */
+  #petDetailOverlay, #releasePetOverlay, #petItemPickOverlay, #petSummonOverlay, #healPetPickOverlay{z-index:135;}
+  .hidden{display:none !important;}
+  .sheet{background:linear-gradient(180deg,#141a2a,#0f131f); border:1px solid var(--line); border-radius:20px;
+    width:100%; max-width:430px; max-height:92vh; overflow-y:auto; padding:20px; box-shadow:0 8px 20px rgba(0,0,0,.22);}
+
+  /* ============================================================
+     INVENTARIO REDISEÑADO — estética RPG AAA para móvil.
+     Reutiliza los mismos datos y lógica de siempre (rareza, comparación,
+     equipar/usar); esto es SOLO la capa visual.
+     ============================================================ */
+  .inv-sheet-v2{max-width:460px; background:radial-gradient(ellipse at 50% -10%, rgba(74,163,224,.10), transparent 55%),
+    linear-gradient(180deg,#141a29,#0c111c);}
+  .inv-header-v2{display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;}
+  .inv-count-v2{font-size:11px; color:var(--dim); background:rgba(255,255,255,.05); border:1px solid var(--line);
+    padding:6px 10px; border-radius:10px; white-space:nowrap; margin-top:2px; text-align:right; line-height:1.6;}
+
+  .inv-resource-bar{display:flex; gap:8px; margin-bottom:12px;}
+  .inv-res-chip{flex:1; display:flex; align-items:center; justify-content:center; gap:5px; background:rgba(255,255,255,.04);
+    border:1px solid var(--line); border-radius:10px; padding:6px 4px; font-size:12px; font-weight:800; color:var(--text);}
+
+  .inv-cat-tabs{display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; margin-bottom:10px; scrollbar-width:none;}
+  .inv-cat-tabs::-webkit-scrollbar{display:none;}
+  .inv-cat-tab{flex-shrink:0; background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:20px;
+    padding:7px 14px; font-size:12px; font-weight:700; color:var(--dim); white-space:nowrap; transition:all .2s ease;}
+  .inv-cat-tab.active{background:linear-gradient(180deg, rgba(94,225,201,.28), rgba(94,225,201,.14)); color:var(--accent);
+    border-color:var(--accent); box-shadow:0 0 10px rgba(94,225,201,.35);}
+
+  .inv-search-row{display:flex; gap:8px; margin-bottom:12px;}
+  .inv-search-input{flex:1; background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:10px;
+    padding:8px 10px; font-size:12.5px; color:var(--text);}
+  .inv-search-input::placeholder{color:var(--dim);}
+  .inv-sort-select{background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:10px;
+    padding:8px 6px; font-size:11px; color:var(--text); max-width:118px;}
+
+  .inv-grid-v2{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:12px; max-height:62vh; overflow-y:auto; padding:3px;}
+
+  .inv-card-v2{background:linear-gradient(180deg,#1d2540,#121826); border:2px solid var(--line); border-radius:16px;
+    padding:10px 6px 8px; text-align:center; cursor:pointer; position:relative; transition:transform .18s ease, box-shadow .18s ease;}
+  .inv-card-v2:active{transform:scale(.95);}
+  .inv-card-v2.selectable:active{transform:scale(.97);}
+  .inv-card-v2.selected{border-color:var(--accent) !important; box-shadow:0 0 12px rgba(94,225,201,.55) !important;}
+  .inv-card-v2 .icv-equipped-ribbon{position:absolute; top:6px; left:-6px; background:#2f9e5e; color:#eafff2;
+    font-size:8px; font-weight:900; letter-spacing:.05em; padding:2px 8px 2px 10px; border-radius:3px 6px 6px 0;
+    box-shadow:0 8px 20px rgba(0,0,0,.22); z-index:2;}
+  .inv-card-v2 .icv-fav{position:absolute; top:5px; right:7px; font-size:12px; color:var(--gold,#e8c468); z-index:2;}
+  .inv-card-v2 .icv-lock{position:absolute; top:5px; left:7px; font-size:10.5px; z-index:2;}
+  .inv-card-v2 .icv-icon{font-size:32px; margin:4px 0 5px; min-height:38px; display:flex; align-items:center; justify-content:center;
+    filter:drop-shadow(0 7px 10px rgba(0,0,0,.32));}
+  .inv-card-v2 .icv-icon img{height:40px; width:auto; margin:0 auto; display:block;}
+  .inv-card-v2 .icv-name{font-size:10.5px; font-weight:700; color:var(--text); line-height:1.25; min-height:26px;}
+  .inv-card-v2 .icv-stat{font-size:10px; font-weight:800; color:var(--accent); margin-top:3px;}
+  .inv-card-v2 .icv-lvl{font-size:8.5px; color:var(--dim); margin-top:1px;}
+  .inv-card-v2 .icv-qty{position:absolute; bottom:5px; right:7px; font-size:11px; font-weight:900; color:var(--text);
+    background:rgba(0,0,0,.55); border-radius:6px; padding:0 5px;}
+  .inv-card-v2 .icv-check{position:absolute; top:5px; right:7px; font-size:11px; color:#4fd67a;}
+
+  .inv-mass-actions{display:flex; gap:8px; margin-bottom:10px;}
+  .inv-buy-slot-card{border-style:dashed !important; border-color:var(--accent) !important; opacity:.85;}
+  .inv-buy-slot-card .icv-icon{color:var(--accent); font-size:26px;}
+  .inv-buy-slot-card .icv-stat{color:var(--gold,#e8c468);}
+  .inv-mass-btn{flex:1; font-size:11.5px; padding:9px 6px;}
+
+  /* ---------- Detalle de un objeto: hoja inferior con acento de rareza ---------- */
+  .inv-detail-sheet-v2{max-width:400px; text-align:center; position:relative;
+    background:radial-gradient(ellipse at 50% 0%, rgba(255,255,255,.05), transparent 60%), linear-gradient(180deg,#1a2135,#0f1420);}
+  .inv-detail-fav{position:absolute; top:14px; right:14px; background:rgba(255,255,255,.06); border:1px solid var(--line);
+    border-radius:50%; width:34px; height:34px; font-size:16px; color:var(--gold,#e8c468); line-height:1;}
+  .inv-detail-fav.active{background:rgba(232,196,104,.18); border-color:var(--gold,#e8c468);}
+  .inv-detail-icon-v2{font-size:66px; margin:6px 0 6px; min-height:82px; display:flex; align-items:center; justify-content:center;}
+  .inv-detail-icon-v2 img{height:86px; width:auto; margin:0 auto; display:block; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32));}
+  .inv-detail-rarity{font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; margin-bottom:2px;}
+  .inv-detail-stats{background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:14px;
+    padding:14px; margin:16px 0; text-align:left; font-size:13px; line-height:1.8;}
+  .inv-detail-stats .ids-row{display:flex; align-items:flex-start; gap:8px;}
+  .inv-detail-stats .ids-row + .ids-row{margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,.06);}
+  .inv-detail-actions{display:flex; flex-direction:column; gap:8px; margin-top:4px;}
+
+  /* ---------- Filas de comparación contra lo equipado: verde si mejora, rojo si empeora ---------- */
+  .inv-cmp-row{display:flex; justify-content:space-between; font-size:12px; padding:3px 0;}
+  .inv-cmp-up{color:#4fd67a; font-weight:800;}
+  .inv-cmp-down{color:#e05a4e; font-weight:800;}
+
+  /* En pantallas más anchas (tablet/escritorio) el detalle se ancla al lado derecho, como un
+     panel fijo, en vez de aparecer centrado — más cerca del layout de dos columnas pedido. */
+  @media (min-width:700px){
+    #invOverlay{align-items:stretch; justify-content:flex-start;}
+    .inv-sheet-v2{max-width:520px; margin-left:4%;}
+    #invDetailOverlay{align-items:stretch; justify-content:flex-end;}
+    .inv-detail-sheet-v2{max-width:360px; margin-right:4%; align-self:center;}
+    .inv-grid-v2{grid-template-columns:1fr 1fr 1fr 1fr;}
+  }
+
+  /* ---------- Mascotas: cuadrícula de mini-cartas + carta grande de detalle ---------- */
+  .pet-mini-grid{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin:14px 0;}
+  .pet-mini-card{background:linear-gradient(180deg,#1c2438,#131a29); border:2px solid var(--line); border-radius:12px;
+    padding:10px 6px 8px; text-align:center; cursor:pointer; position:relative;}
+  .pmc-lvl{position:absolute; top:5px; left:6px; font-size:9.5px; font-weight:800; color:var(--dim);}
+  .pmc-portrait{font-size:32px; margin:6px 0 4px;}
+  .pmc-name{font-size:11px; font-weight:700; color:var(--text); line-height:1.2; min-height:26px;}
+  .pmc-stars{font-size:10px; margin-top:2px; letter-spacing:1px;}
+
+  /* ---------- Volteo 3D de la carta al arrastrar el dedo ---------- */
+  .pet-card-flip-wrap{perspective:1200px; touch-action:pan-y;}
+  .pet-card-flip-inner{position:relative; transform-style:preserve-3d; transition:transform .5s cubic-bezier(.2,.8,.3,1);}
+  .pet-card-flip-inner.dragging{transition:none;}
+  .pet-card-flip-inner.flipped{transform:rotateY(180deg);}
+  .pet-card.pet-card-front, .pet-card.pet-card-back{backface-visibility:hidden; -webkit-backface-visibility:hidden;}
+  .pet-card.pet-card-back{position:absolute; inset:0; transform:rotateY(180deg);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;}
+  .pet-card-back-ring{position:absolute; width:120px; height:120px; border:2px solid rgba(232,196,104,.5); border-radius:50%;}
+  .pet-card-back-ring::before{content:""; position:absolute; inset:10px; border:1px solid rgba(232,196,104,.3); border-radius:50%;}
+  .pet-card-back-emblem{font-size:44px; z-index:1; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32));}
+  .pet-card-back-title{font-family:var(--font-display, inherit); color:var(--gold, #e8c468); font-size:15px;
+    font-weight:800; letter-spacing:.08em; margin-top:14px; z-index:1;}
+  .pet-card-back-sub{color:#c8b79c; font-size:11px; margin-top:4px; z-index:1;}
+  .pet-card-hint{text-align:center; font-size:10.5px; color:var(--dim); margin:8px 0 0;}
+
+  .pet-card{background:radial-gradient(ellipse at 50% 0%, rgba(232,196,104,.08), transparent 60%), linear-gradient(180deg,#191225,#0e0a16);
+    border:2px solid var(--gold, #e8c468); border-radius:14px; padding:16px; position:relative;
+    box-shadow:0 0 0 1px rgba(232,196,104,.25) inset;}
+  .pet-card-topgem{position:absolute; top:-9px; left:50%; transform:translate(-50%,0) rotate(45deg);
+    width:14px; height:14px; background:var(--gold, #e8c468); border-radius:2px;}
+  .pet-card-header{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .pet-card-title{font-size:18px; margin:0; color:var(--gold, #e8c468); text-align:left;}
+  .pet-card-type{font-size:11px; color:#7fd88a; font-weight:700; margin-top:1px;}
+  .pet-card-levelbadge{font-size:12px; font-weight:800; color:#7fd88a; white-space:nowrap;}
+  .pet-card-stars{font-size:13px; margin:4px 0 8px; letter-spacing:1px;}
+  .pet-card-portrait-wrap{background:linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.15)); border:1px solid rgba(232,196,104,.3);
+    border-radius:10px; padding:14px; text-align:center; margin-bottom:10px;}
+  .pet-card-portrait{font-size:64px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32));}
+  .pet-card-stats-row{display:flex; justify-content:space-between; background:rgba(0,0,0,.3); border:1px solid rgba(232,196,104,.25);
+    border-radius:8px; padding:8px 4px; margin-bottom:8px;}
+  .pcs-item{display:flex; flex-direction:column; align-items:center; font-size:14px; flex:1;}
+  .pcs-item b{font-size:13px; color:var(--text); margin-top:1px;}
+  .pcs-item small{font-size:8.5px; color:var(--dim); letter-spacing:.05em;}
+  .pet-card-moves{display:flex; flex-direction:column; gap:6px; margin-bottom:8px;}
+  .pcm-row{display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,.25);
+    border:1px solid rgba(255,255,255,.08); border-radius:8px; padding:7px 10px; text-align:left;}
+  .pcm-row b{font-size:12px; color:#8fe0a0; display:block;}
+  .pcm-row small{font-size:10px; color:var(--dim);}
+  .pcm-power{font-size:14px; font-weight:800; color:var(--gold, #e8c468); flex-shrink:0; margin-left:10px;}
+  .pet-card-footer{display:flex; gap:8px; margin-bottom:8px;}
+  .pcf-item{flex:1; background:rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.08); border-radius:8px;
+    padding:6px 8px; text-align:center;}
+  .pcf-item small{display:block; font-size:8px; color:var(--dim); letter-spacing:.06em; margin-bottom:2px;}
+  .pcf-item b{font-size:11.5px;}
+  .pet-card-flavor{font-size:11px; color:#c8b79c; font-style:italic; text-align:center;
+    border-top:1px solid rgba(232,196,104,.2); padding-top:8px; margin:0;}
+
+  /* ---------- Perfil: personaje central con equipo a los lados + poder total + barras de stats ---------- */
+  .cs-hero-row{display:flex; align-items:center; justify-content:space-between; gap:4px; margin:12px 0 6px;}
+  .cs-flank{display:flex; flex-direction:column; gap:7px; width:58px; flex-shrink:0;}
+  .cs-flank-item{position:relative; background:linear-gradient(180deg,#1c2438,#131a29); border:2px solid var(--line);
+    border-radius:10px; padding:5px 2px 4px; text-align:center; cursor:pointer;}
+  .cs-flank-item .cfi-icon{font-size:19px; line-height:1;}
+  .cs-flank-item .cfi-icon img{height:22px; width:auto; margin:0 auto; display:block;}
+  .cs-flank-item .cfi-bonus{font-size:9.5px; font-weight:800; color:var(--gold); margin-top:2px;}
+  .cs-flank-item.empty{opacity:.4;}
+  .cs-power{margin-top:8px; font-size:13px; font-weight:800; color:var(--gold); white-space:nowrap;}
+  .cs-stats-block{background:rgba(255,255,255,.03); border:1px solid var(--line); border-radius:12px; padding:12px;}
+  .cs-stat-bar{display:flex; align-items:center; gap:6px; font-size:10px;}
+  .cs-stat-bar .csb-label{width:44px; flex-shrink:0; color:var(--dim); text-align:left;}
+  .cs-stat-bar .csb-track{flex:1; height:6px; background:#0c0f18; border-radius:4px; overflow:hidden; border:1px solid var(--line);}
+  .cs-stat-bar .csb-fill{height:100%; border-radius:3px; transition:width .5s ease;}
+  .cs-stat-bar .csb-value{width:32px; text-align:right; font-weight:800; flex-shrink:0; color:var(--text);}
+
+  /* ---------- Coliseo: arena oscura con toques lunares/neón ---------- */
+  .coliseo-sheet{background:radial-gradient(ellipse at 50% -10%, rgba(157,120,255,.18), transparent 60%), linear-gradient(180deg,#161226,#0c0a16);
+    border:1px solid #6b4fd6;}
+  .coliseo-stat-row{display:flex; gap:8px; margin:14px 0;}
+  .coliseo-stat-card{flex:1; background:rgba(157,120,255,.1); border:1px solid rgba(157,120,255,.4); border-radius:12px;
+    padding:10px 6px; text-align:center;}
+  .csc-label{font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.04em;}
+  .csc-value{font-size:20px; font-weight:900; color:#c9b8ff; margin-top:2px;}
+  .coliseo-subtitle{font-size:13px; color:#c9b8ff; margin:16px 0 8px; font-weight:800;}
+  .coliseo-leaderboard{display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto; margin-bottom:16px;}
+  .coliseo-lb-row{display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.03); border:1px solid var(--line);
+    border-radius:10px; padding:7px 10px; font-size:12.5px;}
+  .coliseo-lb-row .lb-pos{width:22px; font-weight:900; color:#c9b8ff; text-align:center; flex-shrink:0;}
+  .coliseo-lb-row.me{border-color:#9d78ff; background:rgba(157,120,255,.12);}
+  .coliseo-lb-row .lb-name{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .coliseo-lb-row .lb-round{font-weight:900; color:#e8c468;}
+  .coliseo-buff-choices{display:flex; flex-direction:column; gap:10px; margin-top:16px;}
+  .coliseo-buff-card{background:rgba(157,120,255,.1); border:1px solid #6b4fd6; border-radius:14px; padding:14px;
+    text-align:left; cursor:pointer; color:var(--text); font-size:13.5px;}
+  .coliseo-buff-card b{display:block; color:#c9b8ff; font-size:14.5px; margin-bottom:2px;}
+  #coliseoBattleHud{position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:30;
+    background:rgba(20,10,40,.85); border:1px solid #6b4fd6; border-radius:12px; padding:5px 14px;
+    font-size:12.5px; font-weight:800; color:#c9b8ff; box-shadow:0 8px 20px rgba(0,0,0,.22);}
+
+  /* ---------- Esquiva activa: aviso de golpe fuerte + barra de tiempo para deslizar ---------- */
+  #dodgeQteOverlay{position:absolute; inset:0; z-index:60; pointer-events:none;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    background:rgba(139,20,20,.12); animation:dodgeQtePulseBg .5s ease-in-out infinite alternate;}
+  @keyframes dodgeQtePulseBg{0%{background-color:rgba(139,20,20,.08);}100%{background-color:rgba(139,20,20,.22);}}
+  #dodgeQteWarning{background:rgba(20,6,6,.9); border:2px solid var(--danger); color:#ffdcdc;
+    padding:10px 20px; border-radius:12px; font-size:15px; font-weight:800; text-align:center;
+    box-shadow:0 0 24px rgba(239,93,111,.6); animation:dodgeQteShake .3s ease-in-out infinite;}
+  @keyframes dodgeQteShake{0%,100%{transform:translateX(0);}50%{transform:translateX(3px);}}
+  #dodgeQteBar{width:200px; height:8px; background:rgba(0,0,0,.5); border:1px solid var(--danger); border-radius:5px; overflow:hidden;}
+  #dodgeQteBarFill{height:100%; background:linear-gradient(90deg,#ffdd55,var(--danger)); width:100%;}
+  #dodgeQteHint{color:#ffe8b0; font-size:13px; font-weight:700; text-shadow:0 2px 4px rgba(0,0,0,.7);}
+
+  /* ---------- QTE de puntos táctiles (Zarpazo Umbrío del Lobo Sombrío): 6 puntos, uno por vez,
+     en posiciones al azar — tocalos antes de que desaparezcan. ---------- */
+  #dotQteOverlay{position:absolute; inset:0; z-index:60; pointer-events:none;
+    display:flex; flex-direction:column; align-items:center; gap:10px; padding-top:14%;
+    background:rgba(90,20,140,.12); animation:dotQtePulseBg .5s ease-in-out infinite alternate;}
+  @keyframes dotQtePulseBg{0%{background-color:rgba(90,20,140,.08);}100%{background-color:rgba(90,20,140,.22);}}
+  #dotQteWarning{background:rgba(28,8,40,.9); border:2px solid #b98bff; color:#f1e3ff;
+    padding:10px 20px; border-radius:12px; font-size:15px; font-weight:800; text-align:center;
+    box-shadow:0 0 24px rgba(160,90,255,.6);}
+  #dotQteProgress{background:rgba(0,0,0,.55); color:#fff; font-weight:800; font-size:13px;
+    padding:4px 14px; border-radius:10px;}
+  .shadow-wolf-dot{position:absolute; width:62px; height:62px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #ffe6a8, #ff9a3c 60%, #b3501a 100%);
+    border:3px solid #fff3d6; box-shadow:0 0 18px rgba(255,170,60,.85), 0 4px 10px rgba(0,0,0,.4);
+    pointer-events:auto; display:flex; align-items:center; justify-content:center; font-size:26px;
+    animation:shadowWolfDotPop .16s ease; transition:opacity .15s ease, transform .15s ease;}
+  .shadow-wolf-dot.dot-leaving{opacity:0; transform:scale(.6);}
+  @keyframes shadowWolfDotPop{0%{transform:scale(.3);} 100%{transform:scale(1);}}
+
+  /* ---------- Golpe cargado: toca rápido para llenar la barra de poder ---------- */
+  #chargeTapOverlay{position:absolute; inset:0; z-index:60; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:12px; background:rgba(10,8,20,.75);}
+  #chargeTapTitle{color:var(--gold); font-weight:800; font-size:15px; text-align:center; padding:0 20px;}
+  #chargeTapBarWrap{width:220px; height:16px; background:rgba(0,0,0,.5); border:2px solid var(--gold); border-radius:8px; overflow:hidden;}
+  #chargeTapBarFill{height:100%; width:0%; background:linear-gradient(90deg,#ff9d4d,var(--gold)); transition:width .08s ease;}
+  #chargeTapCount{color:var(--text); font-weight:900; font-size:18px;}
+  #chargeTapButton{width:110px; height:110px; border-radius:50%; font-size:44px; border:3px solid var(--gold);
+    background:radial-gradient(circle, #3a2a10, #1a1206); box-shadow:0 8px 20px rgba(0,0,0,.22); color:var(--gold);}
+  #chargeTapButton:active{transform:scale(.92);}
+  #chargeTapTimeBarWrap{width:180px; height:9px; background:rgba(0,0,0,.5); border:1px solid var(--danger); border-radius:5px; overflow:hidden;}
+  #chargeTapTimeBarFill{height:100%; width:100%; background:linear-gradient(90deg,#ffdd55,var(--danger)); transition:width .05s linear;}
+  /* ---------- Hechizo del mago: seguir un patrón de deslizamientos en orden ---------- */
+  #spellPatternOverlay{position:absolute; inset:0; z-index:60; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; background:rgba(20,8,32,.75);}
+  #spellPatternTitle{color:#c98bf0; font-weight:800; font-size:15px; text-align:center; padding:0 20px;}
+  #spellPatternSequence{display:flex; gap:12px; font-size:30px;}
+  #spellPatternSequence span{opacity:.35; transition:opacity .2s ease, transform .2s ease;}
+  #spellPatternSequence span.done{opacity:1; color:#4fd67a; transform:scale(1.2);}
+  #spellPatternSequence span.current{opacity:1; color:#c98bf0; animation:spellPulse .6s ease-in-out infinite alternate;}
+  @keyframes spellPulse{0%{transform:scale(1);}100%{transform:scale(1.25);}}
+  #spellPatternHint{color:#e0c8ff; font-size:12.5px;}
+  #sweepBarWrap{width:220px; height:14px; background:rgba(0,0,0,.5); border:2px solid #c98bf0; border-radius:8px; overflow:hidden;}
+  #sweepBarFill{height:100%; width:0%; background:linear-gradient(90deg,#5ee1c9,#c98bf0); transition:width .05s linear;}
+  h1.title{font-size:20px; margin:0 0 2px; letter-spacing:.01em;}
+  p.sub{color:var(--dim); font-size:12.5px; margin:0 0 16px;}
+
+  /* class select */
+  .class-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .class-card{border:1px solid var(--line); background:var(--panel2); border-radius:16px; padding:14px 10px;
+    text-align:center; cursor:pointer; transition:border-color .15s, transform .1s;}
+  .class-card:active{transform:scale(.97);}
+  .class-card.sel{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset;}
+  .class-card.taken{opacity:.4; cursor:default;}
+  .class-card.taken:active{transform:none;}
+  .class-taken-badge{margin-top:6px; font-size:10px; font-weight:800; color:var(--accent);}
+  .char-select-list{display:flex; flex-direction:column; gap:12px; margin-bottom:6px;}
+  .big-continue-card{padding:18px; border-radius:18px;}
+  .big-continue-card .cc-emoji{font-size:38px;}
+  .big-continue-card .cc-name{font-size:17px;}
+  .big-continue-card .cc-meta{font-size:13px;}
+  .big-continue-card button.btn-continue-char{width:100%; margin-top:12px; padding:14px; font-size:15px;
+    border-radius:12px; border:none; background:var(--accent); color:#04231d; font-weight:800;}
+  .class-emoji{font-size:32px;}
+  .class-portrait-thumb{width:64px; height:64px; border-radius:50%; object-fit:cover; object-position:top center;
+    border:2px solid var(--line); margin:0 auto; display:block;}
+  .class-card.sel .class-portrait-thumb{border-color:var(--accent);}
+  .class-name{font-weight:800; margin-top:6px; font-size:13.5px;}
+  .class-desc{font-size:10.5px; color:var(--dim); margin-top:3px; line-height:1.35;}
+  .class-stats{display:flex; justify-content:center; gap:6px; margin-top:8px; flex-wrap:wrap;}
+  .stat-chip{font-size:9.5px; background:var(--panel); border:1px solid var(--line); border-radius:7px; padding:2px 6px; color:var(--dim);}
+
+  .gender-toggle{display:flex; gap:8px; margin:8px 0 2px;}
+  .gender-btn{flex:1; background:var(--panel2); border:1px solid var(--line); color:var(--dim);
+    border-radius:12px; padding:9px; font-weight:800; font-size:12.5px;}
+  .gender-btn.active{background:var(--accent); color:#04231d; border-color:var(--accent);}
+
+  input.namefield{width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--text);
+    border-radius:12px; padding:11px 12px; font-size:14px; margin:14px 0;}
+  input.namefield[readonly]{color:var(--dim); cursor:not-allowed; background:rgba(255,255,255,.02);}
+  .primarybtn{width:100%; background:linear-gradient(90deg,var(--accent),#8ef2de); color:#04231d; border:none;
+    border-radius:14px; padding:13px; font-weight:800; font-size:14.5px;}
+  .primarybtn:disabled{opacity:.4;}
+  .ghostbtn{width:100%; background:transparent; border:1px solid var(--line); color:var(--dim);
+    border-radius:14px; padding:11px; font-weight:700; font-size:13px; margin-top:8px;}
+
+  /* battle */
+  .battle-wrap{position:absolute; inset:0; z-index:110;
+    background:
+      linear-gradient(rgba(8,10,14,.35), rgba(8,10,14,.55) 40%, rgba(8,10,14,.85) 100%),
+      linear-gradient(180deg, #2f4a3d 0%, #24392f 38%, #1c2b23 60%, #14201a 100%);
+    display:flex; flex-direction:column;}
+  .battle-top{padding:14px 14px 4px; display:flex; justify-content:flex-end; gap:10px;}
+  #btnFleeCorner{position:absolute; top:10px; left:10px; z-index:30; width:40px; height:40px; border-radius:12px;
+    background:var(--panel); border:1px solid var(--line); color:var(--text); font-size:19px;
+    display:flex; align-items:center; justify-content:center; box-shadow:0 8px 20px rgba(0,0,0,.22); cursor:pointer;}
+  .battle-bottom{padding:4px 14px 10px; display:flex; flex-wrap:wrap; justify-content:flex-start; align-items:flex-end; gap:8px;}
+  .combatant{flex:1; background:linear-gradient(180deg, #1c2438, #131a29); border:2px solid var(--gold);
+    border-radius:10px; padding:9px 11px; box-shadow:0 0 0 1px rgba(0,0,0,.4) inset, 0 4px 10px rgba(0,0,0,.4);
+    position:relative;}
+  .battle-top .combatant, .battle-bottom .combatant, #partyStatusRow .combatant{flex:0 1 180px; max-width:180px; padding:7px 9px;}
+  .combatant.dead{opacity:.45;}
+  .combatant::before{content:""; position:absolute; inset:3px; border:1px solid rgba(232,196,104,.35); border-radius:6px; pointer-events:none;}
+  .combatant .name{font-weight:800; font-size:13px; display:flex; justify-content:space-between; gap:8px;}
+  .combatant .lvl{color:var(--gold); font-size:10.5px;}
+  .combatant.enemy .name{flex-direction:row;}
+  .stage{flex:1; display:flex; align-items:stretch; justify-content:space-between; padding:10px 26px 34px; position:relative;
+    overflow:hidden;}
+  .stage::after{content:""; position:absolute; left:0; right:0; bottom:18px; height:38px;
+    background:linear-gradient(180deg, rgba(196,164,108,.28), rgba(196,164,108,0)); border-top:2px solid rgba(196,164,108,.4);
+    box-shadow:0 1px 0 rgba(255,255,255,.06); pointer-events:none;}
+  .stage .sprite{font-size:64px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)); position:relative; z-index:1;}
+  /* estilo Golden Sun: tu equipo abajo a la izquierda (en primer plano), los enemigos arriba a la derecha (al fondo) */
+  /* estilo Golden Sun: tu equipo abajo a la izquierda (en primer plano), los enemigos arriba a la derecha (al fondo) */
+  .ally-side{display:flex; align-items:flex-end; gap:14px; align-self:flex-end; max-width:66%; flex-shrink:1; position:relative;}
+  .enemy-side{display:flex; align-items:flex-end; flex-direction:row-reverse; gap:6px; align-self:flex-start; padding-top:6px; max-width:62%; flex-shrink:0; position:relative;}
+  #oppPetStageSlot{position:relative; z-index:20;
+    display:flex; flex-direction:column; align-items:center; gap:2px;}
+  /* la mascota va al lado del jugador, como siempre — solo se le sube el z-index para que quede AL FRENTE
+     del sprite del jugador (antes quedaba tapada detrás de él). */
+  #petStageSlot{position:relative; z-index:20;
+    display:flex; flex-direction:column; align-items:center; gap:2px;}
+  #petStageSlot .pet-emoji, #oppPetStageSlot .pet-emoji{font-size:68px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 8px rgba(79,214,122,.6));
+    animation:petBob 1.8s ease-in-out infinite;}
+  /* en batalla de GRUPO hay más sprites compitiendo por espacio (compañeros + jefe), así que ahí se queda un poco más chica */
+  #battleWrap.group-mode #petStageSlot .pet-emoji, #battleWrap.group-mode #oppPetStageSlot .pet-emoji{font-size:46px;}
+  #petStageSlot .pet-emoji.hitshake, #oppPetStageSlot .pet-emoji.hitshake{animation:shake .55s;}
+  #petStageSlot .pet-emoji.attackp, #oppPetStageSlot .pet-emoji.attackp{animation:lungeR .5s;}
+  #petStageSlot .pet-hpbar, #oppPetStageSlot .pet-hpbar{width:74px; height:5px; border-radius:4px; background:#0c0f18; overflow:hidden; border:1px solid var(--line);}
+  #battleWrap.group-mode #petStageSlot .pet-hpbar, #battleWrap.group-mode #oppPetStageSlot .pet-hpbar{width:56px;}
+  #petStageSlot.pet-boss .pet-hpbar, #oppPetStageSlot.pet-boss .pet-hpbar{width:110px; height:6px;}
+  #petStageSlot .pet-hpfill, #oppPetStageSlot .pet-hpfill{height:100%; background:linear-gradient(90deg,#ff7a86,#4fd67a); transition:width .6s ease;}
+  #petStageSlot .pet-label, #oppPetStageSlot .pet-label{font-size:9px; color:#4fd67a; font-weight:700; background:rgba(0,0,0,.5); padding:1px 6px; border-radius:8px;}
+  @keyframes petBob{0%,100%{transform:translateY(0);}50%{transform:translateY(-6px);}}
+  #groupAllyStageRow{display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; max-width:100%;}
+  #groupAllyStageRow .ally-mini{display:flex; flex-direction:column; align-items:center; gap:4px; position:relative;}
+  #groupAllyStageRow .ally-mini .am-bar{width:52px; height:5px; border-radius:4px; background:#0c0f18; overflow:hidden; border:1px solid var(--line);}
+  #groupAllyStageRow .ally-mini .am-fill{height:100%; background:linear-gradient(90deg,#ff7a86,var(--hp));}
+  /* ventana de tamaño FIJO — un transform:scale por sí solo no libera espacio real del layout,
+     así que el recuadro en sí ya es chico y cualquier sobrante del arte se recorta adentro. */
+  #groupAllyStageRow .ally-mini .am-sprite{width:52px; height:76px; overflow:hidden; position:relative;
+    display:flex; align-items:flex-end; justify-content:center;}
+  #groupAllyStageRow .ally-mini .am-sprite img,
+  #groupAllyStageRow .ally-mini .am-sprite svg{transform:scale(.46); transform-origin:bottom center;}
+  #groupAllyStageRow .ally-mini.dead{opacity:.35;}
+  #spritePlayer{flex-shrink:1; min-width:0;}
+  /* en batalla de grupo, TU sprite pasa a la misma ventana fija que tus compañeros, para que
+     todos se vean del mismo tamaño (en vez de que tú salgas grande y ellos diminutos). */
+  #battleWrap.group-mode #spritePlayer{width:52px; height:76px; overflow:hidden; position:relative;
+    display:flex; align-items:flex-end; justify-content:center; font-size:inherit;}
+  #battleWrap.group-mode #spritePlayer img,
+  #battleWrap.group-mode #spritePlayer svg{transform:scale(.46); transform-origin:bottom center;}
+  #packStageRow{align-self:flex-start; padding-top:6px; flex-shrink:0; max-width:62%;}
+  /* el Lobo Umbrío como enemigo se ve más grande y corrido a la derecha cuando peleas solo (o en manada) —
+     en batalla de GRUPO se queda chico como estaba, porque ahí compite por espacio con tus compañeros. */
+  #spriteEnemy img[data-lobo="1"]{max-height:230px; max-width:240px; margin-right:-18px;}
+  #battleWrap.group-mode #spriteEnemy img[data-lobo="1"]{max-height:160px; max-width:170px; margin-right:0;}
+  #spriteEnemy img[data-demonio="1"]{max-height:230px; max-width:240px; margin-right:-18px; margin-top:-30px;}
+  #battleWrap.group-mode #spriteEnemy img[data-demonio="1"]{max-height:160px; max-width:170px; margin-right:0; margin-top:-18px;}
+  #spriteEnemy img[data-golem="1"]{max-height:190px; max-width:200px; margin-right:-18px; transform:scaleX(-1);}
+  #spriteEnemy img[data-golem="1"].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+  #battleWrap.group-mode #spriteEnemy img[data-golem="1"]{max-height:140px; max-width:150px; margin-right:0; transform:scaleX(-1);}
+  #battleWrap.group-mode #spriteEnemy img[data-golem="1"].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+  #spriteEnemy img[data-dragon="1"]{max-height:180px; max-width:190px; margin-right:-18px; transform:scaleX(-1);}
+  #spriteEnemy img[data-dragon="1"].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+  #battleWrap.group-mode #spriteEnemy img[data-dragon="1"]{max-height:135px; max-width:145px; margin-right:0; transform:scaleX(-1);}
+  #battleWrap.group-mode #spriteEnemy img[data-dragon="1"].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+  #spriteEnemy img[data-dragon-ancestral="1"]{max-height:210px; max-width:225px; margin-right:-18px;}
+  #battleWrap.group-mode #spriteEnemy img[data-dragon-ancestral="1"]{max-height:150px; max-width:160px; margin-right:0;}
+  #spriteEnemy img[data-lobo-nocturno="1"]{max-height:200px; max-width:215px; margin-right:-18px;}
+  #battleWrap.group-mode #spriteEnemy img[data-lobo-nocturno="1"]{max-height:145px; max-width:155px; margin-right:0;}
+  #spriteEnemy, .pack-stage-mon .psm-emoji{transform:scaleX(-1);} /* mira hacia el jugador, como en Golden Sun */
+  #spriteEnemy img{transform:none;} /* las ilustraciones/fotos no se voltean, solo los emoji genéricos */
+  .sprite.hitshake{animation:shake .55s;}
+  .sprite.attackp{animation:lungeR .5s;}
+  .sprite.attacke{animation:lungeL .5s;}
+  .sprite{position:relative;}
+  .am-sprite.hitshake{animation:allyShake .55s;}
+  .am-sprite.attackp{animation:allyLungeR .5s;}
+  .am-sprite.attacke{animation:allyLungeL .5s;}
+  @keyframes allyShake{0%,100%{transform:scale(.78) translateX(0)}25%{transform:scale(.78) translateX(-8px)}75%{transform:scale(.78) translateX(8px)}}
+  @keyframes allyLungeR{50%{transform:scale(.78) translateX(18px)}}
+  @keyframes allyLungeL{50%{transform:scale(.78) translateX(-18px)}}
+  .sprite.flash-red::after, .pack-stage-mon.flash-red::after, .ally-mini.flash-red::after{
+    content:""; position:absolute; inset:-6px; border-radius:16px; pointer-events:none;
+    background:rgba(239,93,111,.6); opacity:0; animation:flashPulse .55s ease;}
+  .sprite.flash-green::after, .pack-stage-mon.flash-green::after, .ally-mini.flash-green::after{
+    content:""; position:absolute; inset:-6px; border-radius:16px; pointer-events:none;
+    background:rgba(94,225,201,.55); opacity:0; animation:flashPulse .55s ease;}
+  .sprite.flash-orange::after, .pack-stage-mon.flash-orange::after, .ally-mini.flash-orange::after{
+    content:""; position:absolute; inset:-6px; border-radius:16px; pointer-events:none;
+    background:rgba(232,152,58,.6); opacity:0; animation:flashPulse .55s ease;}
+  .sprite.flash-purple::after, .pack-stage-mon.flash-purple::after, .ally-mini.flash-purple::after{
+    content:""; position:absolute; inset:-6px; border-radius:16px; pointer-events:none;
+    background:rgba(157,120,255,.6); opacity:0; animation:flashPulse .55s ease;}
+  @keyframes flashPulse{0%{opacity:0;}25%{opacity:1;}100%{opacity:0;}}
+  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+  @keyframes lungeR{50%{transform:translateX(18px) scale(1.05)}}
+  @keyframes lungeL{50%{transform:translateX(-18px) scale(1.05)}}
+  .vs{position:absolute; inset:0; z-index:2; pointer-events:none; display:flex; align-items:center; justify-content:center; overflow:hidden;}
+  .vs::before{content:""; position:absolute; width:160%; height:2px;
+    background:linear-gradient(90deg, transparent, rgba(232,196,104,.55) 25%, rgba(232,196,104,.55) 75%, transparent);
+    transform:rotate(32deg);}
+  .vs span{position:relative; z-index:1; background:#0a0e16; border:2px solid var(--gold,#e8c468); color:var(--gold,#e8c468);
+    font-weight:900; font-size:13px; width:34px; height:34px; border-radius:50%; box-shadow:0 8px 20px rgba(0,0,0,.22);
+    display:flex; align-items:center; justify-content:center;}
+
+  /* ---------- Movimiento definitivo: carga dorada + golpe pesado + impacto múltiple ---------- */
+  .sprite.ultimate-charging::before, .am-sprite.ultimate-charging::before{
+    content:""; position:absolute; inset:-14px; border-radius:50%; pointer-events:none; z-index:-1;
+    background:radial-gradient(circle, rgba(232,196,104,.55), rgba(232,196,104,0) 70%);
+    animation:ultimateAuraPulse 1.4s ease-in-out infinite;}
+  .sprite.ultimate-charging, .am-sprite.ultimate-charging{animation:ultimateCharge 1.4s ease-in-out infinite;
+    filter:drop-shadow(0 0 10px rgba(232,196,104,.8));}
+  @keyframes ultimateAuraPulse{0%,100%{opacity:.35; transform:scale(.85);}50%{opacity:.9; transform:scale(1.15);}}
+  @keyframes ultimateCharge{0%,100%{transform:scale(1);}50%{transform:scale(1.06);}}
+
+  .sprite.ultimate-strike{animation:ultimateLungeR 1.1s cubic-bezier(.2,.8,.2,1);}
+  .am-sprite.ultimate-strike{animation:ultimateAllyLungeR 1.1s cubic-bezier(.2,.8,.2,1);}
+  @keyframes ultimateLungeR{0%{transform:translateX(0) scale(1);}55%{transform:translateX(30px) scale(1.18);}100%{transform:translateX(0) scale(1);}}
+  @keyframes ultimateAllyLungeR{0%{transform:scale(.78) translateX(0);}55%{transform:scale(.94) translateX(26px);}100%{transform:scale(.78) translateX(0);}}
+  .sprite.ultimate-hit{animation:ultimateShake .9s;}
+  .am-sprite.ultimate-hit{animation:ultimateShakeAlly .9s;}
+  @keyframes ultimateShake{0%,100%{transform:translateX(0)}10%{transform:translateX(-14px)}25%{transform:translateX(12px)}40%{transform:translateX(-10px)}55%{transform:translateX(8px)}70%{transform:translateX(-6px)}85%{transform:translateX(4px)}}
+  @keyframes ultimateShakeAlly{0%,100%{transform:scale(.78) translateX(0)}10%{transform:scale(.78) translateX(-14px)}25%{transform:scale(.78) translateX(12px)}40%{transform:scale(.78) translateX(-10px)}55%{transform:scale(.78) translateX(8px)}70%{transform:scale(.78) translateX(-6px)}85%{transform:scale(.78) translateX(4px)}}
+  .sprite.flash-ultimate::after, .pack-stage-mon.flash-ultimate::after, .ally-mini.flash-ultimate::after{
+    content:""; position:absolute; inset:-8px; border-radius:16px; pointer-events:none;
+    background:rgba(255,210,90,.75); opacity:0; animation:flashPulseHeavy .9s ease;}
+  @keyframes flashPulseHeavy{
+    0%{opacity:0;} 10%{opacity:1;} 22%{opacity:.15;} 34%{opacity:1;} 46%{opacity:.15;}
+    58%{opacity:.9;} 72%{opacity:.1;} 100%{opacity:0;}}
+  .bar-fill.slow-drain{transition-duration:2.2s !important;}
+
+  #critPopup{position:absolute; top:8%; left:50%; transform:translate(-50%,-10px) scale(.6); z-index:30;
+    color:#ffde59; font-weight:900; font-size:17px; text-shadow:0 0 10px rgba(255,222,89,.9), 0 2px 3px rgba(0,0,0,.8);
+    opacity:0; pointer-events:none; white-space:nowrap;}
+  #critPopup.show{animation:critPop .9s ease;}
+  @keyframes critPop{
+    0%{opacity:0; transform:translate(-50%,10px) scale(.5);}
+    15%{opacity:1; transform:translate(-50%,-10px) scale(1.15);}
+    30%{transform:translate(-50%,-10px) scale(1);}
+    75%{opacity:1; transform:translate(-50%,-14px) scale(1);}
+    100%{opacity:0; transform:translate(-50%,-22px) scale(.95);}
+  }
+
+  /* ---------- Sprites de personaje (SVG) ---------- */
+  /* Generalizado (sin scoping a #spritePlayer) para que también anime el sprite
+     del rival en combate PvP, que ahora también puede mostrar un SVG de clase. */
+  .sprite svg.char-svg{width:92px; height:124px; overflow:visible;}
+
+  /* ---------- Sprites de combate (pose base / pose de ataque) ---------- */
+  img.battle-sprite-img{width:auto; max-height:160px; max-width:170px;
+    filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)); transition:transform .22s ease;}
+  img.battle-sprite-img.attacking{transform:scale(1.1);}
+  /* En PvP el rival ocupa el lado del "enemigo" (arriba a la derecha) pero el arte de personaje está dibujado
+     mirando hacia la derecha (como cuando es uno mismo, abajo a la izquierda) — se espeja para que mire
+     hacia el jugador (abajo a la izquierda) en vez de mirar hacia afuera. */
+  #spriteEnemy img.battle-sprite-img[data-classkey]{transform:scaleX(-1);}
+  #spriteEnemy img.battle-sprite-img[data-classkey].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+
+  /* ---------- Ilustraciones reales de personaje (recortadas del arte del juego) — usadas en el perfil ---------- */
+  .sprite img.class-portrait{width:auto; max-height:150px; max-width:130px; border-radius:16px;
+    object-fit:cover; box-shadow:0 8px 20px rgba(0,0,0,.22); border:2px solid rgba(255,255,255,.08);}
+  .sprite img.class-portrait.attacking{animation:portraitAttack .65s ease;}
+  @keyframes portraitAttack{0%{transform:translateX(0) scale(1);}45%{transform:translateX(16px) scale(1.06);}100%{transform:translateX(0) scale(1);}}
+
+  .me-portrait{width:auto; height:56px; border-radius:10px; object-fit:cover;
+    border:none; filter:drop-shadow(0 8px 14px rgba(0,0,0,.28)) drop-shadow(0 0 7px rgba(255,244,214,.22));}
+  .mini-portrait{width:auto; height:42px; border-radius:10px; object-fit:cover;}
+
+  svg.char-svg.attacking .weapon-sword{animation:swordSwing .5s ease;}
+  @keyframes swordSwing{0%{transform:rotate(-12deg);}45%{transform:rotate(78deg);}100%{transform:rotate(-12deg);}}
+
+  svg.char-svg.attacking .weapon-axe{animation:axeSwing .55s ease;}
+  @keyframes axeSwing{0%{transform:rotate(-100deg);}50%{transform:rotate(30deg);}100%{transform:rotate(-100deg);}}
+
+  svg.char-svg.attacking .weapon-staff{animation:staffTilt .5s ease;}
+  @keyframes staffTilt{0%{transform:rotate(0deg);}30%{transform:rotate(-16deg);}100%{transform:rotate(0deg);}}
+  svg.char-svg.attacking .orb{animation:orbPulse .5s ease;}
+  @keyframes orbPulse{0%{transform:scale(1); filter:drop-shadow(0 0 0 transparent);}40%{transform:scale(1.6); filter:drop-shadow(0 0 10px #c98bf0);}100%{transform:scale(1);}}
+  svg.char-svg.attacking .spark{animation:sparkFly .6s ease forwards; opacity:0;}
+  svg.char-svg.attacking .spark.s2{animation-delay:.08s;}
+  svg.char-svg.attacking .spark.s3{animation-delay:.16s;}
+  @keyframes sparkFly{0%{opacity:0; transform:translate(0,0) scale(.5);}25%{opacity:1;}100%{opacity:0; transform:translate(20px,-16px) scale(1.2);}}
+
+  svg.char-svg.attacking .bowstring{animation:stringPull .45s ease;}
+  @keyframes stringPull{0%{transform:translateX(0);}35%{transform:translateX(-8px);}65%{transform:translateX(3px);}100%{transform:translateX(0);}}
+  svg.char-svg.attacking .arrow{animation:arrowShot .5s ease forwards;}
+  @keyframes arrowShot{0%{transform:translateX(0); opacity:1;}20%{transform:translateX(-8px); opacity:1;}100%{transform:translateX(52px); opacity:0;}}
+
+  #battlelog{margin:0 14px 6px; background:linear-gradient(180deg, #1c2438, #131a29); border:2px solid var(--gold);
+    border-radius:10px; padding:7px 12px; font-size:11.5px; min-height:30px; max-height:54px; overflow-y:auto; color:var(--text);
+    box-shadow:0 0 0 1px rgba(0,0,0,.4) inset;}
+  .turn-timer-wrap{margin:0 14px 8px; height:5px; border-radius:4px; background:#0c0f18; overflow:hidden; border:1px solid var(--line);}
+  .turn-timer-fill{height:100%; width:100%; background:linear-gradient(90deg,var(--accent),var(--gold),var(--danger)); border-radius:4px;}
+
+  #movegrid{display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 14px 16px;}
+  .move-btn{background:linear-gradient(180deg, #1c2438, #131a29); border:2px solid var(--gold); border-radius:10px; padding:10px 30px 10px 10px;
+    text-align:left; color:var(--text); box-shadow:0 0 0 1px rgba(0,0,0,.4) inset; position:relative;}
+  .move-btn .mname{font-weight:800; font-size:12.5px; color:var(--gold);}
+  .move-btn .mmeta{font-size:9.5px; color:var(--dim); margin-top:2px;}
+  .move-btn.ultimate-move{border-color:#c98bf0; background:linear-gradient(180deg, #241c38, #191329);
+    box-shadow:0 0 10px rgba(201,139,240,.45), 0 0 0 1px rgba(0,0,0,.4) inset;
+    grid-column:1 / -1; display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .move-btn.ultimate-move .mname{color:#c98bf0; flex-shrink:0;}
+  .move-btn.ultimate-move .mmeta{margin-top:0;}
+  .move-info-eye{position:absolute; top:6px; right:6px; font-size:14px; padding:4px; line-height:1;
+    opacity:.85; cursor:pointer;}
+  .move-tooltip{position:fixed; z-index:400; background:#0c0f18; border:2px solid var(--gold); border-radius:10px;
+    padding:9px 11px; font-size:11.5px; color:var(--text); max-width:220px; box-shadow:0 8px 20px rgba(0,0,0,.22);
+    pointer-events:none; line-height:1.4;}
+  .move-tooltip b{color:var(--gold);}
+  .move-btn:disabled{opacity:.35;}
+  .move-btn.buff{border-color:#4aa3e0;}
+  .flee-btn{grid-column:1 / -1; background:transparent; border:1px dashed var(--line); color:var(--dim);
+    border-radius:12px; padding:9px; font-size:12px;}
+  .party-chip{background:linear-gradient(180deg, #1c2438, #131a29); border:2px solid var(--gold); border-radius:10px; padding:8px 10px;
+    font-size:11px; color:var(--text); min-width:150px; flex:0 1 200px; max-width:200px;
+    box-shadow:0 0 0 1px rgba(0,0,0,.4) inset; position:relative;}
+  .party-chip::before{content:""; position:absolute; inset:3px; border:1px solid rgba(232,196,104,.35); border-radius:6px; pointer-events:none;}
+  .party-chip .pc-name{font-weight:800; font-size:12.5px; display:flex; justify-content:space-between; margin-bottom:3px;}
+  .party-chip .pc-name .pc-lvl{color:var(--gold); font-size:10.5px;}
+  .party-chip .pc-bar{height:7px; border-radius:5px; background:#0c0f18; overflow:hidden; margin-top:3px; border:1px solid var(--line);}
+  .party-chip .pc-fill{height:100%; background:linear-gradient(90deg,#ff7a86,var(--hp)); transition:width .65s ease;}
+  .party-chip .pc-fill.pc-mp{background:linear-gradient(90deg,#5b8cff,var(--accent2));}
+  .party-chip.dead{opacity:.4;}
+
+  #mapPartyPanel{position:absolute; top:150px; left:10px; z-index:22; display:flex; flex-direction:column; gap:6px;}
+  #mapPartyPanel .mp-member{background:rgba(19,24,38,.9); border:1px solid var(--line); border-radius:10px;
+    padding:5px 9px; display:flex; align-items:center; gap:6px; box-shadow:0 8px 20px rgba(0,0,0,.22);}
+  #mapPartyPanel .mp-member.leader{border-color:var(--gold);}
+  #mapPartyPanel .mp-emoji{font-size:16px;}
+  #mapPartyPanel .mp-info{font-size:10px; color:var(--text); line-height:1.2;}
+  #mapPartyPanel .mp-info b{color:var(--accent);}
+
+  .pack-panel{background:linear-gradient(180deg, #1c2438, #131a29); border:2px solid var(--gold); border-radius:10px; padding:6px 8px;
+    font-size:10px; min-width:78px; cursor:pointer; transition:border-color .15s, opacity .9s ease;}
+  .pack-panel .pp-name{display:flex; justify-content:space-between; gap:4px; font-weight:700;}
+  .pack-panel .pp-bar{height:5px; border-radius:4px; background:#0c0f18; overflow:hidden; margin-top:3px; border:1px solid var(--line);}
+  .pack-panel .pp-fill{height:100%; background:linear-gradient(90deg,#ff7a86,var(--hp)); transition:width .6s ease;}
+  .pack-panel.selected{border-color:var(--accent); box-shadow:0 0 8px rgba(94,225,201,.5);}
+  .pack-panel.dead{opacity:.35; cursor:default;}
+
+  #packStageRow{display:flex; gap:0; align-items:flex-end; justify-content:flex-end; flex-wrap:nowrap;}
+  .pack-stage-mon{display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;
+    padding:4px 6px; border-radius:10px; border:2px solid transparent; transition:border-color .15s, opacity .9s ease;}
+  .pack-stage-mon.selected{border-color:var(--accent);}
+  .pack-stage-mon.dead{opacity:.3; cursor:default;}
+  .pack-stage-mon .psm-bar{width:52px; height:5px; border-radius:4px; background:#0c0f18; overflow:hidden; border:1px solid var(--line);}
+  .pack-stage-mon .psm-fill{height:100%; background:linear-gradient(90deg,#ff7a86,var(--hp)); transition:width .6s ease;}
+  .pack-stage-mon .psm-emoji{font-size:36px; transition:transform .18s ease;}
+  .pack-stage-mon .psm-emoji.attackp{animation:lungeR .5s;}
+  .pack-stage-mon .psm-emoji.attacke{animation:lungeL .5s;}
+  .pack-stage-mon .psm-emoji.hitshake{animation:shake .55s;}
+  .pack-stage-mon{position:relative;}
+
+  /* levelup / learn move */
+  .levelup-anim{text-align:center; margin-bottom:10px;}
+  .lv-badge{display:inline-block; background:var(--accent); color:#04231d; font-weight:900; font-size:13px;
+    padding:6px 14px; border-radius:20px;}
+  .stat-diff{display:flex; justify-content:space-between; font-size:12.5px; padding:6px 2px; border-bottom:1px dashed var(--line);}
+  .stat-diff b{color:var(--accent);}
+  .newmove-card{background:var(--panel2); border:1px solid var(--accent); border-radius:14px; padding:12px; margin:12px 0;}
+  .current-moves-list{display:flex; flex-direction:column; gap:6px; margin:10px 0;}
+  .cm-item{display:flex; justify-content:space-between; align-items:center; background:var(--panel2);
+    border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:12px;}
+  .cm-item button{background:var(--danger); color:#fff; border:none; border-radius:8px; padding:5px 8px; font-size:10.5px; font-weight:700;}
+
+  /* resultado de combate: barras de progreso XP */
+  #resultProgress{margin:10px 0 14px; display:flex; flex-direction:column; gap:8px;}
+  .result-prog-row{background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:8px 10px; text-align:left;}
+  .result-prog-head{display:flex; justify-content:space-between; gap:8px; font-size:11px; font-weight:800; margin-bottom:6px;}
+  .result-prog-meta{font-size:10px; color:var(--dim); margin-top:5px;}
+  .result-achievements{background:rgba(232,196,104,.12); border:1px solid var(--gold); color:var(--gold);
+    border-radius:10px; padding:8px 10px; font-size:11px; font-weight:800; text-align:center;}
+
+  /* inventory */
+  .inv-list{display:flex; flex-direction:column; gap:8px; margin-top:12px;}
+  .inv-item{display:flex; align-items:center; gap:10px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:12px; padding:9px 11px; position:relative; overflow:hidden;}
+  .inv-item .ie{font-size:22px;}
+  .friend-status-dot{position:absolute; bottom:-2px; right:-2px; width:10px; height:10px; border-radius:50%;
+    border:2px solid var(--panel2, #131a29);}
+  .friend-status-dot.online{background:#4fd67a; box-shadow:0 0 5px rgba(79,214,122,.7);}
+  .friend-status-dot.offline{background:#e05a4e;}
+  .inv-item .it{flex:1; font-size:12.5px;}
+  .inv-item .it small{display:block; color:var(--dim); font-size:10px;}
+  .inv-item .it .rtag{font-size:9px; font-weight:800; margin-left:4px;}
+  .shop-card .sc-name .rtag{font-size:9px; font-weight:800; margin-left:4px;}
+  .inv-item button{background:var(--accent); color:#04231d; border:none; border-radius:9px; padding:6px 10px; font-weight:800; font-size:11px;}
+  .empty-note{color:var(--dim); font-size:12.5px; text-align:center; padding:20px 0;}
+  .chat-bubble{max-width:78%; padding:8px 11px; border-radius:12px; font-size:12.5px; line-height:1.35;}
+  .chat-bubble.me{align-self:flex-end; background:var(--accent); color:#04231d; border-bottom-right-radius:3px;}
+  .chat-bubble.them{align-self:flex-start; background:var(--panel2); border:1px solid var(--line); border-bottom-left-radius:3px;}
+  .chat-bubble .ct{display:block; font-size:9px; opacity:.7; margin-top:2px;}
+
+  /* ---------- Tienda: pestañas de categoría ---------- */
+  .shop-tabs{display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 12px;}
+  .shop-tab{background:var(--panel2); border:1px solid var(--line); color:var(--dim);
+    border-radius:10px; padding:6px 10px; font-size:11px; font-weight:700;}
+  .shop-tab.active{background:var(--accent); color:#04231d; border-color:var(--accent);}
+  .stat-preview{font-size:9.5px; color:var(--accent); margin-top:2px;}
+
+  /* ---------- Rareza de objetos (5 niveles) ---------- */
+  .rarity-common{border-color:#5b6478;}
+  .rarity-uncommon{border-color:#4fd67a; box-shadow:0 0 8px rgba(79,214,122,.35);}
+  .rarity-rare{border-color:#4aa3e0; box-shadow:0 0 9px rgba(74,163,224,.45);}
+  .rarity-epic{border-color:#c98bf0 !important; box-shadow:0 0 14px rgba(201,139,240,.55);
+    animation: auraPulsePurple 2s ease-in-out infinite;}
+  .rarity-legendary{border-color:#e8c468 !important; box-shadow:0 0 16px rgba(232,196,104,.6);
+    animation: auraPulseGold 2s ease-in-out infinite;}
+  @keyframes auraPulsePurple{0%,100%{box-shadow:0 0 8px rgba(201,139,240,.45);}50%{box-shadow:0 0 20px rgba(201,139,240,.95);}}
+  @keyframes auraPulseGold{0%,100%{box-shadow:0 0 8px rgba(232,196,104,.5);}50%{box-shadow:0 0 22px rgba(232,196,104,1);}}
+
+  /* brillo diagonal recorriendo la fila (épico/legendario) */
+  .rarity-epic::before, .rarity-legendary::before{
+    content:""; position:absolute; top:0; left:-60%; width:40%; height:100%;
+    background:linear-gradient(115deg, transparent, rgba(255,255,255,.35), transparent);
+    animation: shimmerSweep 2.6s ease-in-out infinite; pointer-events:none;}
+  @keyframes shimmerSweep{0%{left:-60%;}100%{left:140%;}}
+
+  /* partículas flotantes (épico = morado, legendario = dorado) */
+  .rarity-epic .sparkle, .rarity-legendary .sparkle{
+    position:absolute; font-size:9px; pointer-events:none; opacity:0; animation: sparkleFloat 2.4s ease-in-out infinite;}
+  .rarity-epic .sparkle{color:#e7c1fb;}
+  .rarity-legendary .sparkle{color:#ffe9b0;}
+  .rarity-epic .sparkle.p1, .rarity-legendary .sparkle.p1{top:8px; right:34px; animation-delay:.1s;}
+  .rarity-epic .sparkle.p2, .rarity-legendary .sparkle.p2{bottom:10px; right:52px; animation-delay:.7s;}
+  .rarity-epic .sparkle.p3, .rarity-legendary .sparkle.p3{top:50%; right:16px; animation-delay:1.3s;}
+  @keyframes sparkleFloat{0%{opacity:0; transform:translateY(6px) scale(.6);}30%{opacity:1;}100%{opacity:0; transform:translateY(-10px) scale(1.1);}}
+
+  ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}

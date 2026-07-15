@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Ronda — RPG de Mapa Real</title>
+<link rel="stylesheet" href="./maplibre-gl.css"/>
+<link rel="stylesheet" href="./src/styles/main.css">
+</head>
+<body>
+
+<div id="map"></div>
+<div id="mapVignette"></div>
+<div id="wildEncounterFlash" class="hidden"></div>
+<div id="mapInnerFrame"></div>
+<div id="mapLightBeam"><div class="beam-spot"></div><div class="beam-cloud"></div></div>
+<div id="updateBanner" class="hidden">
+  🔄 Hay una nueva versión disponible. <button id="btnReloadUpdate">Actualizar ahora</button>
+</div>
+<div id="weatherEffects" class="hidden">
+  <div id="weatherSun"></div>
+  <div id="weatherClouds"></div>
+  <div id="weatherRain"></div>
+  <div id="weatherSnow"></div>
+  <div id="weatherWaterBoost"></div>
+</div>
+
+<!-- Efectos ambientales: no afectan el gameplay, solo hacen que el mapa nunca se vea estático -->
+<div id="ambientEffects">
+  <div id="ambientFog"></div>
+  <div id="ambientDust">
+    <span></span><span></span><span></span><span></span><span></span>
+    <span></span><span></span><span></span><span></span><span></span>
+  </div>
+  <div id="ambientLeaves">
+    <span>🍃</span><span>🍂</span><span>🍃</span><span>🍂</span><span>🍃</span><span>🍂</span>
+  </div>
+  <div id="ambientFireflies">
+    <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="buildVersionTag" style="position:absolute; bottom:-16px; left:4px; font-size:9px; color:rgba(255,255,255,.35); z-index:1;">build: REALTIME-BUILDER-SYNC-v77</div>
+  <div class="hud-card hud-card-v2" id="hudCard">
+    <div class="player-row" id="hudCardNormal">
+      <div class="p-icon" id="hudIcon" style="cursor:pointer; position:relative;"><span id="hudIconEmoji">🗡️</span>
+      </div>
+      <div class="p-info">
+        <div id="hudInfoNormal">
+          <div class="p-name-row">
+            <span class="p-name" id="hudName">—</span>
+            <span class="p-lvl" id="hudLvl">Nv. 1</span>
+            <span class="hud-res-inline"><span class="gold">🪙 <b id="statGold">0</b></span><span class="gold">💎 <b id="statCrystals">0</b></span></span>
+          </div>
+          <div class="hud-vitals-slot" id="hudVitalsSlot">
+            <div class="bar-wrap bar-wrap-v2"><div class="bar-fill bar-hp" id="hpFill" style="width:100%"></div></div>
+            <div class="bar-wrap bar-wrap-v2"><div class="bar-fill bar-mp" id="mpFill" style="width:100%"></div></div>
+          </div>
+          <div class="bar-wrap" style="display:none;"><div class="bar-fill bar-xp" id="xpFill" style="width:0%"></div></div>
+          <!-- Los atributos completos (ATK/AT.MÁG/DEF/VEL) ya no se muestran aquí durante la exploración —
+               siguen disponibles en tu Perfil (ícono de la izquierda). Se mantienen estos elementos ocultos
+               para no tocar la lógica de refreshHud(), que sigue actualizándolos igual que siempre. -->
+          <div class="mini-stats" style="display:none;">
+            <span>ATK <b id="statAtk">-</b></span>
+            <span>AT.MÁG <b id="statMatk">-</b></span>
+            <span>DEF <b id="statDef">-</b></span>
+            <span>VEL <b id="statSpd">-</b></span>
+          </div>
+          <div class="gps-status gps-status-v2">
+            <span class="gps-dot" id="gpsDot"></span><span id="gpsStatusText">GPS inactivo</span>
+            <span id="pointsBadge" class="hidden" style="margin-left:8px; color:var(--gold); font-weight:800; cursor:pointer;">🧬 <b id="pointsCount">0</b> pts. disponibles</span>
+          </div>
+        </div>
+      </div>
+      <div id="topbtns">
+        <div id="notifBellBadge" class="hidden" title="Notificaciones pendientes">🔔<span id="notifBellCount">0</span></div>
+        <button class="iconbtn" id="btnGps" title="GPS">📍</button>
+      </div>
+    </div>
+    <div class="hud-region-reveal hidden" id="hudRegionReveal">
+      <span class="hrr-icon" id="hudRegionRevealIcon">🌲</span>
+      <div class="hrr-text">
+        <div class="hrr-name" id="hudRegionRevealName">—</div>
+        <div class="hrr-level" id="hudRegionRevealLevel">—</div>
+      </div>
+    </div>
+  </div>
+  <div class="hud-context-bar" id="hudContextBar">
+    <span id="dayNightBadge">☀️ Día</span>
+    <span id="weatherBadge"></span>
+  </div>
+  <div class="gps-banner" id="gpsBanner">
+    <div class="gtxt" id="gpsBannerText">📍 El GPS requiere <b>HTTPS</b> y permisos de ubicación. Toca <b>Activar</b> para usar tu posición real.</div>
+    <button id="btnActivateGps">Activar</button>
+  </div>
+  <button class="iconbtn hidden" id="btnGpsDiagnose" title="Diagnóstico GPS" style="align-self:flex-end;">🛠️</button>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="heal-feedback-popup" id="healFeedbackPopup">
+  <div class="hfp-icon" id="healFeedbackIcon">❤️</div>
+  <div class="hfp-body">
+    <div class="hfp-label" id="healFeedbackLabel">Vida</div>
+    <div class="hfp-bar-track"><div class="hfp-bar-fill" id="healFeedbackBarFill"></div></div>
+    <div class="hfp-numbers"><span id="healFeedbackBefore">0</span> → <span id="healFeedbackAfter">0</span> <span class="hfp-gain" id="healFeedbackGain"></span></div>
+  </div>
+</div>
+<div class="shadow-wolf-dialogue" id="shadowWolfDialoguePopup">
+  <span class="swd-icon" id="shadowWolfDialogueIcon">🐺</span><span class="swd-text" id="shadowWolfDialogueText"></span>
+</div>
+<div id="slideNoticeWrap"></div>
+
+<!-- TORRE DE CONTROL -->
+<div class="overlay hidden" id="towerOverlay">
+  <div class="sheet" style="text-align:center;">
+    <div style="font-size:46px;">🗼</div>
+    <h1 class="title" id="towerName">Torre</h1>
+    <p class="sub" id="towerOwnerLine">Cargando...</p>
+    <div class="eyebrow" style="margin-top:10px;">Recompensa</div>
+    <p class="sub">💰 50 oro por cada hora que sea tuya.</p>
+    <button class="primarybtn" id="btnTowerChallenge">⚔️ Retar por la torre</button>
+    <button class="ghostbtn" id="btnTowerClose">Cerrar</button>
+  </div>
+</div>
+<div id="campfireHealBadge" class="hidden">🔥 Curándote junto a la fogata...</div>
+<div id="gatherProgressWrap" class="hidden">
+  <div id="gatherProgressLabel">🌳 Talando...</div>
+  <div id="gatherProgressBarWrap"><div id="gatherProgressFill"></div></div>
+</div>
+
+<!-- PANEL DE GRUPO EN EL MAPA (lado izquierdo, vertical) -->
+<div id="mapPartyPanel" class="hidden"></div>
+
+<div id="bottombar">
+  <button class="fab" id="btnRecenter" style="width:68px; height:68px; padding:0; font-size:30px;" title="Centrar mapa">🎯</button>
+  <button class="fab" id="btnResetCompass" style="width:44px; padding:0; font-size:19px;" title="Norte arriba, sin inclinar">🧭</button>
+  <div id="nearbyBossPanel"></div>
+</div>
+
+<!-- Barra de herramientas del Modo Constructor (el botón que lo activa vive ahora dentro del
+     menú ☰, agregado dinámicamente solo para Hacker994 — ver setupBuilderModeUI en main.js) -->
+<div id="builderModeBar">
+  <div id="builderToolbar" class="hidden">
+    <button data-add-kind="tower">🗼 +</button>
+    <button data-add-kind="campfire">🔥 +</button>
+    <button data-add-kind="upgrade">⚒️ +</button>
+    <button data-add-kind="shrine">⛲ +</button>
+    <button data-add-kind="tree">🌳 +</button>
+    <span id="builderHint">Arrastra para mover · toca para borrar</span>
+  </div>
+</div>
+<div id="floatingSideBtns">
+  <button class="floating-side-btn" id="btnShop" title="Tienda">🏪</button>
+  <button class="floating-side-btn" id="btnInv" title="Inventario">🎒<span class="notif-dot" id="invNotifDot"></span></button>
+  <button class="floating-side-btn" id="btnRegions" title="Regiones">🗺️</button>
+  <!-- El Coliseo ahora es una ubicación permanente en el mapa (Mapa Vivo, Capa 1) — ver drawColiseoMarker. -->
+</div>
+
+<div id="fabMenuBackdrop"></div>
+<div id="fabMenu">
+  <div class="wheel-overlay-content" id="wheelOverlayContent">
+    <div class="wheel-menu" id="wheelMenu">
+      <div class="wheel-ring">
+        <button class="wheel-slice wheel-slice-0" id="btnFriends"><span class="wheel-slice-bg"></span></button>
+        <button class="wheel-slice wheel-slice-1" id="btnParty"><span class="wheel-slice-bg"></span></button>
+        <button class="wheel-slice wheel-slice-2" id="btnAttrs"><span class="wheel-slice-bg"></span></button>
+        <button class="wheel-slice wheel-slice-3" id="btnBases"><span class="wheel-slice-bg"></span></button>
+        <button class="wheel-slice wheel-slice-4" id="btnForge"><span class="wheel-slice-bg"></span></button>
+        <button class="wheel-slice wheel-slice-5" id="btnEquip"><span class="wheel-slice-bg"></span></button>
+        <button class="wheel-slice wheel-slice-6" id="btnPets"><span class="wheel-slice-bg"></span></button>
+        <button class="wheel-slice wheel-slice-7" id="btnReturnToMenu"><span class="wheel-slice-bg"></span></button>
+        <div class="wheel-slice-content wheel-slice-content-0">👥<span>Amigos</span></div>
+        <div class="wheel-slice-content wheel-slice-content-1">🛡️<span>Grupo</span></div>
+        <div class="wheel-slice-content wheel-slice-content-2">🧬<span>Atributos</span></div>
+        <div class="wheel-slice-content wheel-slice-content-3">🏠<span>Bases</span></div>
+        <div class="wheel-slice-content wheel-slice-content-4">🔨<span>Constructor</span></div>
+        <div class="wheel-slice-content wheel-slice-content-5">🛡️<span>Equipo</span></div>
+        <div class="wheel-slice-content wheel-slice-content-6">🐾<span>Mascotas</span></div>
+        <div class="wheel-slice-content wheel-slice-content-7">🚪<span>Menú principal</span></div>
+        <div class="wheel-gem wheel-gem-0"></div><div class="wheel-gem wheel-gem-1"></div>
+        <div class="wheel-gem wheel-gem-2"></div><div class="wheel-gem wheel-gem-3"></div>
+        <div class="wheel-gem wheel-gem-4"></div><div class="wheel-gem wheel-gem-5"></div>
+        <div class="wheel-gem wheel-gem-6"></div><div class="wheel-gem wheel-gem-7"></div>
+      </div>
+      <div class="wheel-hub"><span class="wheel-hub-star">✦</span></div>
+    </div>
+    <div class="wheel-secondary-row"></div>
+  </div>
+  <button class="fab-main" id="btnFabToggle">☰</button>
+</div>
+
+<!-- OTHER PLAYER ACTIONS -->
+<div class="overlay hidden" id="playerActionOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:38px" id="paEmoji">🧙</div>
+    <h1 class="title" id="paName">—</h1>
+    <p class="sub" id="paMeta">—</p>
+    <button class="primarybtn" id="btnChallenge">⚔️ Retar a duelo</button>
+    <button class="ghostbtn" id="btnInviteParty" style="border-color:var(--gold); color:var(--gold);">🛡️ Invitar al grupo</button>
+    <button class="ghostbtn" id="btnTrade" style="border-color:var(--accent); color:var(--accent);">🎁 Proponer intercambio</button>
+    <button class="ghostbtn" id="btnAddFriend" style="border-color:var(--accent2); color:var(--accent2);">👥 Agregar a amigos</button>
+    <button class="ghostbtn" id="btnClosePlayerAction">Cerrar</button>
+  </div>
+</div>
+
+<!-- TRADE ITEM PICKER -->
+<div class="overlay hidden" id="tradePickOverlay">
+  <div class="sheet">
+    <h1 class="title">Elige qué enviar</h1>
+    <p class="sub">Se lo darás como regalo si acepta.</p>
+    <div class="inv-list" id="tradeItemList"></div>
+    <button class="ghostbtn" id="btnCancelTrade">Cancelar</button>
+  </div>
+</div>
+
+<!-- INCOMING NOTICE (challenge result / trade offer) -->
+<div class="overlay hidden" id="noticeOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:40px" id="noticeEmoji">📨</div>
+    <h1 class="title" id="noticeTitle">—</h1>
+    <p class="sub" id="noticeSub">—</p>
+    <div id="noticeActions"></div>
+    <button class="ghostbtn" id="btnCloseNotice">Cerrar</button>
+  </div>
+</div>
+
+<!-- PARTY STATUS -->
+<div class="overlay hidden" id="partyOverlay">
+  <div class="sheet">
+    <h1 class="title">Grupo</h1>
+    <p class="sub">Hasta 5 jugadores. El líder inicia los combates conjuntos contra enemigos reforzados.</p>
+    <div class="inv-list" id="partyList"></div>
+    <button class="primarybtn hidden" id="btnCreateParty">🛡️ Crear grupo</button>
+    <button class="ghostbtn" id="btnLeaveParty" style="border-color:var(--danger); color:var(--danger);">Salir del grupo</button>
+    <button class="ghostbtn" id="btnCloseParty">Cerrar</button>
+  </div>
+</div>
+
+<!-- FRIENDS LIST -->
+<div class="overlay hidden" id="friendsOverlay">
+  <div class="sheet">
+    <h1 class="title">Amigos</h1>
+    <p class="sub">Agrégalos por proximidad en el mapa, o escribiendo su código de amigo.</p>
+    <div style="display:flex; gap:8px; margin-bottom:14px;">
+      <input class="namefield" id="friendCodeInput" placeholder="Código de amigo (ej: Aran-4821)" style="margin:0; flex:1;">
+      <button class="primarybtn" id="btnAddByCode" style="width:auto; padding:0 16px;">Agregar</button>
+    </div>
+    <div class="inv-list" id="friendsList"></div>
+    <button class="ghostbtn" id="btnCloseFriends">Cerrar</button>
+  </div>
+</div>
+
+<!-- CHAT -->
+<div class="overlay hidden" id="chatOverlay">
+  <div class="sheet" style="display:flex; flex-direction:column; max-height:80vh;">
+    <h1 class="title" id="chatWithName">Chat</h1>
+    <p class="sub">Los mensajes solo se ven mientras ambos tengan el juego abierto.</p>
+    <div id="chatMessages" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; margin:8px 0; min-height:180px; max-height:340px;"></div>
+    <div style="display:flex; gap:8px;">
+      <input class="namefield" id="chatInput" placeholder="Escribe un mensaje…" style="margin:0; flex:1;" maxlength="200">
+      <button class="primarybtn" id="btnSendChat" style="width:auto; padding:0 16px;">Enviar</button>
+    </div>
+    <button class="ghostbtn" id="btnCloseChat" style="margin-top:10px;">Cerrar</button>
+  </div>
+</div>
+
+<!-- EQUIPMENT -->
+<div class="overlay hidden" id="equipOverlay">
+  <div class="sheet">
+    <h1 class="title">Equipo</h1>
+    <p class="sub">Lo que llevas puesto ahora mismo. Equipa objetos desde tu inventario. Para <b>mejorar</b> tu equipo, busca un ⚒️ punto de mejora en un parque o centro comercial del mapa.</p>
+    <div class="inv-list" id="equipList"></div>
+    <button class="ghostbtn" id="btnCloseEquip">Cerrar</button>
+  </div>
+</div>
+
+<!-- ATTRIBUTES / PUNTOS -->
+<div class="overlay hidden" id="attrsOverlay">
+  <div class="sheet">
+    <h1 class="title">Atributos</h1>
+    <p class="sub">Distribuye tus puntos como quieras — construye tu propio estilo de personaje.</p>
+    <div class="continue-card" style="text-align:center; margin-bottom:14px;">
+      <div class="cc-name">🧬 Puntos disponibles</div>
+      <div style="font-size:28px; font-weight:900; color:var(--gold);" id="attrsPointsLeft">0</div>
+    </div>
+    <div class="inv-list" id="attrsList"></div>
+    <button class="ghostbtn" id="btnResetAttrs" style="border-color:var(--danger); color:var(--danger); margin-top:10px;">↺ Reiniciar puntos distribuidos</button>
+    <button class="ghostbtn" id="btnCloseAttrs">Cerrar</button>
+  </div>
+</div>
+
+<!-- TIENDA ESTÁTICA -->
+<div class="overlay hidden" id="shopOverlay">
+  <div class="sheet shop-sheet">
+    <button class="floating-close-btn" id="btnCloseShop">✕</button>
+    <div class="floating-gold-badge">💰 <span id="shopGoldDisplay">0</span></div>
+    <h1 class="title">🏪 Tienda</h1>
+    <p class="sub">Compra con tus monedas, o vende lo que no necesites.</p>
+    <div class="shop-mode-tabs">
+      <button class="shop-mode-btn active" id="btnShopModeBuy">🛒 Comprar</button>
+      <button class="shop-mode-btn" id="btnShopModeSell">💸 Vender</button>
+    </div>
+    <div class="gift-code-row" id="giftCodeRow">
+      <input type="text" id="giftCodeInput" placeholder="🎁 Código de regalo" maxlength="30" autocapitalize="characters">
+      <button class="ghostbtn" id="btnRedeemGiftCode" style="width:auto; padding:8px 14px;">Canjear</button>
+    </div>
+    <div class="base-shop-card" id="baseShopCard">
+      <div class="bsc-icon">🏠</div>
+      <div class="bsc-info">
+        <div class="bsc-title">Base personal</div>
+        <div class="bsc-desc" id="baseShopDesc">Un cofre propio en el mapa, solo tuyo. Otros jugadores lo verán, pero solo tú puedes entrar.</div>
+        <div class="bsc-costs" id="baseShopCosts">🪵300 · 🪨120 · 🔩40 · 🪙500</div>
+      </div>
+      <button class="primarybtn" id="btnBuyBase" style="width:auto; padding:8px 14px;">Construir</button>
+    </div>
+    <div class="base-shop-card" id="pickaxeShopCard">
+      <div class="bsc-icon">⛏️</div>
+      <div class="bsc-info">
+        <div class="bsc-title">Pico de recolección</div>
+        <div class="bsc-desc">Sin él no puedes talar árboles, picar piedra ni extraer hierro. No se equipa: actúa solo, y se va gastando con el uso.</div>
+        <div class="bsc-costs" id="pickaxeShopStatus"></div>
+      </div>
+    </div>
+    <div class="pickaxe-tier-row" id="pickaxeTierRow">
+      <button class="pickaxe-tier-btn" data-tier="madera">⛏️<br>Madera<br><small>🪙80</small></button>
+      <button class="pickaxe-tier-btn" data-tier="hierro">⛏️<br>Hierro<br><small>🪙220</small></button>
+      <button class="pickaxe-tier-btn" data-tier="acero">⛏️<br>Acero<br><small>🪙450</small></button>
+    </div>
+    <div class="shop-tabs" id="shopTabs"></div>
+    <div class="shop-grid" id="shopBuyList"></div>
+    <div class="shop-pager hidden" id="shopPager">
+      <button class="ghostbtn" id="btnShopPrevPage" style="width:auto; padding:6px 14px;">‹ Anterior</button>
+      <span id="shopPageLabel" style="align-self:center; font-size:12px; color:var(--dim);">Página 1/1</span>
+      <button class="ghostbtn" id="btnShopNextPage" style="width:auto; padding:6px 14px;">Siguiente ›</button>
+    </div>
+    <div class="shop-grid hidden" id="shopSellList"></div>
+  </div>
+</div>
+
+<!-- NPC COMERCIANTE (objetos exclusivos) -->
+<div class="overlay hidden" id="merchantOverlay">
+  <div class="sheet">
+    <h1 class="title">🥷🛍️ Comerciante Errante</h1>
+    <p class="sub">Objetos únicos y exclusivos que <b>no</b> encontrarás en la tienda del menú.</p>
+    <div class="result-prog-meta" id="merchantTimeLeft" style="text-align:center; margin-bottom:8px;"></div>
+    <div class="continue-card" style="text-align:center; margin-bottom:12px; padding:10px;">
+      <div class="cc-name" style="font-size:11px;">Tu oro</div>
+      <div style="font-size:24px; font-weight:900; color:var(--gold);">💰 <span id="merchantGoldDisplay">0</span></div>
+    </div>
+    <div class="inv-list" id="merchantBuyList"></div>
+    <button class="ghostbtn" id="btnCloseMerchant">Cerrar</button>
+  </div>
+</div>
+
+<!-- BOSS INFO MODAL -->
+<div class="overlay hidden" id="bossInfoOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:52px" id="bossEmoji">👹</div>
+    <h1 class="title" id="bossName">—</h1>
+    <p class="sub" id="bossLevelLine">—</p>
+    <div id="bossDifficultyBadge" style="display:inline-block; padding:6px 14px; border-radius:20px; font-weight:800; font-size:12.5px; margin:6px 0 12px;">—</div>
+    <p class="sub" id="bossRecommendation" style="margin-top:-4px;"></p>
+    <p class="sub" id="bossTimeLeft" style="margin-top:-6px;"></p>
+    <button class="primarybtn" id="btnBossEngage">⚔️ Enfrentar</button>
+    <button class="ghostbtn" id="btnBossCancel">Cancelar</button>
+  </div>
+</div>
+
+<!-- REGIONES DE NEIVA (mini-mapa de progreso) -->
+<div class="overlay hidden" id="regionsOverlay">
+  <div class="sheet">
+    <h1 class="title" id="regionsTitle">🗺️ Regiones de Neiva</h1>
+    <p class="sub">Cada zona de la ciudad tiene sus propios monstruos. Recórrela para descubrirla.</p>
+    <div id="regionsList" style="display:flex; flex-direction:column; gap:8px;"></div>
+    <button class="ghostbtn" id="btnCloseRegions" style="margin-top:12px;">Cerrar</button>
+  </div>
+</div>
+
+<!-- NOTIFICACIONES PENDIENTES (solicitudes de amistad / grupo) -->
+<div class="overlay hidden" id="notifPanelOverlay">
+  <div class="sheet">
+    <h1 class="title">🔔 Notificaciones</h1>
+    <p class="sub">Solicitudes pendientes por resolver (no se pierden si cierras la ventana sin querer).</p>
+    <div class="inv-list" id="notifPanelList"></div>
+    <button class="ghostbtn" id="btnCloseNotifPanel">Cerrar</button>
+  </div>
+</div>
+
+<!-- PUNTO DE MEJORA (parque / centro comercial) -->
+<div class="overlay hidden" id="upgradeStationOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:48px">⚒️</div>
+    <h1 class="title" id="upgStationName">Punto de Mejora</h1>
+    <p class="sub">Aquí puedes mejorar tu equipo o recordar un movimiento que olvidaste.</p>
+    <button class="primarybtn" id="btnUpgStationEquip">🔧 Mejorar equipo</button>
+    <button class="primarybtn" id="btnUpgStationRecall" style="background:var(--accent2);">🔮 Recordar movimiento olvidado (💰<span id="upgStationRecallCost">40</span>)</button>
+    <button class="ghostbtn" id="btnUpgStationClose">Cerrar</button>
+  </div>
+</div>
+
+<!-- Elegir cuál pieza de equipo mejorar -->
+<div class="overlay hidden" id="upgradeEquipPickOverlay">
+  <div class="sheet">
+    <h1 class="title">🔧 ¿Qué quieres mejorar?</h1>
+    <p class="sub">Sube el nivel de mejora de una pieza que ya tengas equipada.</p>
+    <div class="inv-list" id="upgradeEquipPickList"></div>
+    <button class="ghostbtn" id="btnCloseUpgradeEquipPick">Cerrar</button>
+  </div>
+</div>
+
+<!-- Elegir a cuál mascota aplicar un ítem -->
+<div class="overlay hidden" id="petItemPickOverlay">
+  <div class="sheet">
+    <h1 class="title">🦴 ¿A cuál mascota se lo das?</h1>
+    <p class="sub">Sube el nivel de la mascota que elijas.</p>
+    <div class="inv-list" id="petItemPickList"></div>
+    <button class="ghostbtn" id="btnClosePetItemPick">Cancelar</button>
+  </div>
+</div>
+
+<!-- Elegir qué equipar en un hueco vacío (se abre al tocar un hueco vacío en el Perfil) -->
+<div class="overlay hidden" id="equipSlotPickOverlay">
+  <div class="sheet">
+    <h1 class="title" id="equipSlotPickTitle">¿Qué quieres equipar?</h1>
+    <p class="sub">Objetos de tu inventario que sirven para este hueco.</p>
+    <div class="inv-list" id="equipSlotPickList"></div>
+    <button class="ghostbtn" id="btnCloseEquipSlotPick">Cancelar</button>
+  </div>
+</div>
+
+<!-- MASCOTAS -->
+<div class="overlay hidden" id="petSummonOverlay">
+  <div class="sheet">
+    <h1 class="title">🐾 ¿A quién invocas?</h1>
+    <p class="sub">Invocar gasta tu turno de ataque — solo puedes tener 1 mascota activa a la vez en este combate. Elige bien: hay mascotas más de ataque y otras más de soporte.</p>
+    <div class="inv-list" id="petSummonList"></div>
+    <button class="ghostbtn" id="btnClosePetSummon">Cancelar</button>
+  </div>
+</div>
+
+<!-- Elegir pocion para curar mascota -->
+<div class="overlay hidden" id="healPetPickOverlay">
+  <div class="sheet">
+    <h1 class="title">🧪 ¿Con cuál poción la curas?</h1>
+    <p class="sub">Restaura la vida de tu mascota según cuánto cure la poción.</p>
+    <div class="inv-list" id="healPetPickList"></div>
+    <button class="ghostbtn" id="btnCloseHealPetPick">Cerrar</button>
+  </div>
+</div>
+
+<!-- DETALLE DE MASCOTA -->
+<div class="overlay hidden" id="petDetailOverlay">
+  <div class="sheet pet-card-sheet">
+    <div class="pet-card-flip-wrap" id="petCardFlipWrap">
+      <div class="pet-card-flip-inner" id="petCardFlipInner">
+        <div class="pet-card pet-card-front">
+          <div class="pet-card-topgem"></div>
+          <div class="pet-card-header">
+            <div>
+              <h1 class="pet-card-title" id="petDetailTitle">Nombre</h1>
+              <div class="pet-card-type" id="petDetailTypeLabel">Especie</div>
+            </div>
+            <div class="pet-card-levelbadge" id="petDetailLevelBadge">Nv.1</div>
+          </div>
+          <div class="pet-card-stars" id="petDetailStars"></div>
+          <div class="pet-card-portrait-wrap"><div class="pet-card-portrait" id="petDetailEmoji">🐾</div></div>
+          <div class="pet-card-stats-row" id="petDetailStatsRow"></div>
+          <div class="pet-card-moves" id="petDetailMoves"></div>
+          <div class="pet-card-footer" id="petDetailFooter"></div>
+          <p class="pet-card-flavor" id="petDetailFlavor"></p>
+        </div>
+        <div class="pet-card pet-card-back">
+          <div class="pet-card-back-ring"></div>
+          <div class="pet-card-back-emblem">🐾</div>
+          <div class="pet-card-back-title">RONDA RPG·GO</div>
+          <div class="pet-card-back-sub">Colección de Mascotas</div>
+        </div>
+      </div>
+    </div>
+    <p class="pet-card-hint">↔ Desliza la carta para voltearla</p>
+
+    <input class="namefield" id="petDetailNameInput" maxlength="16" style="text-align:center; margin-top:14px;">
+    <div class="eyebrow" style="text-align:left; margin-top:8px;">Vida</div>
+    <div class="bar-wrap"><div class="bar-fill" id="petDetailHpFill" style="background:linear-gradient(90deg,#ff7a86,#4fd67a);"></div></div>
+    <div class="sub" id="petDetailHpLabel" style="text-align:left; margin-top:2px;">—</div>
+    <button class="ghostbtn" id="btnHealPet" style="color:#4fd67a; border-color:#4fd67a; margin-top:4px;">🧪 Curar con poción</button>
+    <div class="eyebrow" style="text-align:left; margin-top:8px;">Experiencia</div>
+    <div class="bar-wrap"><div class="bar-fill" id="petDetailXpFill" style="background:linear-gradient(90deg,#5b8cff,#c98bf0);"></div></div>
+    <div class="sub" id="petDetailXpLabel" style="text-align:left; margin-top:2px;">—</div>
+    <div class="eyebrow" style="text-align:left; margin-top:10px;">Accesorios</div>
+    <p class="sub" id="petDetailAccessory" style="text-align:left;">Sin accesorios equipados (próximamente).</p>
+    <button class="primarybtn" id="btnSavePetName">Guardar nombre</button>
+    <button class="ghostbtn" id="btnReleasePet" style="color:var(--danger); border-color:var(--danger);">🕊️ Liberar mascota</button>
+    <button class="ghostbtn" id="btnClosePetDetail">Cerrar</button>
+  </div>
+</div>
+
+<!-- CONFIRMAR LIBERAR MASCOTA -->
+<div class="overlay hidden" id="releasePetOverlay">
+  <div class="sheet" style="text-align:center; max-width:360px;">
+    <div style="font-size:44px;" id="releasePetEmoji">🕊️</div>
+    <h1 class="title">¿Liberar a esta mascota?</h1>
+    <p class="sub" id="releasePetSub">Esta acción no se puede deshacer.</p>
+    <button class="primarybtn" id="btnConfirmReleasePet" style="background:var(--danger); border-color:var(--danger);">Sí, liberarla</button>
+    <button class="ghostbtn" id="btnCancelReleasePet">Cancelar</button>
+  </div>
+</div>
+
+<!-- MASCOTAS -->
+<div class="overlay hidden" id="petsOverlay">
+  <div class="sheet">
+    <h1 class="title">🐾 Mascotas</h1>
+    <p class="sub">Monstruos que capturaste con la 🎴 Carta de Captura. Por ahora se guardan aquí como colección — más adelante podrán pelear contigo.</p>
+    <div class="pet-mini-grid" id="petsList"></div>
+    <button class="ghostbtn" id="btnClosePets">Cerrar</button>
+  </div>
+</div>
+
+<!-- COLISEO -->
+<div class="overlay hidden" id="coliseoOverlay">
+  <div class="sheet coliseo-sheet">
+    <h1 class="title">🏟️ Coliseo</h1>
+    <p class="sub">Sobrevive tantas rondas como puedas. Cada victoria aumenta la dificultad.</p>
+    <div class="coliseo-stat-row">
+      <div class="coliseo-stat-card"><div class="csc-label">Mejor ronda</div><div class="csc-value" id="coliseoBestRound">0</div></div>
+      <div class="coliseo-stat-card"><div class="csc-label">Última run</div><div class="csc-value" id="coliseoLastRound">0</div></div>
+      <div class="coliseo-stat-card"><div class="csc-label">Runs jugadas</div><div class="csc-value" id="coliseoTotalRuns">0</div></div>
+    </div>
+    <h2 class="coliseo-subtitle">🏆 Ranking global — Top 10</h2>
+    <div id="coliseoLeaderboard" class="coliseo-leaderboard"><div class="empty-note">Cargando ranking…</div></div>
+    <button class="primarybtn" id="btnColiseoStart">⚔️ Iniciar combate</button>
+    <button class="ghostbtn" id="btnColiseoExit">Salir</button>
+  </div>
+</div>
+
+<!-- COLISEO: elegir mejora temporal cada 10 rondas -->
+<div class="overlay hidden" id="coliseoBuffOverlay">
+  <div class="sheet coliseo-sheet" style="text-align:center;">
+    <h1 class="title">✨ ¡Ronda superada!</h1>
+    <p class="sub">Elige una mejora temporal — solo dura el resto de esta run.</p>
+    <div id="coliseoBuffChoices" class="coliseo-buff-choices"></div>
+  </div>
+</div>
+
+<!-- COLISEO: resumen al terminar la run -->
+<div class="overlay hidden" id="coliseoSummaryOverlay">
+  <div class="sheet coliseo-sheet" style="text-align:center;">
+    <div style="font-size:52px;" id="coliseoSummaryEmoji">🏟️</div>
+    <h1 class="title" id="coliseoSummaryTitle">Run terminada</h1>
+    <p class="sub" id="coliseoSummarySub">Llegaste a la ronda 1.</p>
+    <button class="primarybtn" id="btnColiseoRetry">⚔️ Intentar de nuevo</button>
+    <button class="ghostbtn" id="btnColiseoBackToMenu">Volver al Coliseo</button>
+  </div>
+</div>
+
+<!-- NPC DE MISIÓN -->
+<div class="overlay hidden" id="questNpcOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:48px" id="questNpcEmoji">📜</div>
+    <h1 class="title" id="questNpcName">NPC</h1>
+    <p class="sub" id="questNpcFlavor">—</p>
+    <p class="sub" id="questNpcDetail" style="color:var(--gold); font-weight:700;">—</p>
+    <button class="primarybtn" id="btnQuestAccept">Aceptar misión</button>
+    <button class="ghostbtn" id="btnQuestDecline">No, gracias</button>
+  </div>
+</div>
+
+<!-- Seguimiento de misión activa (flotante sobre el mapa) -->
+<div id="questTracker" class="hidden">
+  <div class="qt-row">
+    <div class="qt-emoji" id="qtEmoji">📜</div>
+    <div class="qt-info">
+      <div class="qt-title" id="qtTitle">Misión activa</div>
+      <div class="qt-sub" id="qtSub">—</div>
+    </div>
+  </div>
+  <button class="qt-turnin hidden" id="btnQuestTurnIn">Entregar misión</button>
+  <button class="qt-cancel" id="btnQuestCancel">Cancelar misión</button>
+</div>
+
+<!-- Confirmar cancelar misión -->
+<div class="overlay hidden" id="cancelQuestOverlay">
+  <div class="sheet" style="text-align:center; max-width:360px;">
+    <div style="font-size:44px;" id="cancelQuestEmoji">📜</div>
+    <h1 class="title">¿Cancelar la misión?</h1>
+    <p class="sub" id="cancelQuestSub">—</p>
+    <button class="primarybtn" id="btnConfirmCancelQuest" style="background:var(--danger); border-color:var(--danger);">Sí, cancelar</button>
+    <button class="ghostbtn" id="btnKeepQuest">Seguir con la misión</button>
+  </div>
+</div>
+
+<!-- VAGABUNDO: recordar movimiento olvidado -->
+<div class="overlay hidden" id="vagabundoOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:48px">🧔</div>
+    <h1 class="title">Vagabundo</h1>
+    <p class="sub">Te pide algo de oro... si lo ayudas, te ayudará a recordar un movimiento que olvidaste.</p>
+    <div style="font-size:22px; font-weight:900; color:var(--gold); margin:8px 0 16px;">💰 <span id="vagabundoCostLabel">40</span></div>
+    <button class="primarybtn" id="btnVagabundoGive">Darle el oro</button>
+    <button class="ghostbtn" id="btnVagabundoNo">No, gracias</button>
+  </div>
+</div>
+
+<!-- Elegir cuál movimiento olvidado recordar -->
+<div class="overlay hidden" id="recallPickOverlay">
+  <div class="sheet">
+    <h1 class="title">🔮 ¿Qué movimiento quieres recordar?</h1>
+    <p class="sub">Estos son los que alguna vez aprendiste y ya no tienes.</p>
+    <div class="inv-list" id="recallPickList"></div>
+    <button class="ghostbtn" id="btnCloseRecallPick">Cancelar</button>
+  </div>
+</div>
+
+<!-- Elegir a cuál de tus movimientos actuales reemplazar -->
+<div class="overlay hidden" id="recallReplaceOverlay">
+  <div class="sheet">
+    <h1 class="title">¿Cuál reemplazas?</h1>
+    <p class="sub" id="recallReplaceSub">—</p>
+    <div class="inv-list" id="recallReplaceList"></div>
+    <button class="ghostbtn" id="btnCloseRecallReplace">Cancelar</button>
+  </div>
+</div>
+
+<!-- PARQUE / GUARDIÁN ÚNICO -->
+<div class="overlay hidden" id="parkOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:48px" id="parkEmoji">🌳</div>
+    <h1 class="title" id="parkName">—</h1>
+    <p class="sub" id="parkGuardianLine">—</p>
+    <p class="sub" id="parkWeaponLine" style="color:var(--accent);"></p>
+    <button class="primarybtn" id="btnParkEngage">⚔️ Retar al guardián</button>
+    <button class="ghostbtn" id="btnParkCancel">Cerrar</button>
+  </div>
+</div>
+
+<!-- MEDALLA POR DISTANCIA -->
+<div class="overlay hidden" id="medalOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:64px" id="medalEmoji">🥉</div>
+    <h1 class="title" id="medalName">—</h1>
+    <p class="sub" id="medalKm">—</p>
+    <div style="font-size:26px; font-weight:900; color:var(--gold); margin:8px 0 16px;" id="medalGold">—</div>
+    <button class="primarybtn" id="btnCloseMedal">¡Genial!</button>
+  </div>
+</div>
+
+<!-- CHARACTER SHEET -->
+<div class="overlay hidden fullscreen" id="charSheetOverlay">
+  <div class="sheet">
+    <div style="text-align:center;">
+      <h1 class="title" id="csName">—</h1>
+      <p class="sub" id="csMeta">—</p>
+      <p class="sub" id="csFriendCode" style="margin-top:-8px; color:var(--accent); cursor:pointer;" title="Toca para copiar">🔑 —</p>
+      <p class="sub" id="csDistance" style="margin-top:-8px;">📍 —</p>
+      <div id="csMedals" style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:2px 0 4px;"></div>
+    </div>
+
+    <div class="cs-hero-row">
+      <div class="cs-flank" id="csFlankLeft"></div>
+      <div style="flex-shrink:0; text-align:center;">
+        <div id="csPortraitWrap"><span style="font-size:40px;" id="csEmoji">🗡️</span></div>
+        <div class="cs-power" id="csPowerTotal">⚔️ Poder total: —</div>
+      </div>
+      <div class="cs-flank" id="csFlankRight"></div>
+    </div>
+
+    <div class="cs-stats-block">
+      <div class="eyebrow" style="text-align:center; margin-bottom:6px;">Atributos</div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <div id="csRadarWrap" style="width:130px; flex-shrink:0;"></div>
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:6px;" id="csStatBars"></div>
+      </div>
+    </div>
+
+    <div class="eyebrow" style="margin-top:14px; margin-bottom:6px;">Equipo puesto</div>
+    <div class="inv-list" id="csEquipList"></div>
+
+    <p class="sub" style="margin-top:8px;">Tu VEL decide quién ataca primero en un duelo PvP (salvo movimientos con ⚡ prioridad).</p>
+    <div class="eyebrow" style="margin-top:8px;">Movimientos</div>
+    <div class="inv-list" id="csMoveList"></div>
+    <button class="ghostbtn" id="btnCloseCharSheet">Cerrar</button>
+  </div>
+</div>
+
+<!-- PVP WAGER -->
+<div class="overlay hidden" id="wagerOverlay">
+  <div class="sheet">
+    <h1 class="title">Apuesta del duelo</h1>
+    <p class="sub">Elige cuánto oro apostar (puede ser 0, nunca más de lo que tienes) y qué ítems arriesgar. El ganador se lleva todo.</p>
+    <label style="font-size:12px;color:var(--dim)">Oro a apostar (máx. <span id="wagerMaxGold">0</span>)</label>
+    <input type="number" id="wagerGoldInput" class="namefield" min="0" value="0">
+    <div class="eyebrow" style="margin-top:6px;">Ítems a apostar (toca para seleccionar)</div>
+    <div class="inv-list" id="wagerItemList"></div>
+    <button class="primarybtn" id="btnConfirmWager">Confirmar apuesta</button>
+    <div id="wagerWaitingNote" class="sub hidden" style="text-align:center;margin-top:10px;">Esperando la apuesta del rival…</div>
+  </div>
+</div>
+
+<!-- CLASS SELECT -->
+<div class="overlay" id="classOverlay">
+  <div class="sheet">
+    <h1 class="title" id="classTitle" style="text-align:center; margin-bottom:14px;">Elige tu clase</h1>
+    <div id="continueArea"></div>
+    <button class="ghostbtn hidden" id="btnBackToCharList" style="margin-bottom:10px;">← Volver</button>
+    <p class="sub" id="classSubText">Cada clase tiene estadísticas y movimientos distintos. Tu posición real en el mapa será tu campo de batalla.</p>
+    <div class="class-grid" id="classGrid"></div>
+    <div id="genderSection">
+      <div class="eyebrow" style="margin-top:4px;">Apariencia</div>
+      <div class="gender-toggle" id="genderToggle">
+        <button class="gender-btn active" data-gender="m">♂ Masculino</button>
+        <button class="gender-btn" data-gender="f">♀ Femenino</button>
+      </div>
+      <p class="sub" style="margin-top:2px;">Solo cambia tu apariencia — las estadísticas son idénticas.</p>
+    </div>
+    <input class="namefield" id="nameInput" placeholder="Nombre de tu personaje" maxlength="16">
+    <button class="primarybtn" id="btnStart" disabled>Comenzar aventura</button>
+  </div>
+</div>
+
+<!-- CONFIRMAR ELIMINAR PERSONAJE -->
+<div class="overlay hidden" id="deleteCharOverlay">
+  <div class="sheet" style="text-align:center; max-width:360px;">
+    <div style="font-size:44px;">🗑️</div>
+    <h1 class="title">¿Eliminar personaje?</h1>
+    <p class="sub" id="deleteCharSub">Esta acción no se puede deshacer.</p>
+    <button class="primarybtn" id="btnConfirmDeleteChar" style="background:var(--danger); border-color:var(--danger);">Sí, eliminar para siempre</button>
+    <button class="ghostbtn" id="btnCancelDeleteChar">Cancelar</button>
+  </div>
+</div>
+
+<!-- CONFIRMAR VOLVER AL MENU -->
+<div class="overlay hidden" id="returnMenuOverlay">
+  <div class="sheet" style="text-align:center; max-width:360px;">
+    <div style="font-size:44px;">🚪</div>
+    <h1 class="title">¿Volver al menú principal?</h1>
+    <p class="sub">Tu progreso ya está guardado — vas a salir de esta partida y volver a la pantalla de elegir personaje.</p>
+    <button class="primarybtn" id="btnConfirmReturnMenu">Sí, volver al menú</button>
+    <button class="ghostbtn" id="btnCancelReturnMenu">Cancelar</button>
+  </div>
+</div>
+
+<!-- BATTLE -->
+<div class="battle-wrap hidden" id="battleWrap">
+  <button id="btnFleeCorner" title="Huir del combate">🚪</button>
+  <div id="coliseoBattleHud" class="hidden">🏟️ Ronda 1</div>
+  <div id="dodgeQteOverlay" class="hidden">
+    <div id="dodgeQteWarning">⚠️ <span id="dodgeQteText">¡Prepara un golpe fuerte!</span></div>
+    <div id="dodgeQteBar"><div id="dodgeQteBarFill"></div></div>
+    <div id="dodgeQteHint">👉 ¡Desliza la pantalla para esquivar!</div>
+  </div>
+  <div id="dotQteOverlay" class="hidden">
+    <div id="dotQteWarning">⚠️ <span id="dotQteText">¡Ataque especial! Toca los puntos.</span></div>
+    <div id="dotQteProgress">0/6</div>
+  </div>
+  <div id="chargeTapOverlay" class="hidden">
+    <div id="chargeTapTitle">✨ ¡Toca rápido para cargar el golpe!</div>
+    <div id="chargeTapBarWrap"><div id="chargeTapBarFill"></div></div>
+    <div id="chargeTapCount">0%</div>
+    <button id="chargeTapButton">👊</button>
+    <div id="chargeTapTimeBarWrap"><div id="chargeTapTimeBarFill"></div></div>
+  </div>
+  <div id="spellPatternOverlay" class="hidden">
+    <div id="spellPatternTitle">🔮 ¡Sigue el patrón para el hechizo!</div>
+    <div id="spellPatternSequence"></div>
+    <div id="sweepBarWrap" class="hidden"><div id="sweepBarFill"></div></div>
+    <div id="spellPatternHint">Desliza en cada dirección, en orden</div>
+  </div>
+  <div class="battle-top">
+    <div class="combatant enemy" id="soloEnemyPanel">
+      <div class="name"><span id="bEName">—</span><span class="lvl" id="bELvl">Nv.1</span><span id="bEStatus"></span></div>
+      <div class="bar-wrap"><div class="bar-fill bar-hp" id="bEHp" style="width:100%"></div></div>
+    </div>
+  </div>
+  <div id="packEnemyPanels" class="hidden" style="display:flex; gap:6px; padding:0 14px 8px 60px; flex-wrap:wrap; justify-content:flex-end;"></div>
+  <div class="stage">
+    <div class="ally-side">
+      <div class="sprite" id="spritePlayer">🗡️</div>
+      <div id="groupAllyStageRow" class="hidden"></div>
+      <div id="petStageSlot" class="hidden"></div>
+    </div>
+    <div class="vs"><span>VS</span></div>
+    <div class="enemy-side">
+      <div class="sprite" id="spriteEnemy">👾</div>
+      <div id="oppPetStageSlot" class="hidden"></div>
+    </div>
+    <div id="packStageRow" class="hidden"></div>
+    <div id="critPopup">💥 ¡GOLPE CRÍTICO!</div>
+    <div id="captureFxOverlay">
+      <div class="capture-card-fx">🎴</div>
+      <div class="capture-burst" id="captureBurstFx">✨</div>
+      <div class="capture-result-text" id="captureResultText">¡Capturado!</div>
+    </div>
+    <div id="summonFxOverlay">
+      <div class="summon-card-fx">🎴</div>
+      <div class="summon-burst" id="summonBurstFx">✨</div>
+    </div>
+  </div>
+  <div class="battle-bottom">
+    <div class="combatant player">
+      <div class="name"><span id="bPName">—</span><span class="lvl" id="bPLvl">Nv.1</span></div>
+      <div class="bar-wrap"><div class="bar-fill bar-hp" id="bPHp" style="width:100%"></div></div>
+      <div class="bar-wrap"><div class="bar-fill bar-mp" id="bPMp" style="width:100%"></div></div>
+    </div>
+    <div id="partyStatusRow" class="hidden" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+  </div>
+  <div id="battlelog">¡Comienza el combate!</div>
+  <div class="turn-timer-wrap"><div class="turn-timer-fill" id="turnTimerFill"></div></div>
+  <div id="movegrid"></div>
+</div>
+
+<!-- LEVEL UP -->
+<div class="overlay hidden" id="levelupOverlay">
+  <div class="sheet">
+    <div class="levelup-anim">
+      <div class="eyebrow">¡Subiste de nivel!</div>
+      <div class="lv-badge" id="lvBadge">Nv. 2</div>
+    </div>
+    <div id="statDiffList"></div>
+    <div id="newMoveArea"></div>
+    <button class="primarybtn" id="btnLevelupClose">Continuar</button>
+  </div>
+</div>
+
+<!-- LEARN MOVE CHOICE (full 5 slots) -->
+<div class="overlay hidden" id="learnOverlay">
+  <div class="sheet">
+    <h1 class="title">Nuevo movimiento disponible</h1>
+    <p class="sub">Ya conoces 5 movimientos. Elige uno para olvidar y aprender el nuevo, o consérvalos todos.</p>
+    <div class="newmove-card" id="learnNewCard"></div>
+    <div class="current-moves-list" id="learnCurrentList"></div>
+    <button class="ghostbtn" id="btnSkipLearn">No aprender el nuevo movimiento</button>
+  </div>
+</div>
+
+<!-- INVENTORY -->
+<div class="overlay hidden fullscreen" id="invOverlay">
+  <div class="sheet inv-sheet-v2 inv-sheet-fullscreen">
+    <div class="inv-header-v2">
+      <div>
+        <h1 class="title">🎒 Inventario</h1>
+        <p class="sub">Gestiona tu equipo y objetos.</p>
+      </div>
+      <div class="inv-count-v2" id="invCount">0/50</div>
+    </div>
+    <div class="inv-resource-bar" id="invResourceBar"></div>
+    <div class="inv-cat-tabs" id="invTabs"></div>
+    <div class="inv-search-row">
+      <input id="invSearchInput" class="inv-search-input" placeholder="🔍 Buscar objeto..." />
+      <select id="invSortSelect" class="inv-sort-select">
+        <option value="default">Ordenar: Rareza</option>
+        <option value="level">Ordenar: Nivel</option>
+        <option value="power">Ordenar: Poder</option>
+        <option value="qty">Ordenar: Cantidad</option>
+      </select>
+    </div>
+    <div class="inv-grid-v2" id="invList"></div>
+    <div class="inv-mass-actions" id="invMassActions">
+      <button class="ghostbtn inv-mass-btn" id="btnInvSelectMode">☑️ Seleccionar</button>
+      <button class="ghostbtn inv-mass-btn hidden" id="btnInvSellSelected">💰 Vender selección</button>
+    </div>
+    <button class="ghostbtn" id="btnCloseInv">Cerrar</button>
+  </div>
+</div>
+
+<!-- DETALLE de un objeto del inventario -->
+<div class="overlay hidden" id="invDetailOverlay">
+  <div class="sheet inv-detail-sheet-v2" id="invDetailSheet">
+    <button class="inv-detail-fav" id="btnInvDetailFav" title="Favorito">☆</button>
+    <div class="inv-detail-icon-v2" id="invDetailIconWrap"></div>
+    <div class="inv-detail-rarity" id="invDetailRarity"></div>
+    <h1 class="title" id="invDetailName" style="text-align:center;">Objeto</h1>
+    <p class="sub" id="invDetailTag" style="text-align:center;"></p>
+    <div class="inv-detail-stats" id="invDetailStats"></div>
+    <div id="invDetailCmp"></div>
+    <div class="inv-detail-actions">
+      <button class="primarybtn" id="btnInvDetailAction">Equipar</button>
+      <button class="ghostbtn" id="btnCloseInvDetail">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- BASE PERSONAL: el cofre de guardado dentro de tu base -->
+<div class="overlay hidden fullscreen" id="baseStorageOverlay">
+  <div class="sheet inv-sheet-v2 inv-sheet-fullscreen">
+    <div class="inv-header-v2">
+      <div>
+        <h1 class="title">🏠 Tu base</h1>
+        <p class="sub">Toca "Pasar" para mover un objeto de un lado al otro.</p>
+      </div>
+    </div>
+    <div class="base-section-label">🎒 Tu inventario <span id="baseInvCount"></span></div>
+    <div class="inv-grid-v2 base-half-grid" id="baseInventorySideList"></div>
+    <div class="base-section-label">🏠 Cofre de tu base <span id="baseChestCount"></span></div>
+    <div class="inv-grid-v2 base-half-grid" id="baseChestSideList"></div>
+    <button class="ghostbtn" id="btnCloseBaseStorage">Salir de la base</button>
+  </div>
+</div>
+
+<!-- BASES PERSONALES: lista de estado (guardada / desplegada) -->
+<div class="overlay hidden" id="basesMenuOverlay">
+  <div class="sheet">
+    <h1 class="title">🏠 Tus bases</h1>
+    <p class="sub">Compra una en la tienda si todavía no tienes.</p>
+    <div id="basesMenuList"></div>
+    <button class="ghostbtn" id="btnCloseBasesMenu">Cerrar</button>
+  </div>
+</div>
+
+<div class="overlay hidden" id="forgeOverlay">
+  <div class="sheet">
+    <h1 class="title">🔨 Forja</h1>
+    <p class="sub">Repara tu equipo gastado con oro y materiales. Nunca se rompe del todo — solo rinde menos por debajo del 10% de durabilidad.</p>
+    <div id="forgeList"></div>
+    <div id="forgeTotalRow" class="hidden"></div>
+    <button class="primarybtn" id="btnRepairAll" style="margin-top:8px;">🔨 Reparar Todo</button>
+    <button class="ghostbtn" id="btnCloseForge">Cerrar</button>
+  </div>
+</div>
+
+<!-- Botones flotantes para confirmar/cancelar dónde colocar la base -->
+<div id="basePlacementControls" class="hidden">
+  <button id="btnBasePlaceCancel">✕</button>
+  <button id="btnBasePlaceConfirm">✔</button>
+</div>
+
+<!-- BATTLE RESULT -->
+<div class="overlay hidden" id="confirmModalOverlay" style="z-index:400;">
+  <div class="sheet" style="text-align:center; max-width:340px;">
+    <div style="font-size:38px;" id="confirmModalIcon">❓</div>
+    <h1 class="title" id="confirmModalTitle">¿Estás seguro?</h1>
+    <p class="sub" id="confirmModalMsg">—</p>
+    <div style="display:flex; gap:10px; margin-top:14px;">
+      <button class="ghostbtn" id="confirmModalCancel" style="flex:1;">Cancelar</button>
+      <button class="primarybtn" id="confirmModalOk" style="flex:1;">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay hidden" id="resultOverlay">
+  <div class="sheet" style="text-align:center">
+    <div style="font-size:46px" id="resultEmoji">🏆</div>
+    <h1 class="title" id="resultTitle">Victoria</h1>
+    <p class="sub" id="resultSub">—</p>
+    <div id="resultProgress" class="hidden">
+      <div class="result-prog-row">
+        <div class="result-prog-head">
+          <span>🧬 Progreso de personaje</span>
+          <span id="resultCharLevel">Nv.1 → Nv.1</span>
+        </div>
+        <div class="bar-wrap"><div class="bar-fill bar-xp" id="resultCharXpFill" style="width:0%"></div><div class="bar-fill bar-xp-bonus" id="resultCharXpBonusFill" style="width:0%; left:0%;"></div></div>
+        <div class="result-prog-meta" id="resultCharXpText">0 / 100 → 0 / 100</div>
+      </div>
+      <div class="result-prog-row hidden" id="resultPetRow">
+        <div class="result-prog-head">
+          <span id="resultPetName">🐾 Mascota</span>
+          <span id="resultPetLevel">Nv.1 → Nv.1</span>
+        </div>
+        <div class="bar-wrap"><div class="bar-fill" id="resultPetXpFill" style="width:0%; background:linear-gradient(90deg,#5b8cff,#c98bf0);"></div></div>
+        <div class="result-prog-meta" id="resultPetXpText">0 / 40 → 0 / 40</div>
+      </div>
+      <div class="result-achievements hidden" id="resultAchievements"></div>
+    </div>
+    <button class="ghostbtn hidden" id="btnBoostResultXp" style="margin-bottom:8px;">💎 Duplicar la XP de este combate</button>
+    <button class="primarybtn" id="btnResultClose">Volver al mapa</button>
+  </div>
+</div>
+
+<script src="./maplibre-gl.js"></script>
+<script src="./maplibre-leaflet-shim.js"></script>
+<script src="https://cdn.pubnub.com/sdk/javascript/pubnub.11.0.2.js"></script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
+
