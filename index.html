@@ -13,7 +13,7 @@
 <div id="mapVignette"></div>
 <div id="wildEncounterFlash" class="hidden"></div>
 <div id="mapInnerFrame"></div>
-<div id="mapLightBeam"><div class="beam-spot"></div><div class="beam-cloud"></div></div>
+<div id="mapLightBeam"><div class="beam-rays"><span></span><span></span><span></span></div><div class="beam-spot"></div><div class="beam-cloud"></div></div>
 <div id="updateBanner" class="hidden">
   🔄 Hay una nueva versión disponible. <button id="btnReloadUpdate">Actualizar ahora</button>
 </div>
@@ -878,6 +878,58 @@
       <button class="primarybtn" id="btnInvDetailAction">Equipar</button>
       <button class="ghostbtn" id="btnCloseInvDetail">Cerrar</button>
     </div>
+  </div>
+</div>
+
+<!-- BASE PERSONAL: la escena del cuarto — entras y ves tus "muebles" tocables -->
+<div class="overlay hidden fullscreen" id="baseRoomOverlay">
+  <div class="base-room-scene">
+    <div class="base-room-diorama">
+      <div class="base-room-torch left"><span>🔥</span></div>
+      <div class="base-room-banner">🛡️</div>
+      <div class="base-room-torch right"><span>🔥</span></div>
+      <div class="base-room-rug"></div>
+      <div class="base-room-character"><img id="baseRoomCharacterImg" alt=""></div>
+    </div>
+    <h1 class="title" style="text-align:center; margin-top:10px;">🏠 Tu base</h1>
+    <p class="sub" style="text-align:center;">Toca un mueble para usarlo.</p>
+    <div class="base-room-furniture">
+      <button class="base-room-hotspot" id="baseRoomHotspotChest">
+        <span class="brh-icon">🗝️</span><span class="brh-name">Cofre</span>
+        <span class="brh-desc">Guarda y saca objetos</span>
+      </button>
+      <button class="base-room-hotspot" id="baseRoomHotspotWeapons">
+        <span class="brh-icon">🗡️</span><span class="brh-name">Mesa de armas</span>
+        <span class="brh-desc">Armas guardadas aquí</span>
+      </button>
+      <button class="base-room-hotspot" id="baseRoomHotspotConsumables">
+        <span class="brh-icon">🧪</span><span class="brh-name">Mesa de consumibles</span>
+        <span class="brh-desc">Pociones y objetos guardados</span>
+      </button>
+      <button class="base-room-hotspot" id="baseRoomHotspotMap">
+        <span class="brh-icon">🗺️</span><span class="brh-name">Mesa del mapa</span>
+        <span class="brh-desc">Regiones que has visitado</span>
+      </button>
+      <button class="base-room-hotspot" id="baseRoomHotspotForge">
+        <span class="brh-icon">🔨</span><span class="brh-name">Forja</span>
+        <span class="brh-desc">Repara tu equipo desgastado</span>
+      </button>
+    </div>
+    <button class="ghostbtn" id="btnCloseBaseRoom">Salir de la base</button>
+  </div>
+</div>
+
+<!-- BASE PERSONAL: vista filtrada de solo-armas o solo-consumibles guardados en el cofre -->
+<div class="overlay hidden fullscreen" id="baseCategoryOverlay">
+  <div class="sheet inv-sheet-v2 inv-sheet-fullscreen">
+    <div class="inv-header-v2">
+      <div>
+        <h1 class="title" id="baseCategoryTitle">Mesa</h1>
+        <p class="sub">Toca "Pasar ⬆️" para llevarlo a tu inventario.</p>
+      </div>
+    </div>
+    <div class="inv-grid-v2" id="baseCategoryList"></div>
+    <button class="ghostbtn" id="btnCloseBaseCategory">Volver a la base</button>
   </div>
 </div>
 

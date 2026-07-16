@@ -91,7 +91,12 @@
       this._marker.setLngLat(toLngLat(latlng));
       return this;
     }
-    getLatLng(){ return this._latlng; }
+    // Siempre normalizado a {lat,lng}: el juego guarda la posición como array [lat,lng] al crear
+    // el marcador (ver toLngLat), así que devolver _latlng tal cual dejaba .lat/.lng en undefined
+    // para cualquier código que lo leyera así (ej. confirmar dónde colocar la base).
+    getLatLng(){
+      return Array.isArray(this._latlng) ? {lat:this._latlng[0], lng:this._latlng[1]} : this._latlng;
+    }
     getElement(){ return this._marker.getElement(); }
     setDraggable(val){ this._marker.setDraggable(!!val); return this; }
     setClickHandler(fn){

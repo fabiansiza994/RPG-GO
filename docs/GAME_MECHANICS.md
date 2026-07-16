@@ -30,7 +30,7 @@
 - La vista arranca **totalmente inclinada** (pitch 65°).
 - Rotar el mapa (`bearing`) es soportado nativamente; el personaje **no rota visualmente** — en su lugar, se recalcula qué sprite de dirección (arriba/abajo/izq/der) le toca mostrar, comparando tu rumbo real de movimiento contra la rotación actual de la cámara (`recomputeScreenFacing`).
 - El aro/aura alrededor de personajes, enemigos y fogatas se inclina junto con la cámara (`--ring-tilt-deg`), para que se vean apoyados en el suelo en vez de flotando planos.
-- El "punto de luz" de luna/sol está anclado a una coordenada real del mundo (no a la pantalla) — si te alejas, se queda atrás, como cualquier otro objeto del mapa. La sombra de nubes es 100% independiente de la cámara (solo su propia animación).
+- El "punto de luz" de luna/sol está anclado al Coliseo de la ciudad actual (`COLISEO.lat/lng` — coordenada real y fija, no a la pantalla) — si te alejas, se queda atrás, como cualquier otro objeto del mapa. De día (fases `morning` y `day`) se ven además 2-3 haces de luz angulados (no verticales, para simular luz que llega de costado) convergiendo en ese mismo punto. La sombra de nubes es 100% independiente de la cámara (solo su propia animación, con forma irregular tipo nube en vez de un círculo perfecto).
 
 ### GPS y gestos especiales
 - GPS real (activación explícita del usuario) o modo simulación (tap en mapa).
@@ -122,9 +122,10 @@
 - Desde el menú "🏠 Bases": si está "guardada" (comprada pero no desplegada), botón para desplegar; si ya está en el mapa, botones para entrar o **recogerla** (`BASE_PICKUP_COST_GOLD = 200`).
 - Desplegar: primera vez gratis; cualquier despliegue posterior a una recogida cuesta `BASE_REDEPLOY_COST_GOLD = 150` (`player.baseEverPlaced` marca si ya se usó la gratuita).
 - Colocación: se arma un modo de vista previa (marcador semitransparente que se mueve con cada toque del mapa) + dos botones flotantes (✕ cancelar, ✔ confirmar) — nada queda colocado hasta confirmar.
-- Marcador en el mapa: emoji de casa con el nombre del dueño en una etiqueta arriba (`base-marker-simple`).
-- Al entrar: pantalla de dos secciones (tu inventario arriba, cofre de la base abajo), cada objeto con botón "Pasar ⬇️/⬆️" para moverlo al otro lado. El cofre de la base tiene su propio límite (`BASE_STORAGE_SLOTS = 20`) ampliable con cristales.
+- Marcador en el mapa: emoji de casa (🚧 mientras se construye) con el nombre del dueño en una etiqueta arriba (`base-marker-simple`), anclado por encima de tu propio personaje (para que no quede tapado si estás parado justo ahí) y por delante en z-index.
+- Al entrar (`openBaseRoom`): escena del cuarto de la base — tu personaje de pie en un diorama con antorchas y banner, más 5 "muebles" tocables: 🗝️ Cofre (transferencia inventario ⇄ cofre de siempre, dos columnas con botón "Pasar ⬇️/⬆️"), 🗡️ Mesa de armas y 🧪 Mesa de consumibles (vistas filtradas de solo lo guardado en el cofre de cada categoría, con "Pasar ⬆️" para devolverlo al inventario), 🗺️ Mesa del mapa (abre la pantalla de Regiones de siempre, con detalle extra de bioma/descripción/nivel/jefe para las zonas ya visitadas) y 🔨 Forja (repara equipo desgastado, sin cambios en su lógica). Cerrar cualquiera de esas sub-pantallas vuelve al cuarto si se abrió desde ahí. El cofre de la base tiene su propio límite (`BASE_STORAGE_SLOTS = 20`) ampliable con cristales.
 - Otros jugadores ven la base en el mapa (sincronizada por PubNub, `PN_BASES_CHANNEL`) pero al tocarla solo reciben un aviso de quién es — no pueden entrar.
+- `drawSingleBaseMarker` ignora (con aviso en consola) cualquier base guardada con coordenadas no numéricas, en vez de romper el resto del dibujado del mapa; `drawAllBases` quita los marcadores previos antes de redibujar (evita que quede uno "huérfano" al terminar la construcción).
 
 ## 12) Modo Constructor (solo `Hacker994`)
 

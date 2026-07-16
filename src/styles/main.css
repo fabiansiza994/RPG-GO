@@ -172,20 +172,48 @@
   #mapLightBeam.beam-sun .beam-spot{background:radial-gradient(circle, rgba(255,232,185,.4), rgba(255,224,160,.14) 55%, transparent 75%);}
   /* Sombra de nubes: pasa lentamente sobre el punto de luz, tapándolo y destapándolo — cuando
      "se cierran" las nubes, oscurece esa zona; cuando se abren, vuelve a verse la luz de lleno.
-     Se ancla a la MISMA coordenada real que el punto de luz (JS actualiza left/top de ambos). */
-  .beam-cloud{position:absolute; width:460px; height:460px; border-radius:50%; margin-left:-230px; margin-top:-230px;
-    background:radial-gradient(circle, rgba(6,8,14,.6), transparent 70%);
+     Se ancla a la MISMA coordenada real que el punto de luz (JS actualiza left/top de ambos).
+     Forma irregular (dos elipses solapadas, bordes asimétricos + blur) en vez de un círculo
+     perfecto, para que se lea como una nube real y no como un simple foco apagándose. */
+  .beam-cloud{position:absolute; width:520px; height:340px; margin-left:-260px; margin-top:-170px;
+    border-radius:48% 52% 45% 55%/58% 42% 60% 40%;
+    background:
+      radial-gradient(ellipse 62% 70% at 34% 42%, rgba(6,8,14,.58), transparent 72%),
+      radial-gradient(ellipse 52% 62% at 66% 56%, rgba(6,8,14,.42), transparent 70%);
+    filter:blur(5px);
     mix-blend-mode:multiply; animation:cloudDrift 34s ease-in-out infinite;}
   @keyframes cloudDrift{
-    0%{   transform:translate(-70%,-160%); opacity:.12;}
-    28%{  transform:translate(15%,-15%);   opacity:.6;}
-    52%{  transform:translate(65%,25%);    opacity:.15;}
-    78%{  transform:translate(-25%,55%);   opacity:.5;}
-    100%{ transform:translate(-70%,-160%); opacity:.12;}
+    0%{   transform:translate(-70%,-160%) scale(.88) rotate(-4deg); opacity:.12;}
+    28%{  transform:translate(15%,-15%)   scale(1.1)  rotate(3deg); opacity:.6;}
+    52%{  transform:translate(65%,25%)    scale(.94)  rotate(-2deg); opacity:.15;}
+    78%{  transform:translate(-25%,55%)   scale(1.05) rotate(5deg); opacity:.5;}
+    100%{ transform:translate(-70%,-160%) scale(.88)  rotate(-4deg); opacity:.12;}
   }
   /* Con la cámara inclinada, el punto de luz se ve más grande y notorio (le da profundidad
      a la escena, como si realmente estuviera cayendo sobre el terreno inclinado). */
   #mapLightBeam.pitched{--spot-scale:1.5;}
+
+  /* Rayos de sol: 2-3 haces que "caen" desde un costado de la pantalla (no desde arriba derecho)
+     hasta el mismo punto anclado del beam-spot (JS mueve .beam-rays al mismo left/top) — solo se
+     ven de día/mañana, nunca con la luna. Los tres inclinan hacia el MISMO lado (mismo signo de
+     rotación, solo varía el ángulo exacto) — como el sol está tan lejos, sus rayos son
+     prácticamente paralelos entre sí; si abrieran en abanico (ángulos opuestos) se vería como una
+     explosión de luz en vez de luz de costado llegando de una sola dirección. */
+  .beam-rays{position:absolute; width:0; height:0; pointer-events:none;
+    transition:left .05s linear, top .05s linear; display:none;}
+  #mapLightBeam.beam-sun .beam-rays{display:block;}
+  .beam-rays span{position:absolute; bottom:0; left:0; width:92px; height:84vh;
+    transform-origin:bottom center; filter:blur(1px);
+    /* Con mix-blend-mode:screen esto quedaba casi invisible sobre los mosaicos claros del mapa
+       (screen contra un fondo ya claro apenas cambia nada) — mezcla normal con alfa alto, para que
+       se vean bien marcados sin importar qué tan clara u oscura sea la zona del mapa debajo. */
+    background:linear-gradient(180deg, rgba(255,252,232,.98) 0%, rgba(255,228,160,.78) 38%, rgba(255,205,120,.4) 68%, transparent 92%);
+    clip-path:polygon(36% 0%, 64% 0%, 56% 100%, 44% 100%);
+    animation:rayShimmer 5.5s ease-in-out infinite;}
+  .beam-rays span:nth-child(1){transform:translateX(-50%) rotate(-26deg) scaleY(1);}
+  .beam-rays span:nth-child(2){transform:translateX(-50%) rotate(-33deg) scaleY(.92) scaleX(.72); animation-delay:.8s;}
+  .beam-rays span:nth-child(3){transform:translateX(-50%) rotate(-19deg) scaleY(.84) scaleX(.6); animation-delay:1.6s;}
+  @keyframes rayShimmer{0%,100%{opacity:.68;} 50%{opacity:1;}}
   .eyebrow{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);}
 
   /* ---------- HUD ---------- */
@@ -480,7 +508,11 @@
   .wheel-hub-star{font-size:min(11vw,46px); color:var(--gold); line-height:1;
     text-shadow:0 0 14px var(--accent), 0 0 28px var(--accent);}
 
-  .wheel-secondary-row{display:flex; flex-wrap:wrap; justify-content:center; gap:10px; pointer-events:auto; max-width:88vw;}
+  /* OJO: sin pointer-events forzado a propósito — antes tenía "auto" fijo, lo que anulaba el
+     bloqueo del padre (.wheel-overlay-content, pointer-events:none cuando el menú está cerrado)
+     y dejaba el botón de Modo Constructor tocable aunque estuviera invisible (opacity:0) con el
+     menú ☰ cerrado. Al heredar el valor del padre, solo es tocable cuando #fabMenu.open lo habilita. */
+  .wheel-secondary-row{display:flex; flex-wrap:wrap; justify-content:center; gap:10px; max-width:88vw;}
   .wheel-secondary-btn{display:flex; align-items:center; gap:6px; padding:9px 16px; border-radius:20px;
     background:rgba(19,24,38,.88); border:1px solid var(--line); color:var(--text); font-size:12.5px; font-weight:700;
     backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);}
@@ -796,6 +828,39 @@
   .base-half-grid{max-height:26vh;}
   .base-transfer-btn{width:100%; font-size:9.5px; padding:5px 2px; margin-top:4px;}
 
+  /* ---------- Escena del cuarto de la base: diorama + muebles tocables ---------- */
+  .base-room-scene{width:100%; height:100%; max-width:520px; margin:0 auto; padding:16px 16px 24px;
+    overflow-y:auto; display:flex; flex-direction:column;}
+  .base-room-diorama{position:relative; height:180px; border-radius:18px; flex-shrink:0;
+    background:
+      linear-gradient(180deg, rgba(0,0,0,0) 60%, rgba(0,0,0,.35) 100%),
+      repeating-linear-gradient(90deg, #7c7368 0 42px, #6a6255 42px 44px),
+      repeating-linear-gradient(0deg, #756c60 0 42px, #635a4e 42px 44px);
+    border:6px solid #3a3128; box-shadow:inset 0 0 30px rgba(0,0,0,.55), 0 8px 20px rgba(0,0,0,.3);
+    overflow:hidden;}
+  .base-room-banner{position:absolute; top:0; left:50%; transform:translateX(-50%);
+    background:linear-gradient(180deg,#2a4a8a,#1c3568); border:2px solid var(--gold,#e8c468); border-top:none;
+    border-radius:0 0 10px 10px; padding:6px 12px 8px; font-size:20px; box-shadow:0 4px 10px rgba(0,0,0,.35);}
+  .base-room-torch{position:absolute; top:14px; font-size:20px;
+    filter:drop-shadow(0 0 8px rgba(255,150,60,.8)); animation:baseTorchPulse 1.6s ease-in-out infinite;}
+  .base-room-torch.left{left:14px;}
+  .base-room-torch.right{right:14px;}
+  @keyframes baseTorchPulse{0%,100%{transform:scale(1); opacity:.85;} 50%{transform:scale(1.15); opacity:1;}}
+  .base-room-rug{position:absolute; left:50%; bottom:14px; transform:translateX(-50%); width:150px; height:46px;
+    border-radius:50%; background:radial-gradient(ellipse, rgba(10,20,50,.55), transparent 70%);}
+  .base-room-character{position:absolute; left:50%; bottom:10px; transform:translateX(-50%); height:140px;}
+  .base-room-character img{height:100%; width:auto; display:block; filter:drop-shadow(0 10px 8px rgba(0,0,0,.4));}
+
+  .base-room-furniture{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0;}
+  .base-room-hotspot{background:linear-gradient(180deg,#1d2540,#121826); border:2px solid var(--line);
+    border-radius:16px; padding:14px 8px; text-align:center; display:flex; flex-direction:column;
+    align-items:center; gap:2px; transition:transform .15s ease, border-color .15s ease;}
+  .base-room-hotspot:active{transform:scale(.95); border-color:var(--accent);}
+  .base-room-hotspot .brh-icon{font-size:30px;}
+  .base-room-hotspot .brh-name{font-size:13px; font-weight:800; color:var(--text); margin-top:2px;}
+  .base-room-hotspot .brh-desc{font-size:10.5px; color:var(--dim);}
+  .base-room-hotspot#baseRoomHotspotForge{grid-column:1/-1;}
+
   /* ---------- Cofres del tesoro ---------- */
   .chest-marker{font-size:26px; cursor:pointer; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 10px var(--chest-glow, rgba(200,200,200,.6))) drop-shadow(0 -3px 3px rgba(255,255,255,.16));
     animation:chestBob 2.2s ease-in-out infinite;}
@@ -820,9 +885,13 @@
   /* El emoji se ve igual de grande que antes (28px), pero vive centrado dentro de una caja
      invisible más grande — así el área donde SÍ registra el toque es mucho más generosa,
      sin que el árbol/roca se vea más grande de lo que ya se veía. */
-  .resource-node-marker{width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+  .resource-node-marker{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;
     font-size:28px; cursor:pointer;
     filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
+  /* Sombra propia en el suelo (además del drop-shadow de arriba, que solo da contorno) — una
+     elipse oscura y difusa bajo el árbol/roca, como si de verdad recibiera luz de arriba. */
+  .resource-node-marker::after{content:""; position:absolute; left:50%; bottom:4px; transform:translateX(-50%);
+    width:26px; height:9px; border-radius:50%; background:rgba(0,0,0,.35); filter:blur(2.5px); z-index:-1;}
   .resource-node-marker.resource-wood{filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 7px rgba(120,220,140,.55)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
   .resource-node-marker.resource-stone{filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 6px rgba(200,200,210,.5)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
   .resource-node-marker.resource-iron{filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 7px rgba(140,180,230,.6)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}

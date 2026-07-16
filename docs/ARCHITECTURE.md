@@ -74,6 +74,7 @@ rpg-go/
 - Implementa la porción de la API de Leaflet que el juego usa (`L.map`, `L.marker`, `L.divIcon`, `L.circle`, `L.polyline`, `L.DomEvent`) pero por debajo crea y controla un `maplibregl.Map` real.
 - Traduce coordenadas `[lat,lng]` (como escribe el juego) a `[lng,lat]` (como espera MapLibre) en ambos sentidos.
 - Expone extensiones propias de MapLibre que Leaflet no tiene: `map.getBearing()/setBearing()`, `map.getPitch()/setPitch()`, `map.project(latlng)`, `map.resetNorthPitch()`, `map.flyTo()` (transición animada), `marker.setDraggable()`, `marker.setClickHandler()`.
+- `marker.getLatLng()` siempre devuelve `{lat,lng}` normalizado, sin importar si el marcador se creó con un array `[lat,lng]` o un objeto — antes devolvía el valor crudo tal cual se guardó, y cualquier código que asumiera la forma `{lat,lng}` sobre un marcador creado con array (como la confirmación de colocar la base) recibía `undefined` en silencio.
 - Los círculos (`L.circle`) soportan `dashArray` para bordes con trazo entrecortado (usado por las zonas de ciudad).
 - Encola las operaciones que dependen del estilo (círculos, líneas, mosaicos) hasta que el estilo del mapa termina de cargar (`_whenReady`), porque a diferencia de Leaflet, MapLibre carga su estilo de forma asíncrona.
 

@@ -222,6 +222,8 @@ function renderRegionsOverlay(){
       return t ? t.emoji : "❔";
     }).join(" ");
     const pct = Math.min(100, Math.round(((player.zoneDistanceM||{})[z.key]||0)/ZONE_EXPLORE_TARGET_M*100));
+    const region = known ? CURRENT_CITY_REGIONS.find(r=> r.id === "region_"+currentCityKey+"_zone_"+z.key) : null;
+    const biomeLabel = region ? (BIOMES[region.biome]||{}).label : null;
     const card = document.createElement("div");
     card.className = "region-card" + (known ? "" : " locked");
     card.style.borderLeftColor = z.color;
@@ -232,6 +234,9 @@ function renderRegionsOverlay(){
         ${known ? `<div class="rc-status">${z.monsterNames.join(" · ")}</div>` : ""}
         ${known ? `<div class="rc-explore-bar"><div class="rc-explore-fill" style="width:${pct}%; background:${z.color};"></div></div>
           <div class="rc-status">${pct}% recorrida</div>` : ""}
+        ${region ? `<div class="rc-status">${region.icon||"🗺️"} ${biomeLabel||""} · Nivel recomendado ${region.recommendedLevel.min}-${region.recommendedLevel.max}</div>
+          ${region.description ? `<div class="rc-status" style="font-style:italic;">${region.description}</div>` : ""}
+          ${region.regionalBoss ? `<div class="rc-status">👑 Jefe regional: ${region.regionalBoss}</div>` : ""}` : ""}
       </div>
       <div class="rc-mons${known ? "" : " blurred"}">${monEmojis}</div>`;
     list.appendChild(card);
@@ -2307,7 +2312,7 @@ function initMap(savedPos){
   // ellos queda aislado (se avisa en la consola para poder diagnosticarlo) y nunca puede volver a
   // dejar al personaje sin aparecer ni cortar el resto de la inicialización del mapa.
   function safeDrawStep(label, fn){
-    try{ fn(); }catch(e){ console.error(`[initMap] Falló al dibujar ${label} — el resto del mapa sigue igual:`, e); }
+    try{ fn(); }catch(e){ console.error(`[initMap] Falló al dibujar ${label} — el resto del mapa sigue igual:`, e); lastDrawStepErrors[label] = e.message; }
   }
   safeDrawStep("las zonas de la ciudad", drawNeivaZones);
   safeDrawStep("los parques", drawNeivaParks);
@@ -2317,6 +2322,7 @@ function initMap(savedPos){
   safeDrawStep("la limpieza de eventos del mundo expirados", pruneExpiredWorldEvents);
   safeDrawStep("los eventos del mundo", drawAllWorldEvents);
   safeDrawStep("las bases", drawAllBases);
+  showBaseDebugPanelIfRequested();
   safeDrawStep("las estaciones de mejora", drawUpgradeStations);
 
   checkZoneDiscovery();
@@ -2866,7 +2872,7 @@ function updateMapTimeOfDay(){
   if(beam){
     beam.classList.remove("beam-moon","beam-sun");
     if(phase==="night") beam.classList.add("beam-moon");
-    else if(phase==="morning") beam.classList.add("beam-sun");
+    else if(phase==="morning" || phase==="day") beam.classList.add("beam-sun");
   }
   updateCameraOrientedEffects();
 }
@@ -2897,6 +2903,14 @@ function ensureCloudFixedPosition(){
 }
 function ensureBeamWorldSpot(){
   if(beamWorldSpot || !playerLatLng) return;
+  // Anclado al Coliseo de la ciudad (siempre un punto real, central y memorable) — así el rayo
+  // de luz siempre "apunta" al mismo sitio icónico en vez de a un punto aleatorio cercano a
+  // donde arrancaste a jugar.
+  if(COLISEO){
+    beamWorldSpot = {lat: COLISEO.lat, lng: COLISEO.lng};
+    return;
+  }
+  // Respaldo por si alguna ciudad no tuviera Coliseo configurado: mismo comportamiento de antes.
   const angle = Math.random() * Math.PI * 2;
   const distM = 60 + Math.random()*40; // a 60-100m de donde arrancaste, un punto cercano y creíble
   const dLat = (distM * Math.cos(angle)) / 111320;
@@ -2918,6 +2932,10 @@ function updateBeamWorldPosition(){
   const px = map.project(beamWorldSpot);
   const spot = beam.querySelector(".beam-spot");
   if(spot){ spot.style.left = px.x+"px"; spot.style.top = px.y+"px"; }
+  // Los rayos "caen" hacia el mismo punto anclado que el resplandor — mismo left/top, la forma
+  // en sí ya está pensada para subir desde ahí hasta arriba de la pantalla.
+  const rays = beam.querySelector(".beam-rays");
+  if(rays){ rays.style.left = px.x+"px"; rays.style.top = px.y+"px"; }
 }
 /** El zoom "normal" del juego es 18.50 — a ese nivel (o más cerca) los enemigos se ven a su
  *  tamaño de siempre. Si te alejas más que eso, se van encogiendo poco a poco hasta
@@ -3792,6 +3810,14 @@ const BUILDING_RUSH_COST_CRYSTAL = 1;
 let playerBases = {}; // ownerId -> {ownerId, ownerName, lat, lng, placedAt}
 let baseMarkers = {}; // ownerId -> marker
 let basePlacementArmed = false;
+// true mientras estás dentro de una sub-pantalla (cofre/forja/regiones/mesas) abierta DESDE el
+// cuarto de la base — así su botón "Cerrar" sabe que debe volver al cuarto en vez de solo
+// esconderse. Esas mismas pantallas también se abren desde fuera de la base (FAB, botón 🗺️),
+// donde esta bandera se queda en false y "Cerrar" se comporta como siempre.
+let baseRoomReturnPending = false;
+// Errores capturados por safeDrawStep durante initMap, guardados por etiqueta — solo para el
+// panel de diagnóstico ?debug=1 (ver showBaseDebugPanelIfRequested).
+let lastDrawStepErrors = {};
 
 /** ¿Tu base todavía se está construyendo (los 30 minutos no han pasado)? */
 function isBaseUnderConstruction(){
@@ -3952,10 +3978,17 @@ function armBasePlacementMode(){
   toast("👉 Toca el mapa para elegir dónde va tu base, y confirma con ✔.", 4000);
 }
 function updateBasePreview(lat, lng){
+  // Defensa por si el mapa alguna vez entrega una coordenada no numérica (el bug real de
+  // getLatLng() devolviendo el array crudo ya se corrigió en maplibre-leaflet-shim.js) —
+  // nunca guardar/mostrar una vista previa con NaN.
+  if(!Number.isFinite(lat) || !Number.isFinite(lng)){
+    toast("📍 Ese punto no es válido — intenta tocar otro lugar del mapa.", 4200);
+    return;
+  }
   if(previewBaseMarker) previewBaseMarker.setLatLng([lat, lng]);
   else{
-    const icon = L.divIcon({className:'', html:`<div class="base-marker-simple base-preview"><div class="bms-label">Aquí</div><div class="bms-emoji">🏠</div></div>`, iconSize:[54,58], iconAnchor:[27,50]});
-    previewBaseMarker = L.marker([lat, lng], {icon, zIndexOffset:300, interactive:false}).addTo(map);
+    const icon = L.divIcon({className:'', html:`<div class="base-marker-simple base-preview"><div class="bms-label">Aquí</div><div class="bms-emoji">🏠</div></div>`, iconSize:[54,58], iconAnchor:[27,95]});
+    previewBaseMarker = L.marker([lat, lng], {icon, zIndexOffset:1100, interactive:false}).addTo(map);
   }
 }
 $("btnBasePlaceCancel").onclick = ()=>{
@@ -3966,12 +3999,18 @@ $("btnBasePlaceCancel").onclick = ()=>{
 };
 $("btnBasePlaceConfirm").onclick = ()=>{
   if(!previewBaseMarker){ toast("Primero toca el mapa para elegir un lugar."); return; }
+  const ll = previewBaseMarker.getLatLng();
+  // Misma protección que updateBasePreview — por si acaso, nunca cobrar ni guardar una base con
+  // coordenadas inválidas.
+  if(!Number.isFinite(ll.lat) || !Number.isFinite(ll.lng)){
+    toast("📍 Ese punto no es válido — toca otro lugar del mapa y confirma de nuevo.", 4200);
+    return;
+  }
   if(player.baseEverPlaced){
     if((player.gold||0) < BASE_REDEPLOY_COST_GOLD){ toast(`🪙 Te faltan oro para volver a colocarla (necesitas ${BASE_REDEPLOY_COST_GOLD}).`); return; }
     player.gold -= BASE_REDEPLOY_COST_GOLD;
     refreshHud();
   }
-  const ll = previewBaseMarker.getLatLng();
   basePlacementArmed = false;
   previewBaseMarker.remove(); previewBaseMarker = null;
   $("basePlacementControls").classList.add("hidden");
@@ -3997,6 +4036,10 @@ function placeOwnBase(lat, lng){
 }
 
 function drawAllBases(){
+  // Quita del mapa los marcadores YA dibujados antes de reemplazarlos — drawAllBases se vuelve a
+  // llamar cuando tu base termina de construirse (normal o acelerada), y sin esto el marcador
+  // viejo (🚧) se quedaba huérfano en el mapa, tapado por el nuevo (🏠) encima del mismo punto.
+  Object.values(baseMarkers).forEach(m=> m && m.remove && m.remove());
   baseMarkers = {};
   if(player.base){
     playerBases[myPlayerId] = {ownerId: myPlayerId, ownerName: player.name, lat: player.base.lat, lng: player.base.lng, placedAt:0};
@@ -4005,16 +4048,49 @@ function drawAllBases(){
   fetchOtherBases();
 }
 function drawSingleBaseMarker(base){
+  // Defensa ante datos guardados corruptos (una base sin lat/lng válidos, de algún save viejo):
+  // sin esto, L.marker tira "Invalid LngLat object" y silenciosamente nunca se dibuja NINGÚN
+  // marcador de base — quien la sufra queda sin poder ver la suya en el mapa sin ningún aviso.
+  if(!Number.isFinite(base.lat) || !Number.isFinite(base.lng)){
+    console.warn(`[drawSingleBaseMarker] Base de "${base.ownerName}" con coordenadas inválidas — no se dibuja.`, base);
+    return;
+  }
   const isMine = base.ownerId === myPlayerId;
   const underConstruction = isMine && isBaseUnderConstruction();
   const emoji = underConstruction ? "🚧" : (isMine && player.isBuilding) ? "🏢" : "🏠";
   const icon = L.divIcon({className:'', html:`<div class="base-marker-simple">
       <div class="bms-label">${base.ownerName}</div>
       <div class="bms-emoji">${emoji}</div>
-    </div>`, iconSize:[54,58], iconAnchor:[27,50]});
-  const marker = L.marker([base.lat, base.lng], {icon, zIndexOffset:150}).addTo(map);
+    </div>`, iconSize:[54,58], iconAnchor:[27,95]});
+  // zIndexOffset por encima del marcador del jugador (1000): si estás parado sobre tu propia
+  // base, antes tu personaje la tapaba por completo (mismo punto en pantalla) — ahora el ícono
+  // "flota" más arriba (ver iconAnchor) y además queda dibujado por delante.
+  const marker = L.marker([base.lat, base.lng], {icon, zIndexOffset:1100}).addTo(map);
   marker.on('click', ()=> tryEnterBase(base));
   baseMarkers[base.ownerId] = marker;
+}
+
+/** Panel de diagnóstico temporal, solo visible con ?debug=1 en la URL — muestra en pantalla (sin
+ *  consola ni bookmarklets) el estado real de player.base y del marcador, para poder investigar
+ *  por qué el 🏠 no aparece en algunos dispositivos. No afecta a nadie que no agregue ese parámetro. */
+function showBaseDebugPanelIfRequested(){
+  if(!new URLSearchParams(location.search).has('debug')) return;
+  const old = document.getElementById('__baseDebugPanel');
+  if(old) old.remove();
+  const box = document.createElement('div');
+  box.id = '__baseDebugPanel';
+  box.style.cssText = 'position:fixed; left:6px; right:6px; bottom:6px; z-index:99999; background:rgba(0,0,0,.92); color:#7fffb0; font:11px/1.5 monospace; padding:10px; border-radius:10px; max-height:60vh; overflow:auto; white-space:pre-wrap; border:1px solid #3a3;';
+  const distToBase = (player.base && playerLatLng) ? Math.round(distMeters(playerLatLng, player.base)) : null;
+  const info = {
+    hasBase: player.hasBase, baseEverPlaced: player.baseEverPlaced,
+    base: player.base, playerLatLng, distToBaseMeters: distToBase,
+    baseMarkersInDOM: document.querySelectorAll('.base-marker-simple').length,
+    baseMarkersKeys: Object.keys(baseMarkers), myPlayerId,
+    mapZoom: map ? map.getZoom() : null,
+    drawStepErrors: lastDrawStepErrors,
+  };
+  box.textContent = JSON.stringify(info, null, 2);
+  document.body.appendChild(box);
 }
 /** Trae las bases de OTROS jugadores desde el historial compartido — si no hay conexión, solo
  *  ves la tuya (si ya la colocaste), sin que nada se rompa. */
@@ -4050,19 +4126,89 @@ function tryEnterBase(base){
       toast(`🏗️ Tu base se sigue construyendo — falta ${formatTimeLeft(player.base.constructionEndsAt - Date.now())}. Acelera desde el menú 🏠 Bases.`, 4200);
       return;
     }
-    showConfirm("Esta es tu base. ¿Quieres entrar?", openBaseStorage, {icon:"🏠", confirmLabel:"Entrar"});
+    showConfirm("Esta es tu base. ¿Quieres entrar?", openBaseRoom, {icon:"🏠", confirmLabel:"Entrar"});
   } else {
     toast(`🏠 Esta es la base de ${base.ownerName} — no puedes entrar.`);
   }
 }
 
+/** Pantalla del cuarto de tu base: pinta tu personaje de pie y muestra los "muebles" tocables
+ *  (cofre, mesas y forja) — el punto de entrada único al abrir tu base. */
+function openBaseRoom(){
+  const mePortrait = (CLASS_PORTRAITS[player.classKey]||{})[player.gender === "f" ? "f" : "m"];
+  const walkSet = (CLASS_WALK_SPRITES[player.classKey]||{})[player.gender === "f" ? "f" : "m"];
+  const src = (walkSet && walkSet.down) || (mePortrait && mePortrait.map);
+  const img = $("baseRoomCharacterImg");
+  if(src){ img.src = src; img.classList.remove("hidden"); }
+  else { img.classList.add("hidden"); }
+  baseRoomReturnPending = false;
+  $("baseRoomOverlay").classList.remove("hidden");
+}
+$("btnCloseBaseRoom").onclick = ()=> $("baseRoomOverlay").classList.add("hidden");
+
+/** Abre una de las sub-pantallas de la base (cofre/forja/mapa/mesas) desde un hotspot del
+ *  cuarto: esconde el cuarto y deja marcado que hay que volver a él al cerrarla. */
+function goToSubScreenFromRoom(openFn){
+  $("baseRoomOverlay").classList.add("hidden");
+  baseRoomReturnPending = true;
+  openFn();
+}
+/** Si la sub-pantalla se abrió desde el cuarto de la base, vuelve a mostrarlo; si no (se abrió
+ *  desde fuera, ej. el FAB o el botón 🗺️), simplemente no hace nada extra. */
+function returnToBaseRoomIfPending(){
+  if(!baseRoomReturnPending) return;
+  baseRoomReturnPending = false;
+  $("baseRoomOverlay").classList.remove("hidden");
+}
+$("baseRoomHotspotChest").onclick = ()=> goToSubScreenFromRoom(openBaseStorage);
+$("baseRoomHotspotWeapons").onclick = ()=> goToSubScreenFromRoom(()=> openBaseCategory("weapon"));
+$("baseRoomHotspotConsumables").onclick = ()=> goToSubScreenFromRoom(()=> openBaseCategory("consumable"));
+$("baseRoomHotspotMap").onclick = ()=> goToSubScreenFromRoom(()=>{ renderRegionsOverlay(); $("regionsOverlay").classList.remove("hidden"); });
+$("baseRoomHotspotForge").onclick = ()=> goToSubScreenFromRoom(()=>{ renderForge(); $("forgeOverlay").classList.remove("hidden"); });
+
 function openBaseStorage(){
   renderBaseStorageList();
   $("baseStorageOverlay").classList.remove("hidden");
 }
-$("btnCloseBaseStorage").onclick = ()=> $("baseStorageOverlay").classList.add("hidden");
+$("btnCloseBaseStorage").onclick = ()=>{
+  $("baseStorageOverlay").classList.add("hidden");
+  returnToBaseRoomIfPending();
+};
 
 function baseStorageMaxSlots(){ return BASE_STORAGE_SLOTS + (player.baseExtraSlots||0); }
+/** Arma la tarjeta de "pasar" un objeto entre tu inventario y el cofre de la base — se reusa en
+ *  la vista del cofre (ambas direcciones) y en las mesas filtradas de solo-armas / solo-consumibles
+ *  (siempre cofre → inventario). `onMoved` es el re-render que le toca a cada pantalla. */
+function buildBaseTransferCard(it, direction, onMoved){
+  const meta = equipItemMeta(it);
+  const card = document.createElement("div");
+  card.className = "inv-card-v2 " + meta.rc;
+  const label = direction === "toChest" ? "Pasar ⬇️" : "Pasar ⬆️";
+  const durability = it.durability != null ? durabilityBarHtml(it) : "";
+  card.innerHTML = `<div class="icv-icon">${iconFor(it)}</div><div class="icv-name">${it.name}</div>${durability}
+    <button class="ghostbtn base-transfer-btn">${label}</button>`;
+  card.querySelector(".base-transfer-btn").onclick = (e)=>{
+    e.stopPropagation();
+    if(direction === "toChest"){
+      if((player.baseStorage||[]).length >= baseStorageMaxSlots()){ toast("🏠 Tu base está llena — consigue más espacio."); return; }
+      const idx = player.inventory.indexOf(it);
+      if(idx<0) return;
+      const [moved] = player.inventory.splice(idx,1);
+      player.baseStorage.push(moved);
+    } else {
+      if(!hasInventorySpace(it.id)){ toast("🎒 Tu inventario está lleno — no se pudo sacar."); return; }
+      const idx = player.baseStorage.indexOf(it);
+      if(idx<0) return;
+      const [moved] = player.baseStorage.splice(idx,1);
+      pushItemSafe(moved);
+    }
+    refreshHud();
+    onMoved();
+    saveGame();
+  };
+  return card;
+}
+
 function renderBaseStorageList(){
   const storage = player.baseStorage || [];
   $("baseChestCount").textContent = `${storage.length}/${baseStorageMaxSlots()}`;
@@ -4077,25 +4223,7 @@ function renderBaseStorageList(){
   if(uniqueInv.length===0){
     invGrid.innerHTML = `<div class="empty-note" style="grid-column:1/-1;">Tu inventario está vacío.</div>`;
   } else {
-    uniqueInv.forEach(it=>{
-      const meta = equipItemMeta(it);
-      const card = document.createElement("div");
-      card.className = "inv-card-v2 " + meta.rc;
-      card.innerHTML = `<div class="icv-icon">${iconFor(it)}</div><div class="icv-name">${it.name}</div>
-        <button class="ghostbtn base-transfer-btn">Pasar ⬇️</button>`;
-      card.querySelector(".base-transfer-btn").onclick = (e)=>{
-        e.stopPropagation();
-        if((player.baseStorage||[]).length >= baseStorageMaxSlots()){ toast("🏠 Tu base está llena — consigue más espacio."); return; }
-        const idx = player.inventory.findIndex(x=>x.id===it.id);
-        if(idx<0) return;
-        const [moved] = player.inventory.splice(idx,1);
-        player.baseStorage.push(moved);
-        refreshHud();
-        renderBaseStorageList();
-        saveGame();
-      };
-      invGrid.appendChild(card);
-    });
+    uniqueInv.forEach(it=> invGrid.appendChild(buildBaseTransferCard(it, "toChest", renderBaseStorageList)));
   }
 
   // ---- abajo: el cofre de la base, con boton "Pasar ⬆️" para devolverlo al inventario ----
@@ -4104,23 +4232,7 @@ function renderBaseStorageList(){
   if(storage.length===0){
     chestGrid.innerHTML = `<div class="empty-note" style="grid-column:1/-1;">Aún no has guardado nada aquí.</div>`;
   } else {
-    storage.forEach((it, idx)=>{
-      const meta = equipItemMeta(it);
-      const card = document.createElement("div");
-      card.className = "inv-card-v2 " + meta.rc;
-      card.innerHTML = `<div class="icv-icon">${iconFor(it)}</div><div class="icv-name">${it.name}</div>
-        <button class="ghostbtn base-transfer-btn">Pasar ⬆️</button>`;
-      card.querySelector(".base-transfer-btn").onclick = (e)=>{
-        e.stopPropagation();
-        if(!hasInventorySpace(it.id)){ toast("🎒 Tu inventario está lleno — no se pudo sacar."); return; }
-        const [moved] = player.baseStorage.splice(idx,1);
-        pushItemSafe(moved);
-        refreshHud();
-        renderBaseStorageList();
-        saveGame();
-      };
-      chestGrid.appendChild(card);
-    });
+    storage.forEach(it=> chestGrid.appendChild(buildBaseTransferCard(it, "toInventory", renderBaseStorageList)));
   }
   // tarjeta "+" para ampliar el espacio de la base, con cristales — siempre al final del cofre
   const buyCard = document.createElement("div");
@@ -4138,6 +4250,42 @@ function renderBaseStorageList(){
   };
   chestGrid.appendChild(buyCard);
 }
+
+const BASE_CATEGORY_DEFS = {
+  weapon: {
+    title: "🗡️ Mesa de armas",
+    emptyNote: "Todavía no has guardado ninguna arma en el cofre de tu base.",
+    filter: it=> it.slot==="weapon",
+  },
+  consumable: {
+    title: "🧪 Mesa de consumibles",
+    emptyNote: "Todavía no has guardado ningún consumible en el cofre de tu base.",
+    filter: it=> it.type==="heal" || it.type==="mana" || it.type==="stat",
+  },
+};
+/** Mesas de la base: listan SOLO lo que ya está guardado en el cofre (player.baseStorage) que
+ *  cumpla el filtro de la categoría — armas o consumibles — con el mismo botón "Pasar ⬆️" que
+ *  usa el cofre completo para devolverlo al inventario. */
+function renderBaseCategoryList(kind){
+  const def = BASE_CATEGORY_DEFS[kind];
+  $("baseCategoryTitle").textContent = def.title;
+  const grid = $("baseCategoryList");
+  grid.innerHTML = "";
+  const items = (player.baseStorage||[]).filter(def.filter);
+  if(items.length===0){
+    grid.innerHTML = `<div class="empty-note" style="grid-column:1/-1;">${def.emptyNote}</div>`;
+  } else {
+    items.forEach(it=> grid.appendChild(buildBaseTransferCard(it, "toInventory", ()=> renderBaseCategoryList(kind))));
+  }
+}
+function openBaseCategory(kind){
+  renderBaseCategoryList(kind);
+  $("baseCategoryOverlay").classList.remove("hidden");
+}
+$("btnCloseBaseCategory").onclick = ()=>{
+  $("baseCategoryOverlay").classList.add("hidden");
+  returnToBaseRoomIfPending();
+};
 
 /** Pantalla del menú "🏠 Bases": muestra si ya tienes una, si está guardada (sin desplegar
  *  todavía) o ya puesta en el mapa, con el botón que corresponda en cada caso. */
@@ -4158,11 +4306,11 @@ function renderBasesMenuList(){
     const homeEmoji = player.isBuilding ? "🏢" : "🏠";
     const homeLabel = player.isBuilding ? "Tu edificio" : "Tu base";
     row.innerHTML = `<div class="ie">${homeEmoji}</div><div class="it">${homeLabel}<small style="color:#4fd67a;">Desplegada en el mapa</small></div>
-      <button data-act="enter" style="margin-right:4px;">🗝️ Abrir cofre</button>
+      <button data-act="enter" style="margin-right:4px;">🚪 Entrar</button>
       <button data-act="pickup" style="background:var(--danger);">🪙${BASE_PICKUP_COST_GOLD} Recoger</button>`;
     row.querySelector('[data-act="enter"]').onclick = ()=>{
       $("basesMenuOverlay").classList.add("hidden");
-      openBaseStorage();
+      openBaseRoom();
     };
     row.querySelector('[data-act="pickup"]').onclick = pickUpBase;
   } else {
@@ -4252,7 +4400,10 @@ $("btnForge").onclick = ()=>{
   renderForge();
   $("forgeOverlay").classList.remove("hidden");
 };
-$("btnCloseForge").onclick = ()=> $("forgeOverlay").classList.add("hidden");
+$("btnCloseForge").onclick = ()=>{
+  $("forgeOverlay").classList.add("hidden");
+  returnToBaseRoomIfPending();
+};
 $("btnRepairAll").onclick = ()=>{ repairAllItems(); renderForge(); };
 
 function maybeSpawnThief(){
@@ -11508,7 +11659,10 @@ function promptReleasePet(pet){
   };
   $("btnCancelReleasePet").onclick = ()=> $("releasePetOverlay").classList.add("hidden");
 }
-$("btnCloseRegions").onclick = ()=> $("regionsOverlay").classList.add("hidden");
+$("btnCloseRegions").onclick = ()=>{
+  $("regionsOverlay").classList.add("hidden");
+  returnToBaseRoomIfPending();
+};
 $("btnCloseParty").onclick = ()=> $("partyOverlay").classList.add("hidden");
 $("btnLeaveParty").onclick = ()=>{
   showConfirm("¿Salir del grupo?", ()=>{
