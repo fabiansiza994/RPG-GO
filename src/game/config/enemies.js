@@ -1,13 +1,13 @@
 export const MONSTER_TEMPLATES = [
   {name:"Slime Salvaje", emoji:"🟢", tier:1, hpM:1.0, atkM:0.8, defM:0.8},
   {name:"Rata Mutante", emoji:"🐀", tier:1, hpM:0.85, atkM:0.95, defM:0.7},
-  {name:"Cuervo Corrupto", emoji:"🐦‍⬛", tier:1, hpM:0.8, atkM:1.0, defM:0.7},
+  {name:"Cuervo Corrupto", emoji:"🐦‍⬛", tier:1, hpM:0.8, atkM:1.0, defM:0.7, flying:true},
   {name:"Espectro", emoji:"👻", tier:2, hpM:1.05, atkM:1.1, defM:0.9, debuffOnHit:{stat:"atk", amount:0.15, chance:0.3}},
   {name:"Trasgo", emoji:"👺", tier:2, hpM:1.15, atkM:1.0, defM:1.0},
   {name:"Golem de Roca", emoji:"🗿", tier:3, hpM:1.5, atkM:0.9, defM:1.6, debuffOnHit:{stat:"def", amount:0.15, chance:0.3}},
   {name:"Lobo Umbrío", emoji:"🐺", tier:2, hpM:1.0, atkM:1.2, defM:0.85, aggressive:true},
   {name:"Araña Gigante", emoji:"🕷️", tier:2, hpM:0.95, atkM:1.15, defM:0.85, aggressive:true, debuffOnHit:{stat:"def", amount:0.2, chance:0.35}},
-  {name:"Dragón Menor", emoji:"🐉", tier:4, hpM:1.8, atkM:1.5, defM:1.2},
+  {name:"Dragón Menor", emoji:"🐉", tier:4, hpM:1.8, atkM:1.5, defM:1.2, flying:true},
   {name:"Demonio Menor", emoji:"👹", tier:3, hpM:1.3, atkM:1.3, defM:1.0, aggressive:true, debuffOnHit:{stat:"atk", amount:0.2, chance:0.3}},
 ];
 
@@ -35,7 +35,7 @@ export const LOBO_SOMBRIO_TEMPLATE = {name:"Lobo Sombrío", emoji:"🐺", tier:6
 
 export const BOSS_TEMPLATES = [
   {name:"Behemot de Piedra", emoji:"🗿", hpM:5.5, atkM:2.0, defM:2.2},
-  {name:"Dragón Ancestral", emoji:"🐉", hpM:5.0, atkM:2.3, defM:1.8},
+  {name:"Dragón Ancestral", emoji:"🐉", hpM:5.0, atkM:2.3, defM:1.8, flying:true},
   {name:"Señor Demonio", emoji:"👹", hpM:5.2, atkM:2.1, defM:2.0},
   {name:"Rey Trasgo", emoji:"👺", hpM:4.8, atkM:2.0, defM:1.9},
 ];

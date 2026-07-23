@@ -37,6 +37,11 @@ import { generateEnemyChallenge } from "./game/systems/enemyPowerGenerator.js";
 import { getRewardMultiplier } from "./game/systems/rewardDifficulty.js";
 import { DANGER_ZONE_CONFIG, DANGER_ZONE_GENERATION_MODE } from "./game/config/dangerZones.js";
 import { generateDangerZone, isPointInDangerZone, dangerZoneLabelPoint } from "./game/systems/dangerZonePolygonizer.js";
+import { getBattleSceneConfig, DEFAULT_BATTLE_SCENE_ID } from "./game/config/battleScenes.js";
+import {
+  positionEntityOnStage, resetEntityPosition, createPerspectiveShadow,
+  pickGroundAnchor, pickFlyingAnchor, projectFlyingShadow,
+} from "./game/systems/battlePerspective.js";
 import {
   MONSTER_TEMPLATES,
   BOSS_TEMPLATES,
@@ -7481,6 +7486,9 @@ function refreshHud(){
   $("hudLvl").textContent = `Nv. ${player.level}`;
   $("hpFill").style.width = pct(player.hp, player.maxHp)+"%";
   $("mpFill").style.width = pct(player.mp, player.maxMp)+"%";
+  $("hpBarText").textContent = `${Math.round(player.hp)}/${Math.round(player.maxHp)}`;
+  $("mpBarText").textContent = `${Math.round(player.mp)}/${Math.round(player.maxMp)}`;
+  $("hpBarWrap").classList.toggle("low-hp", player.hp/player.maxHp <= 0.25);
   $("xpFill").style.width = pct(player.xp, player.xpNext)+"%";
   $("statAtk").textContent = round1(player.atk);
   $("statMatk").textContent = round1(player.matk||0);
@@ -8973,8 +8981,131 @@ function updateBattleSceneBackground(){
   const hasDarkAuraEnemy = battleState.isPack
     ? (battleState.mons||[]).some(m=> m.tpl && m.tpl.dropsDarkEssence)
     : !!(battleState.mon && battleState.mon.tpl && battleState.mon.tpl.dropsDarkEssence);
-  wrap.classList.toggle("senor-oscuro-bg", !!(isSenorOscuroDungeon || hasDarkAuraEnemy || isPlayerInDarkAura()));
+  const isDark = !!(isSenorOscuroDungeon || hasDarkAuraEnemy || isPlayerInDarkAura());
+  wrap.classList.toggle("senor-oscuro-bg", isDark);
+  activeBattleScene = getBattleSceneConfig(isDark ? "senor_oscuro" : DEFAULT_BATTLE_SCENE_ID);
 }
+
+/* ============================================================
+   SISTEMA DE PERSPECTIVA DE BATALLA (ver game/systems/battlePerspective.js) — reemplaza el
+   posicionamiento "a ojo" por flexbox (jugador siempre abajo-izquierda, enemigo siempre
+   arriba-derecha) por anclajes reales del escenario activo, para que nadie quede flotando ni
+   parado sobre un edificio. Solo cambia POSICIÓN/ESCALA/SOMBRA — nunca toca battleState, daño ni
+   turnos. No aplica en group-mode (batalla de grupo multijugador con varios aliados en pantalla),
+   que sigue con el flujo flex de siempre — ver el `if(!active)` más abajo. */
+let activeBattleScene = getBattleSceneConfig(DEFAULT_BATTLE_SCENE_ID);
+let playerStageShadowEl = null;
+let enemyStageShadowEl = null;
+const packStageShadowEls = {};
+let lastPerspectiveMode = "solo";
+let lastPerspectiveFlying = false;
+
+/** Punto de entrada del sistema: reposiciona jugador (siempre) y enemigo solo/manada (según
+ *  `mode`) sobre sus anclas del escenario activo. Seguro de llamar en cualquier momento — se usa
+ *  al iniciar cada tipo de combate y de nuevo en cada resize/cambio de orientación. */
+function refreshBattleStagePerspective(mode, flying){
+  lastPerspectiveMode = mode;
+  lastPerspectiveFlying = !!flying;
+  const wrap = $("battleWrap");
+  const stageEl = document.querySelector(".stage");
+  const backgroundEl = $("battleScenePanel");
+  if(!wrap || !stageEl) return;
+  const active = !wrap.classList.contains("group-mode");
+  stageEl.classList.toggle("perspective-mode", active);
+  if(!active){
+    // grupo multijugador: nunca tocado por este sistema — se asegura de dejar todo como estaba
+    // por si venía de un combate anterior que sí usó perspectiva.
+    resetEntityPosition($("spritePlayerAnchor"));
+    resetEntityPosition($("spriteEnemyAnchor"));
+    if(playerStageShadowEl) playerStageShadowEl.style.display = "none";
+    if(enemyStageShadowEl) enemyStageShadowEl.style.display = "none";
+    return;
+  }
+
+  // Varios puntos de entrada (startBattle, startPackBattle, renderPvpBattleUI) arman toda la
+  // escena ANTES de sacarle la clase "hidden" a #battleWrap — en ese instante .stage todavía mide
+  // 0×0 (un ancestro con display:none colapsa todo adentro), así que getBoundingClientRect no
+  // sirve de nada todavía. Sin este reintento, positionEntityOnStage aborta en silencio pero la
+  // clase "perspective-mode" ya quedó puesta → el ancla pasa a position:absolute SIN left/top, y
+  // cae a su posición estática de flujo (arriba a la derecha para el enemigo, por align-self:
+  // flex-start en .enemy-side) — exactamente el bug de "el enemigo aparece en el cielo". Doble rAF
+  // (mismo patrón que ya usa renderPackStage más abajo) porque para cuando este callback corre,
+  // el resto de startBattle/etc. ya terminó de ejecutarse sincrónicamente y sacó el "hidden".
+  const stageRectCheck = stageEl.getBoundingClientRect();
+  if(!stageRectCheck.width || !stageRectCheck.height){
+    requestAnimationFrame(()=> requestAnimationFrame(()=> refreshBattleStagePerspective(mode, flying)));
+    return;
+  }
+
+  const scene = activeBattleScene;
+  if(!playerStageShadowEl){ playerStageShadowEl = createPerspectiveShadow(); stageEl.appendChild(playerStageShadowEl); }
+  const playerAnchorEl = $("spritePlayerAnchor");
+  if(playerAnchorEl){
+    const p = scene.playerAnchor;
+    positionEntityOnStage(playerAnchorEl, playerStageShadowEl, {fx:p.x, fy:p.y, sceneConfig:scene, stageEl, backgroundEl});
+  }
+
+  if(mode === "pack"){
+    // los miembros de la manada tienen su propia sombra por índice — la del "enemigo solo" no
+    // aplica acá, se oculta para no dejar una sombra huérfana sin sprite encima.
+    if(enemyStageShadowEl) enemyStageShadowEl.style.display = "none";
+    repositionPackStageMembers();
+    return;
+  }
+
+  const enemyAnchorEl = $("spriteEnemyAnchor");
+  if(!enemyAnchorEl) return;
+  if(!enemyStageShadowEl){ enemyStageShadowEl = createPerspectiveShadow(); stageEl.appendChild(enemyStageShadowEl); }
+  // Un enemigo SOLO (el caso más común: un monstruo normal en el mapa) usa el punto por defecto
+  // del escenario — un poco por encima del jugador y un poco más chico, para dar sensación de
+  // profundidad sin mandarlo al anchor más lejano (ese queda reservado para cuando de verdad hay
+  // varios enemigos repartidos por la calle, ver pickGroundAnchor/enemyAnchors).
+  const anchor = flying ? pickFlyingAnchor(scene, 0)
+    : (scene.soloEnemyAnchor || pickGroundAnchor(scene, 0));
+  const shadow = flying ? projectFlyingShadow(anchor, scene) : anchor;
+  positionEntityOnStage(enemyAnchorEl, enemyStageShadowEl, {
+    fx:anchor.x, fy:anchor.y, sceneConfig:scene, stageEl, backgroundEl, flying:!!flying,
+    shadowFx: shadow.x, shadowFy: shadow.y,
+  });
+}
+
+/** Reposiciona (sin reconstruir) los `.pack-stage-mon` que ya están en el DOM — lo llama
+ *  renderPackStage() después de armar la fila, y el listener de resize para no perder el estado
+ *  de animaciones en curso al rotar el teléfono. */
+function repositionPackStageMembers(){
+  const stageEl = document.querySelector(".stage");
+  const backgroundEl = $("battleScenePanel");
+  const wrap = $("packStageRow");
+  if(!stageEl || !wrap || !battleState || !battleState.mons) return;
+  const scene = activeBattleScene;
+  Array.from(wrap.children).forEach((el, idx)=>{
+    const m = battleState.mons[idx];
+    if(!m) return;
+    if(!packStageShadowEls[idx]){ packStageShadowEls[idx] = createPerspectiveShadow(); stageEl.appendChild(packStageShadowEls[idx]); }
+    const flying = !!(m.tpl && m.tpl.flying);
+    const anchor = flying ? pickFlyingAnchor(scene, idx) : pickGroundAnchor(scene, idx);
+    const shadow = flying ? projectFlyingShadow(anchor, scene) : anchor;
+    positionEntityOnStage(el, packStageShadowEls[idx], {
+      fx:anchor.x, fy:anchor.y, sceneConfig:scene, stageEl, backgroundEl, flying,
+      shadowFx: shadow.x, shadowFy: shadow.y,
+    });
+    packStageShadowEls[idx].style.opacity = (m.curHp<=0) ? "0.15" : "";
+  });
+  // si la manada anterior tenía más miembros que la actual, borra las sombras que sobran.
+  Object.keys(packStageShadowEls).forEach(k=>{
+    if(Number(k) >= wrap.children.length){ packStageShadowEls[k].remove(); delete packStageShadowEls[k]; }
+  });
+}
+
+let battleStageResizeTimer = null;
+window.addEventListener("resize", ()=>{
+  clearTimeout(battleStageResizeTimer);
+  battleStageResizeTimer = setTimeout(()=>{
+    const wrap = $("battleWrap");
+    if(!wrap || wrap.classList.contains("hidden")) return;
+    refreshBattleStagePerspective(lastPerspectiveMode, lastPerspectiveFlying);
+  }, 150);
+});
 function startBattle(mon, opts){
   opts = opts || {};
   // resguardo: cualquier batalla que arranca por esta vía (encuentro normal en el mapa) nunca debe
@@ -9043,6 +9174,9 @@ function startBattle(mon, opts){
   }
   renderMoveGrid();
   $("battleWrap").classList.remove("hidden");
+  // recién ACÁ, con #battleWrap ya visible, tiene sentido medir .stage (antes mide 0×0 y el
+  // sistema de perspectiva no tendría dónde posicionar nada — ver refreshBattleStagePerspective).
+  refreshBattleStagePerspective("solo", !!(mon.tpl && mon.tpl.flying));
   playBattleEntranceFx();
   playCharacterSlideInFx(); // el retraso hasta que se revele la escena vive en el CSS (animation-delay), no acá
 }
@@ -12008,6 +12142,11 @@ function startPackBattle(packMons, opts){
   logBattle(`¡Una manada de ${packMons.length} ${packMons[0].tpl.name}(s) te rodea!`, true);
   renderMoveGrid();
   $("battleWrap").classList.remove("hidden");
+  // renderPackStage() (arriba) ya intentó posicionar todo, pero corrió con #battleWrap todavía
+  // oculto (.stage medía 0×0) — recién ACÁ tiene sentido medir, así que se repite ya con la escena
+  // visible (el reintento automático en refreshBattleStagePerspective lo cubriría solo, pero así
+  // no depende de esperar el próximo frame para verse bien).
+  refreshBattleStagePerspective("pack");
   playBattleEntranceFx();
   playCharacterSlideInFx(); // el retraso hasta que se revele la escena vive en el CSS (animation-delay), no acá
 }
@@ -12025,18 +12164,16 @@ function renderPackStage(){
   const wrap = $("packStageRow");
   wrap.innerHTML = "";
   const count = battleState.mons.length;
-  // entre más enemigos, más chicos y más superpuestos (para que quepan uno "al lado" del otro,
-  // como parados en fila, en vez de apilarse hacia abajo).
+  // entre más enemigos, más chico el arte de cada uno (para que quepan bien repartidos por sus
+  // anchors) — la posición/superposición real ahora la decide el sistema de perspectiva
+  // (refreshBattleStagePerspective → repositionPackStageMembers), no un margen a mano.
   const size = count<=2 ? 46 : count===3 ? 38 : count===4 ? 32 : 27;
-  const overlap = count<=2 ? 0 : count===3 ? 8 : count===4 ? 16 : 22;
   battleState.mons.forEach((m, idx)=>{
     const dead = m.curHp <= 0;
     const justDied = dead && !m._deadRendered;
     const el = document.createElement("div");
     el.className = "pack-stage-mon" + (idx===battleState.selectedTarget ? " selected" : "") + (dead && !justDied ? " dead" : "");
     el.id = "packStageMon"+idx;
-    if(idx>0) el.style.marginLeft = "-"+overlap+"px";
-    el.style.zIndex = String(idx+1); // el de más a la derecha queda por encima, se ve mejor al superponerse
     // enemigos con arte de batalla propio (jefes, esbirros oscuros, lobos, etc.) muestran esa
     // imagen a escala reducida acá, en vez de caer siempre al emoji genérico como antes.
     const spriteHtml = enemySpriteHtml(m.tpl, {extraClass:"pack-sprite-img", style:`max-height:${size+18}px;max-width:${size+18}px;`});
@@ -12052,6 +12189,7 @@ function renderPackStage(){
     }
   });
   syncPackDisplayMode();
+  refreshBattleStagePerspective("pack");
 }
 /** Anima un miembro específico de la manada (por índice) en el escenario. */
 function animatePackMon(idx, cls){
@@ -13278,6 +13416,10 @@ function renderPvpBattleUI(){
   renderPlayerSprite();
   $("spriteEnemy").innerHTML = combatSpriteHtml(pvp.opponent.classKey, pvp.opponent.gender, true);
   updatePvpBars();
+  // Mismo motivo que el comentario de abajo sobre el fondo: PvP no pasa por
+  // updateBattleSceneBackground(), así que el escenario activo se fija acá directo (siempre el
+  // medieval por defecto — un duelo nunca usa el fondo especial del Señor Oscuro).
+  activeBattleScene = getBattleSceneConfig(DEFAULT_BATTLE_SCENE_ID);
   logBattle(`¡Comienza el duelo contra ${pvp.opponent.name}! (Turno 1)`, true);
   renderPvpMoveGrid();
   // PvP no usa battleState (usa su propio objeto `pvp`) — el fondo especial de la mazmorra/niebla
@@ -13287,6 +13429,8 @@ function renderPvpBattleUI(){
   $("battleWrap").classList.remove("senor-oscuro-bg");
   updateBattleRainFx();
   $("battleWrap").classList.remove("hidden");
+  // recién ACÁ, con #battleWrap ya visible, tiene sentido medir .stage (antes mide 0×0).
+  refreshBattleStagePerspective("solo", false);
   playBattleEntranceFx();
   playCharacterSlideInFx(); // el retraso hasta que se revele la escena vive en el CSS (animation-delay), no acá
 }
@@ -13914,9 +14058,13 @@ function handleChatMessage(c){
 }
 
 /* ---------- Menú de opciones (rueda circular) ---------- */
+/** btn_menu1 (☰) cerrado / btn_menu2 (✕) abierto — mismo botón, se cambia el src en vez del emoji. */
+function setFabToggleIcon(open){
+  $("btnFabToggleImg").src = open ? "/new_elements/btn_menu2.png" : "/new_elements/btn_menu1.png";
+}
 function closeFabMenu(){
   $("fabMenu").classList.remove("open");
-  $("btnFabToggle").textContent = "☰";
+  setFabToggleIcon(false);
   $("fabMenuBackdrop").classList.remove("show");
 }
 $("btnFleeCorner").onclick = ()=>{
@@ -13929,12 +14077,12 @@ $("btnFleeCorner").onclick = ()=>{
 
 $("btnFabToggle").onclick = ()=>{
   const open = $("fabMenu").classList.toggle("open");
-  $("btnFabToggle").textContent = open ? "✕" : "☰";
+  setFabToggleIcon(open);
   $("fabMenuBackdrop").classList.toggle("show", open);
 };
 $("fabMenuBackdrop").onclick = ()=>{
   $("fabMenu").classList.remove("open");
-  $("btnFabToggle").textContent = "☰";
+  setFabToggleIcon(false);
   $("fabMenuBackdrop").classList.remove("show");
 };
 
@@ -15231,6 +15379,10 @@ function renderGroupBattleUI(){
   $("battleWrap").classList.remove("senor-oscuro-bg");
   updateBattleRainFx();
   $("battleWrap").classList.add("group-mode");
+  // el sistema de perspectiva no cubre el modo grupo (varios aliados en pantalla, ver arriba) —
+  // esto solo se asegura de dejar jugador/enemigo en su flujo flex normal por si un combate
+  // anterior sí lo usó.
+  refreshBattleStagePerspective("group", false);
   $("soloEnemyPanel").classList.remove("hidden");
   $("packEnemyPanels").classList.add("hidden");
   $("spriteEnemy").classList.remove("hidden");

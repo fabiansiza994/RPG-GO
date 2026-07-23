@@ -69,8 +69,8 @@
             <span class="hud-res-inline"><span class="gold">🪙 <b id="statGold">0</b></span><span class="gold">💎 <b id="statCrystals">0</b></span><span class="gold dark-essence-pill hidden" id="darkEssencePill">🖤 <b id="statDarkEssence">0</b></span></span>
           </div>
           <div class="hud-vitals-slot" id="hudVitalsSlot">
-            <div class="bar-wrap bar-wrap-v2"><div class="bar-fill bar-hp" id="hpFill" style="width:100%"></div></div>
-            <div class="bar-wrap bar-wrap-v2"><div class="bar-fill bar-mp" id="mpFill" style="width:100%"></div></div>
+            <div class="bar-wrap bar-wrap-v2 bar-wrap-hp" id="hpBarWrap"><div class="bar-fill bar-hp" id="hpFill" style="width:100%"></div><span class="bar-text" id="hpBarText"></span></div>
+            <div class="bar-wrap bar-wrap-v2 bar-wrap-mp" id="mpBarWrap"><div class="bar-fill bar-mp" id="mpFill" style="width:100%"></div><span class="bar-text" id="mpBarText"></span></div>
           </div>
           <div class="bar-wrap" style="display:none;"><div class="bar-fill bar-xp" id="xpFill" style="width:0%"></div></div>
           <!-- Los atributos completos (ATK/AT.MÁG/DEF/VEL) ya no se muestran aquí durante la exploración —
@@ -148,8 +148,8 @@
 <div id="mapPartyPanel" class="hidden"></div>
 
 <div id="bottombar">
-  <button class="fab" id="btnRecenter" style="width:68px; height:68px; padding:0; font-size:30px;" title="Centrar mapa">🎯</button>
-  <button class="fab" id="btnResetCompass" style="width:44px; padding:0; font-size:19px;" title="Norte arriba, sin inclinar">🧭</button>
+  <button class="fab img-btn" id="btnRecenter" style="width:88px; height:58px;" title="Centrar mapa"><img src="/new_elements/btn_centra.png" alt="Centrar mapa" draggable="false"></button>
+  <button class="fab img-btn" id="btnResetCompass" style="width:50px; height:50px;" title="Norte arriba, sin inclinar"><img src="/new_elements/brujula.png" alt="Brújula" draggable="false"></button>
   <div id="nearbyBossPanel"></div>
 </div>
 
@@ -167,9 +167,9 @@
   </div>
 </div>
 <div id="floatingSideBtns">
-  <button class="floating-side-btn" id="btnShop" title="Tienda">🏪</button>
-  <button class="floating-side-btn" id="btnInv" title="Inventario">🎒<span class="notif-dot" id="invNotifDot"></span></button>
-  <button class="floating-side-btn" id="btnRegions" title="Regiones">🗺️</button>
+  <button class="floating-side-btn img-btn" id="btnShop" title="Tienda"><img src="/new_elements/btn_tienda.png" alt="Tienda" draggable="false"></button>
+  <button class="floating-side-btn img-btn" id="btnInv" title="Inventario"><img src="/new_elements/btn_inventario.png" alt="Inventario" draggable="false"><span class="notif-dot" id="invNotifDot"></span></button>
+  <button class="floating-side-btn img-btn" id="btnRegions" title="Regiones"><img src="/new_elements/btn_regiones.png" alt="Regiones" draggable="false"></button>
   <!-- El Coliseo ahora es una ubicación permanente en el mapa (Mapa Vivo, Capa 1) — ver drawColiseoMarker. -->
 </div>
 
@@ -203,7 +203,7 @@
     </div>
     <div class="wheel-secondary-row"></div>
   </div>
-  <button class="fab-main" id="btnFabToggle">☰</button>
+  <button class="fab-main" id="btnFabToggle"><img id="btnFabToggleImg" src="/new_elements/btn_menu1.png" alt="Menú" draggable="false"></button>
 </div>
 
 <!-- OTHER PLAYER ACTIONS -->
@@ -900,12 +900,12 @@
     <div id="packEnemyPanels" class="hidden" style="display:flex; gap:6px; padding:0 14px 8px 60px; flex-wrap:wrap; justify-content:flex-end;"></div>
     <div class="stage">
       <div class="ally-side">
-        <div class="sprite" id="spritePlayer">🗡️</div>
+        <div class="perspective-anchor" id="spritePlayerAnchor"><div class="sprite" id="spritePlayer">🗡️</div></div>
         <div id="groupAllyStageRow" class="hidden"></div>
         <div id="petStageSlot" class="hidden"></div>
       </div>
       <div class="enemy-side">
-        <div class="sprite" id="spriteEnemy">👾</div>
+        <div class="perspective-anchor" id="spriteEnemyAnchor"><div class="sprite" id="spriteEnemy">👾</div></div>
         <div id="oppPetStageSlot" class="hidden"></div>
       </div>
       <div id="packStageRow" class="hidden"></div>
