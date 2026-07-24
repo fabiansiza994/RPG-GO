@@ -23,11 +23,18 @@
    Cómo ajustar un escenario: abrí la imagen de fondo, fijate dónde está el horizonte (dónde el
    piso transitable deja de verse, normalmente la base de un edificio/colina lejana) y el borde
    más cercano a cámara (normalmente el borde inferior de la imagen, o un poco antes si hay cajas/
-   barriles en primer plano), y anotá esas fracciones. Los anchors (playerAnchor/enemyAnchors/
-   flyingAnchors) son simplemente puntos DENTRO de groundPolygon que "se ven bien" pisando el
-   suelo — si alguno queda mal puesto, pickGroundAnchor() lo reubica solo al punto transitable más
-   cercano (ver findNearestPointInsidePolygon en battlePerspective.js), así que no hace falta que
-   la calibración a mano sea perfecta.
+   barriles en primer plano), y anotá esas fracciones. Los anchors (playerAnchor/enemyAnchors) son
+   simplemente puntos DENTRO de groundPolygon que "se ven bien" pisando el suelo — si alguno queda
+   mal puesto, pickGroundAnchor() lo reubica solo al punto transitable más cercano (ver
+   findNearestPointInsidePolygon en battlePerspective.js), así que no hace falta que la calibración
+   a mano sea perfecta.
+
+   Enemigos voladores (flying:true en game/config/enemies.js) NO tienen un array de anchors propio
+   acá — pickFlyingAnchor() en battlePerspective.js los deriva del mismo punto de apoyo que usaría
+   un enemigo terrestre ahí (soloEnemyAnchor/enemyAnchors), con la sombra pegada a ESE punto de piso
+   y el sprite flotando FLYING_HOVER_HEIGHT_FRAC más arriba — así cualquier volador, sea chico
+   (Cuervo Corrupto) o grande (Dragón Menor/Ancestral), flota siempre la misma altura relativa a su
+   propia sombra sin necesidad de calibrar un punto aparte por escenario o por monstruo.
    ============================================================ */
 
 /**
@@ -35,9 +42,6 @@
  * @property {number} x - Fracción horizontal (0-1) sobre la imagen nativa del escenario.
  * @property {number} y - Fracción vertical (0-1) sobre la imagen nativa del escenario — también
  *   funciona como "profundidad": cuanto más grande, más cerca de cámara.
- * @property {number} [shadowX] - Solo para flyingAnchors: dónde cae la sombra en el suelo (si no
- *   se define, se calcula una banda razonable bajo el punto de vuelo — ver projectFlyingShadow).
- * @property {number} [shadowY] - Idem, componente vertical de la sombra proyectada en el suelo.
  */
 
 /**
@@ -54,8 +58,7 @@
  *   profundidad sin mandarlo al anchor más lejano. Si no se define, se usa enemyAnchors[0].
  * @property {Point[]} enemyAnchors - Puntos de apoyo para enemigos terrestres, mezclando los tres
  *   niveles de distancia (lejano/medio/cercano) — se recorren en orden para 2..N enemigos (manada).
- * @property {Point[]} flyingAnchors - Puntos para enemigos voladores. Su sombra NO usa esta misma
- *   posición — ver shadowX/shadowY en cada anchor.
+ *   También sirven de base para los voladores — ver pickFlyingAnchor en battlePerspective.js.
  * @property {number} horizonY - Fracción vertical (0-1) de la línea de horizonte: el punto más
  *   lejano del suelo transitable. Las entidades ahí usan farScale (nivel "lejano").
  * @property {number} groundBottomY - Fracción vertical (0-1) del borde inferior del suelo: el
@@ -110,11 +113,6 @@ export const BATTLE_SCENES = {
       {x:0.70, y:0.78},  // cercano
       {x:0.25, y:0.82},  // cercano, lado izquierdo
     ],
-    flyingAnchors: [
-      {x:0.62, y:0.30, shadowX:0.62, shadowY:0.66},
-      {x:0.40, y:0.26, shadowX:0.40, shadowY:0.58},
-      {x:0.76, y:0.32, shadowX:0.74, shadowY:0.70},
-    ],
     // Lejano / medio / cercano — calculatePerspectiveScale() interpola una curva que pasa EXACTO
     // por estos tres puntos (no una simple recta entre far/near), así el paso de lejano a medio
     // se siente más marcado que el de medio a cercano, como en una perspectiva real.
@@ -152,11 +150,6 @@ export const BATTLE_SCENES = {
       {x:0.30, y:0.64},
       {x:0.70, y:0.78},
       {x:0.25, y:0.82},
-    ],
-    flyingAnchors: [
-      {x:0.62, y:0.30, shadowX:0.62, shadowY:0.66},
-      {x:0.40, y:0.26, shadowX:0.40, shadowY:0.58},
-      {x:0.76, y:0.32, shadowX:0.74, shadowY:0.70},
     ],
     farScale: 0.38,
     midScale: 0.60,

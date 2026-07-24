@@ -61,8 +61,8 @@ export const CLASSES = {
     base:{hp:26,mp:14,atk:9.5,def:6,spd:10,matk:2},
     growth:{hp:4,mp:2,atk:2.2,def:1.4,spd:2,matk:0.5},
     movePool:[
-      {lvl:1, id:"disparo_certero", name:"Disparo Certero", type:"phys", power:1.15, crit:0.25, cost:0, desc:"Flecha precisa, alta prob. crítico."},
-      {lvl:1, id:"flecha_cegadora", name:"Flecha Cegadora", type:"debuff", stat:"atk", amount:0.2, cost:0, desc:"Reduce el ATQ del rival 20% por el resto del combate."},
+      {lvl:1, id:"disparo_certero", name:"Disparo Certero", type:"phys", power:1.15, crit:0.25, cost:0, interactive:"precision", desc:"Suelta en el momento justo de la barra: verde 80% daño, amarillo 100%, naranja 125%+5% crít., rojo 150%+20% crít."},
+      {lvl:1, id:"flecha_cegadora", name:"Flecha Cegadora", type:"debuff", stat:"accuracy", amount:0.2, cost:0, desc:"Encandila al rival: 20% de que sus golpes fallen por el resto del combate."},
       {lvl:3, id:"lluvia_flechas", name:"Lluvia de Flechas", type:"phys", power:0.6, hits:2, cost:2, desc:"Dos impactos consecutivos."},
       {lvl:5, id:"tiro_piernas", name:"Tiro a las Piernas", type:"phys", power:0.95, slow:0.25, cost:2, desc:"Daña y reduce VEL enemiga."},
       {lvl:7, id:"flecha_perforante", name:"Flecha Perforante", type:"phys", power:1.1, pierce:0.5, cost:3, desc:"Ignora 50% de la DEF rival."},
@@ -70,7 +70,7 @@ export const CLASSES = {
       {lvl:11, id:"viento_cortante", name:"Viento Cortante", type:"phys", power:1.25, selfBuffSpd:0.2, cost:4, desc:"Daña y aumenta tu propia VEL."},
       {lvl:13, id:"flecha_fatal", name:"Flecha Fatal", type:"phys", power:2.2, crit:0.3, cost:6, interactive:"tap", desc:"El disparo definitivo. Toca rápido al usarlo para el daño completo."},
       {lvl:8, id:"diluvio_flechas", name:"Diluvio de Flechas", type:"phys", power:1.1, aoe:true, cost:5, interactive:"sweep", desc:"Golpea a TODOS los enemigos del grupo. Desliza bien amplio para el daño completo."},
-      {lvl:17, id:"disparo_certero_ii", name:"Disparo Certero II", type:"phys", power:1.55, crit:0.3, cost:2, desc:"Versión mejorada de Disparo Certero."}
+      {lvl:17, id:"disparo_certero_ii", name:"Disparo Certero II", type:"phys", power:1.55, crit:0.3, cost:2, interactive:"precision", desc:"Versión mejorada de Disparo Certero — misma barra de potencia."}
     ]
   }
 };

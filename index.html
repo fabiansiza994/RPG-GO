@@ -178,6 +178,7 @@
   <div class="wheel-overlay-content" id="wheelOverlayContent">
     <div class="wheel-menu" id="wheelMenu">
       <div class="wheel-ring">
+        <div id="wheelDividers"></div>
         <button class="wheel-slice wheel-slice-0" id="btnFriends"><span class="wheel-slice-bg"></span></button>
         <button class="wheel-slice wheel-slice-1" id="btnParty"><span class="wheel-slice-bg"></span></button>
         <button class="wheel-slice wheel-slice-2" id="btnAttrs"><span class="wheel-slice-bg"></span></button>
@@ -529,7 +530,22 @@
     <h1 class="title">🐾 Mascotas</h1>
     <p class="sub">Monstruos que capturaste con la 🎴 Carta de Captura. Por ahora se guardan aquí como colección — más adelante podrán pelear contigo.</p>
     <div class="pet-mini-grid" id="petsList"></div>
+    <button class="ghostbtn" id="btnOpenMonsterCodex" style="border-color:var(--gold); color:var(--gold);">📖 Bestiario</button>
     <button class="ghostbtn" id="btnClosePets">Cerrar</button>
+  </div>
+</div>
+
+<!-- BESTIARIO: registro de monstruos capturados alguna vez, uno por especie -->
+<div class="overlay hidden fullscreen" id="monsterCodexOverlay">
+  <div class="sheet inv-sheet-v2 inv-sheet-fullscreen">
+    <div class="inv-header-v2">
+      <div>
+        <h1 class="title">📖 Bestiario</h1>
+        <p class="sub" id="monsterCodexProgress">0/0 páginas completas</p>
+      </div>
+    </div>
+    <div class="inv-grid-v2" id="monsterCodexList"></div>
+    <button class="ghostbtn" id="btnCloseMonsterCodex">Cerrar</button>
   </div>
 </div>
 
@@ -889,6 +905,22 @@
     <div id="spellPatternSequence"></div>
     <div id="sweepBarWrap" class="hidden"><div id="sweepBarFill"></div></div>
     <div id="spellPatternHint">Desliza en cada dirección, en orden</div>
+  </div>
+  <!-- Disparo Certero (Arquero, ver triggerPrecisionShotMinigame en main.js): barra continua que
+       va y vuelve por 4 zonas de potencia — hay que tocar en el momento justo, si te pasas no se
+       detiene sola. -->
+  <div id="precisionShotOverlay" class="hidden">
+    <div id="precisionShotTitle">🎯 ¡Toca en el momento justo!</div>
+    <div id="precisionShotTrackWrap">
+      <div id="precisionShotTrack">
+        <div class="ps-zone ps-zone-green">80%</div>
+        <div class="ps-zone ps-zone-yellow">100%</div>
+        <div class="ps-zone ps-zone-orange">125%</div>
+        <div class="ps-zone ps-zone-red">150%</div>
+        <div id="precisionShotMarker"></div>
+      </div>
+    </div>
+    <div id="precisionShotHint">👉 Toca la pantalla para soltar la flecha</div>
   </div>
   <div id="battleScenePanel">
     <div class="battle-top">

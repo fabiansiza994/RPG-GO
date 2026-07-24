@@ -12,6 +12,12 @@ export const PET_SPECIES_PROFILES = {
 
 export const DEFAULT_PET_PROFILE = {hpMult:1, atkMult:1.15, defMult:1, hpGrowth:6, atkGrowth:1.5, defGrowth:0.9};
 
+/** Pedido explícito: por ahora SOLO estas tres especies se pueden invocar en combate — el resto de
+ *  las mascotas capturadas quedan "solo para colección" mientras se van terminando los diseños de
+ *  cada monstruo (ver openPetSummonPicker en main.js, que deshabilita el botón "Invocar" de
+ *  cualquier mascota que no esté en esta lista, con un aviso en vez de ocultarla del todo). */
+export const SUMMONABLE_PET_SPECIES = ["Lobo Umbrío", "Dragón Menor", "Dragón Ancestral"];
+
 /** Movimientos propios de cada especie — se van aprendiendo solos al subir de nivel (como el jugador, hasta 4). */
 export const PET_MOVESETS = {
   "Golem de Roca": [

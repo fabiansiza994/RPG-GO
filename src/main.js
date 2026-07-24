@@ -40,7 +40,7 @@ import { generateDangerZone, isPointInDangerZone, dangerZoneLabelPoint } from ".
 import { getBattleSceneConfig, DEFAULT_BATTLE_SCENE_ID } from "./game/config/battleScenes.js";
 import {
   positionEntityOnStage, resetEntityPosition, createPerspectiveShadow,
-  pickGroundAnchor, pickFlyingAnchor, projectFlyingShadow,
+  pickGroundAnchor, pickFlyingAnchor, pickPackClusterAnchor,
 } from "./game/systems/battlePerspective.js";
 import {
   MONSTER_TEMPLATES,
@@ -90,7 +90,7 @@ import {
   ULTIMATE_CHARGE_MS,
   PARK_GUARDIAN_COOLDOWN_MS,
 } from "./game/config/progression.js";
-import { PET_SPECIES_PROFILES, DEFAULT_PET_PROFILE, PET_MOVESETS, DEFAULT_PET_MOVESET } from "./game/config/pets.js";
+import { PET_SPECIES_PROFILES, DEFAULT_PET_PROFILE, PET_MOVESETS, DEFAULT_PET_MOVESET, SUMMONABLE_PET_SPECIES } from "./game/config/pets.js";
 import { DUNGEON_REGISTRY, DUNGEON_BOSS_TEMPLATES, DUNGEON_LOOT_RARITY_WEIGHTS, DUNGEON_AURA_ENEMY_TEMPLATES, getDungeonDef } from "./game/config/dungeons.js";
 import {
   PN_BATTLE_PREFIX,
@@ -3886,7 +3886,7 @@ function initMap(savedPos){
   updateCameraOrientedEffects();
 
   spawnMonsters(isNightTime() ? 5 : 3);
-  setInterval(()=> maybeAutoSpawn(), 25000);
+  setInterval(()=> maybeAutoSpawn(), 8000); // TEMP testing: antes 25000 — bajado para probar más rápido
   setInterval(()=> regenPlayerHp(), 8000);
   updateDayNightBadge();
   // El tinte "de verdad" (sin transición, para que ya esté listo desde el primer frame) se aplica
@@ -4664,6 +4664,7 @@ function updateBattleRainFx(){
   container.classList.toggle("hidden", !raining);
   if(raining) spawnRaindrops("weatherRainBattle", 40);
 }
+
 /** Consulta el clima real (Open-Meteo, gratis y sin necesidad de clave) para la posición dada,
  *  y aplica el efecto visual correspondiente. Se llama al entrar al mapa y luego cada 20 minutos. */
 async function fetchWeatherForLocation(lat, lng){
@@ -4793,8 +4794,8 @@ function maybeAutoSpawn(){
   if(expiredCount > 0){
     toast(`${expiredCount>1?"Varios enemigos se fueron":"Un enemigo se fue"} de la zona… aparecerán otros nuevos.`, 2800);
   }
-  const maxMonsters = night ? 9 : 5;      // de noche se permiten más enemigos activos a la vez
-  const spawnChance = night ? 0.95 : 0.8;  // de noche casi siempre aparece algo nuevo
+  const maxMonsters = night ? 14 : 10;      // TEMP testing: antes 9/5 — más enemigos activos a la vez
+  const spawnChance = night ? 1 : 0.95;  // TEMP testing: antes 0.95/0.8 — casi siempre aparece algo nuevo
   const packChance = (player.level >= 7) ? (night ? 0.55 : 0.35) : 0; // las manadas son muy duras para un personaje recién empezado
   if(monsters.length < maxMonsters && Math.random() < spawnChance){
     if(packChance > 0 && Math.random() < packChance) spawnPack();
@@ -5202,7 +5203,8 @@ function buyPickaxe(tierKey){
     showConfirm(`Ya tienes un pico de ${current.label.toLowerCase()} con ${player.pickaxe.uses} usos — comprar uno nuevo lo reemplaza. ¿Continuar?`,
       doPurchase, {icon:"⛏️", confirmLabel:"Reemplazar"});
   } else {
-    doPurchase();
+    showConfirm(`¿Comprar el pico de ${tier.label.toLowerCase()} por 💰${tier.cost}?`, doPurchase,
+      {icon:"⛏️", title:"Confirmar compra", confirmLabel:"Comprar"});
   }
 }
 /** Actualiza la fila de la tienda con el estado del pico actual (o "ninguno") y marca qué
@@ -5645,15 +5647,17 @@ $("btnBuyBase").onclick = ()=>{
   if((player.stone||0) < BASE_PURCHASE_COST_STONE) falta.push(`🪨${BASE_PURCHASE_COST_STONE}`);
   if((player.iron||0) < BASE_PURCHASE_COST_IRON) falta.push(`🔩${BASE_PURCHASE_COST_IRON}`);
   if(falta.length){ toast(`Te falta: ${falta.join(" · ")}`, 3800); return; }
-  player.gold -= BASE_PURCHASE_COST_GOLD;
-  player.wood -= BASE_PURCHASE_COST_WOOD;
-  player.stone -= BASE_PURCHASE_COST_STONE;
-  player.iron -= BASE_PURCHASE_COST_IRON;
-  player.hasBase = true; // la tienes, pero todavia no la has desplegado en el mapa
-  refreshHud();
-  saveGame();
-  $("shopOverlay").classList.add("hidden");
-  toast("🏠 ¡Compraste tu base! Ve al menú 🏠 Bases para desplegarla cuando quieras.", 4500);
+  showConfirm(`¿Comprar tu base personal por 🪵${BASE_PURCHASE_COST_WOOD} · 🪨${BASE_PURCHASE_COST_STONE} · 🔩${BASE_PURCHASE_COST_IRON} · 🪙${BASE_PURCHASE_COST_GOLD}?`, ()=>{
+    player.gold -= BASE_PURCHASE_COST_GOLD;
+    player.wood -= BASE_PURCHASE_COST_WOOD;
+    player.stone -= BASE_PURCHASE_COST_STONE;
+    player.iron -= BASE_PURCHASE_COST_IRON;
+    player.hasBase = true; // la tienes, pero todavia no la has desplegado en el mapa
+    refreshHud();
+    saveGame();
+    $("shopOverlay").classList.add("hidden");
+    toast("🏠 ¡Compraste tu base! Ve al menú 🏠 Bases para desplegarla cuando quieras.", 4500);
+  }, {icon:"🏠", title:"Confirmar compra", confirmLabel:"Construir"});
 };
 
 /** Recoge tu base del mapa (con costo de oro) — se queda "guardada" de nuevo, lista para
@@ -5729,6 +5733,9 @@ $("btnBasePlaceConfirm").onclick = ()=>{
 /** Coloca la base del jugador donde tocó el mapa — se llama desde el mismo clic del mapa que
  *  mueve al personaje, interceptándolo primero si el modo de colocación está armado. */
 function placeOwnBase(lat, lng){
+  // si nunca había puesto una base, la cuña "Bases" del menú radial estaba oculta — que aparezca
+  // con énfasis la próxima vez que abra el menú (ver updateWheelMenuLockedSlices).
+  if(!player.baseEverPlaced) player._justUnlockedBaseSlice = true;
   player.base = {lat, lng, constructionEndsAt: Date.now() + BASE_CONSTRUCTION_MS};
   player.baseStorage = player.baseStorage || [];
   player.baseExtraSlots = player.baseExtraSlots || 0;
@@ -8234,6 +8241,15 @@ function attemptCapture(idx){
       return;
     }
     if(!player.pets) player.pets = [];
+    // si todavía no tenía ninguna mascota, la cuña "Mascotas" del menú radial estaba oculta — que
+    // aparezca con énfasis la próxima vez que abra el menú (ver updateWheelMenuLockedSlices).
+    if(player.pets.length === 0) player._justUnlockedPetSlice = true;
+    // Bestiario: registro PERSISTENTE por especie (independiente de player.pets — si sueltas o
+    // pierde la mascota, la página capturada sigue llena) — ver renderMonsterCodex/btnOpenMonsterCodex.
+    if(!player.monsterRegistry) player.monsterRegistry = {};
+    const regEntry = player.monsterRegistry[target.tpl.name];
+    if(regEntry) regEntry.count++;
+    else player.monsterRegistry[target.tpl.name] = {firstCapturedAt: Date.now(), count: 1};
     // la mascota conserva una parte de las estadísticas del monstruo capturado, ajustada según su especie
     // (tanques como el golem aguantan más pero pegan menos; ágiles como el lobo pegan más pero aguantan menos)
     const petProfile = getPetProfile(target.tpl.name);
@@ -8317,12 +8333,19 @@ function openPetSummonPicker(){
     list.innerHTML = `<div class="empty-note">No tienes más mascotas disponibles para invocar.</div>`;
   }
   available.forEach(pet=>{
+    // Solo las especies con diseño de batalla terminado se pueden invocar por ahora (ver
+    // SUMMONABLE_PET_SPECIES en game/config/pets.js) — el resto se ve en la lista igual (así no
+    // parece que "desaparecieron"), pero con el botón deshabilitado y el motivo aclarado.
+    const summonable = SUMMONABLE_PET_SPECIES.includes(pet.name);
     const row = document.createElement("div");
     row.className = "cm-item";
+    const btnLabel = pet.hp<=0 ? "Debilitada" : !summonable ? "Solo colección" : "Invocar";
     row.innerHTML = `<div style="flex:1;"><span>${pet.emoji} ${petDisplayName(pet)}</span>
-      <small style="display:block; color:var(--dim); font-size:10.5px;">Nv.${pet.level} · HP ${pet.hp}/${pet.maxHp}</small></div>
-      <button ${pet.hp<=0?"disabled":""}>${pet.hp<=0?"Debilitada":"Invocar"}</button>`;
-    row.querySelector("button").onclick = ()=>{ $("petSummonOverlay").classList.add("hidden"); summonPet(pet); };
+      <small style="display:block; color:var(--dim); font-size:10.5px;">Nv.${pet.level} · HP ${pet.hp}/${pet.maxHp}${!summonable?" · aún sin diseño de batalla":""}</small></div>
+      <button ${(pet.hp<=0||!summonable)?"disabled":""}>${btnLabel}</button>`;
+    if(summonable){
+      row.querySelector("button").onclick = ()=>{ $("petSummonOverlay").classList.add("hidden"); summonPet(pet); };
+    }
     list.appendChild(row);
   });
   $("petSummonOverlay").classList.remove("hidden");
@@ -9010,30 +9033,40 @@ function refreshBattleStagePerspective(mode, flying){
   const stageEl = document.querySelector(".stage");
   const backgroundEl = $("battleScenePanel");
   if(!wrap || !stageEl) return;
+
+  // Varios puntos de entrada (startBattle, startPackBattle, renderPvpBattleUI, renderGroupBattleUI)
+  // arman toda la escena ANTES de sacarle la clase "hidden" a #battleWrap — en ese instante .stage
+  // todavía mide 0×0 (un ancestro con display:none colapsa todo adentro), así que
+  // getBoundingClientRect no sirve de nada todavía. Sin este reintento, positionEntityOnStage aborta
+  // en silencio pero la clase "perspective-mode" ya quedó puesta → el ancla pasa a position:absolute
+  // SIN left/top, y cae a su posición estática de flujo (arriba a la derecha para el enemigo, por
+  // align-self:flex-start en .enemy-side) — exactamente el bug de "el enemigo aparece en el cielo".
+  // Aplica IGUAL en modo grupo (rama `!active` de abajo): floatSoloEnemyPanel() ahí también necesita
+  // que el stage ya mida algo de verdad, si no mide todo en base a un elemento colapsado a 0×0.
+  // Doble rAF (mismo patrón que ya usa renderPackStage más abajo) porque para cuando este callback
+  // corre, el resto de startBattle/etc. ya terminó de ejecutarse sincrónicamente y sacó el "hidden".
+  const stageRectCheck = stageEl.getBoundingClientRect();
+  if(!stageRectCheck.width || !stageRectCheck.height){
+    requestAnimationFrame(()=> requestAnimationFrame(()=> refreshBattleStagePerspective(mode, flying)));
+    return;
+  }
+
   const active = !wrap.classList.contains("group-mode");
   stageEl.classList.toggle("perspective-mode", active);
   if(!active){
-    // grupo multijugador: nunca tocado por este sistema — se asegura de dejar todo como estaba
-    // por si venía de un combate anterior que sí usó perspectiva.
+    // grupo multijugador: la POSICIÓN del sprite nunca la toca este sistema (sigue con el flujo
+    // flex de siempre) — se asegura de dejar todo como estaba por si venía de un combate anterior
+    // que sí usó perspectiva. Pero la tarjeta de vida SÍ puede flotar igual sobre la cabeza del
+    // monstruo: floatSoloEnemyPanel no necesita el modo perspectiva, solo lee la posición real en
+    // pantalla del ancla (con flexbox o sin él), así que se llama igual una vez que el reset de
+    // arriba ya dejó al sprite en su lugar de flujo normal.
     resetEntityPosition($("spritePlayerAnchor"));
     resetEntityPosition($("spriteEnemyAnchor"));
     if(playerStageShadowEl) playerStageShadowEl.style.display = "none";
     if(enemyStageShadowEl) enemyStageShadowEl.style.display = "none";
-    return;
-  }
-
-  // Varios puntos de entrada (startBattle, startPackBattle, renderPvpBattleUI) arman toda la
-  // escena ANTES de sacarle la clase "hidden" a #battleWrap — en ese instante .stage todavía mide
-  // 0×0 (un ancestro con display:none colapsa todo adentro), así que getBoundingClientRect no
-  // sirve de nada todavía. Sin este reintento, positionEntityOnStage aborta en silencio pero la
-  // clase "perspective-mode" ya quedó puesta → el ancla pasa a position:absolute SIN left/top, y
-  // cae a su posición estática de flujo (arriba a la derecha para el enemigo, por align-self:
-  // flex-start en .enemy-side) — exactamente el bug de "el enemigo aparece en el cielo". Doble rAF
-  // (mismo patrón que ya usa renderPackStage más abajo) porque para cuando este callback corre,
-  // el resto de startBattle/etc. ya terminó de ejecutarse sincrónicamente y sacó el "hidden".
-  const stageRectCheck = stageEl.getBoundingClientRect();
-  if(!stageRectCheck.width || !stageRectCheck.height){
-    requestAnimationFrame(()=> requestAnimationFrame(()=> refreshBattleStagePerspective(mode, flying)));
+    const enemyAnchorElStatic = $("spriteEnemyAnchor");
+    if(enemyAnchorElStatic) floatSoloEnemyPanel(enemyAnchorElStatic, backgroundEl);
+    else unfloatSoloEnemyPanel();
     return;
   }
 
@@ -9049,6 +9082,7 @@ function refreshBattleStagePerspective(mode, flying){
     // los miembros de la manada tienen su propia sombra por índice — la del "enemigo solo" no
     // aplica acá, se oculta para no dejar una sombra huérfana sin sprite encima.
     if(enemyStageShadowEl) enemyStageShadowEl.style.display = "none";
+    unfloatSoloEnemyPanel(); // cada miembro de la manada ya muestra su propia vida en packEnemyPanels
     repositionPackStageMembers();
     return;
   }
@@ -9060,13 +9094,65 @@ function refreshBattleStagePerspective(mode, flying){
   // del escenario — un poco por encima del jugador y un poco más chico, para dar sensación de
   // profundidad sin mandarlo al anchor más lejano (ese queda reservado para cuando de verdad hay
   // varios enemigos repartidos por la calle, ver pickGroundAnchor/enemyAnchors).
-  const anchor = flying ? pickFlyingAnchor(scene, 0)
-    : (scene.soloEnemyAnchor || pickGroundAnchor(scene, 0));
-  const shadow = flying ? projectFlyingShadow(anchor, scene) : anchor;
+  const groundPoint = scene.soloEnemyAnchor || pickGroundAnchor(scene, 0);
+  const anchor = flying ? pickFlyingAnchor(groundPoint) : groundPoint;
+  const shadow = flying ? {x:anchor.shadowX, y:anchor.shadowY} : anchor;
   positionEntityOnStage(enemyAnchorEl, enemyStageShadowEl, {
     fx:anchor.x, fy:anchor.y, sceneConfig:scene, stageEl, backgroundEl, flying:!!flying,
     shadowFx: shadow.x, shadowFy: shadow.y,
   });
+  floatSoloEnemyPanel(enemyAnchorEl, backgroundEl);
+}
+
+/** Saca al panel de vida/nombre del enemigo solo del modo "flotante" (vuelve a su lugar fijo de
+ *  siempre en .battle-top, vía CSS normal) — se usa en manada/grupo, donde este panel no aplica. */
+function unfloatSoloEnemyPanel(){
+  const panel = $("soloEnemyPanel");
+  if(panel) panel.classList.remove("floating-hp");
+}
+
+/** Reubica la tarjeta de nombre/vida del enemigo solo justo encima de su cabeza, siguiendo al
+ *  sprite en su anchor de perspectiva (que cambia de escenario a escenario, y de enemigo volador a
+ *  terrestre) en vez de quedar fija arriba a la derecha sin relación visual con dónde está parado
+ *  el enemigo. Se llama de nuevo cada vez que se reposiciona el ancla (inicio de combate, resize),
+ *  así que la tarjeta jamás queda desincronizada del sprite.
+ *
+ *  El "tamaño del enemigo" para saber cuánto subir la tarjeta NO se hardcodea por especie: se lee
+ *  directo del propio anchorEl.getBoundingClientRect() (que ya incluye la escala de profundidad),
+ *  así que un emoji de 64px y un arte propio de hasta 160px (Lobo Umbrío, Dragón Ancestral, Golem
+ *  de Roca, etc. — ver enemySpriteSrc) quedan cubiertos por la MISMA cuenta. El único caso especial
+ *  es que esos sprites grandes son <img>: si la imagen todavía no terminó de cargar en el instante
+ *  en que se llama esta función (recién se acaba de insertar el <img> en el DOM), su alto real
+ *  (hasta 160px) todavía no se conoce y el navegador la mide como ~0px — la tarjeta quedaba
+ *  calibrada para ESE tamaño chico, y al terminar de cargar el sprite (mucho más alto) la tapaba
+ *  por delante. Por eso, si hay un <img> sin terminar de cargar, se vuelve a posicionar apenas
+ *  dispara su "load" — sin esa segunda pasada, todos los enemigos con arte propio quedan mal. */
+function floatSoloEnemyPanel(anchorEl, backgroundEl){
+  const panel = $("soloEnemyPanel");
+  if(!panel || !anchorEl || !backgroundEl) return;
+  const place = ()=>{
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const bgRect = backgroundEl.getBoundingClientRect();
+    if(!anchorRect.width || !bgRect.width || !bgRect.height) return;
+    panel.classList.add("floating-hp");
+    // 10px se quedaba corto para enemigos chicos/lejanos (voladores en escala reducida, p.ej. el
+    // Cuervo Corrupto a 0.5x): el hueco absoluto era el mismo que para un enemigo grande, pero al
+    // lado de un sprite chico se veía tapando la cabeza en vez de flotando arriba — sobre todo con
+    // el difuminado del drop-shadow del sprite, que come parte de ese margen. 18px deja aire de
+    // sobra incluso para los sprites más chicos sin alejar demasiado la tarjeta en los grandes.
+    const MARGIN_PX = 18; // separación entre el borde superior del sprite y el borde inferior de la tarjeta
+    let leftPct = ((anchorRect.left + anchorRect.width/2 - bgRect.left) / bgRect.width) * 100;
+    let topPct = ((anchorRect.top - MARGIN_PX - bgRect.top) / bgRect.height) * 100;
+    // el panel mide ~170px de ancho y su propio alto — recortado para que nunca quede a medio salir
+    // del escenario aunque el anchor esté muy pegado a un borde (enemigos lejanos/cercanos extremos).
+    leftPct = Math.max(16, Math.min(84, leftPct));
+    topPct = Math.max(9, Math.min(94, topPct));
+    panel.style.left = leftPct + "%";
+    panel.style.top = topPct + "%";
+  };
+  place();
+  const img = anchorEl.querySelector("img.battle-sprite-img");
+  if(img && !img.complete) img.addEventListener("load", place, {once:true});
 }
 
 /** Reposiciona (sin reconstruir) los `.pack-stage-mon` que ya están en el DOM — lo llama
@@ -9078,17 +9164,30 @@ function repositionPackStageMembers(){
   const wrap = $("packStageRow");
   if(!stageEl || !wrap || !battleState || !battleState.mons) return;
   const scene = activeBattleScene;
+  // Todos los miembros de la manada se agrupan a partir del MISMO punto base (el que usaría un
+  // enemigo solo ahí) en vez de repartirse por los enemyAnchors del escenario (pensados para un
+  // enemigo a la vez y muy separados entre sí — bug reportado: "una manada de dos cuervos salió
+  // muy separada"). pickPackClusterAnchor los agrupa bien juntos, en zigzag, cada uno un poco más
+  // atrás que el anterior — ver esa función en battlePerspective.js.
+  const packBaseAnchor = scene.soloEnemyAnchor || pickGroundAnchor(scene, 0);
   Array.from(wrap.children).forEach((el, idx)=>{
     const m = battleState.mons[idx];
     if(!m) return;
     if(!packStageShadowEls[idx]){ packStageShadowEls[idx] = createPerspectiveShadow(); stageEl.appendChild(packStageShadowEls[idx]); }
     const flying = !!(m.tpl && m.tpl.flying);
-    const anchor = flying ? pickFlyingAnchor(scene, idx) : pickGroundAnchor(scene, idx);
-    const shadow = flying ? projectFlyingShadow(anchor, scene) : anchor;
+    const groundPoint = pickPackClusterAnchor(packBaseAnchor, idx, scene);
+    const anchor = flying ? pickFlyingAnchor(groundPoint) : groundPoint;
+    const shadow = flying ? {x:anchor.shadowX, y:anchor.shadowY} : anchor;
     positionEntityOnStage(el, packStageShadowEls[idx], {
       fx:anchor.x, fy:anchor.y, sceneConfig:scene, stageEl, backgroundEl, flying,
       shadowFx: shadow.x, shadowFy: shadow.y,
     });
+    // Refuerza el orden "el primero tapa al resto" con un z-index explícito, dedicado a la manada
+    // (13-18, por encima del rango de profundidad normal 1-12 pero bien por debajo de mascotas=20
+    // y popups=30+) — el z-index de profundidad que ya puso positionEntityOnStage arriba alcanza
+    // casi siempre, pero si dos miembros caen tan cerca en Y que empatan de "bucket" (computeDepthZIndex
+    // redondea a enteros), el orden real pasaría a depender del orden del DOM y podría invertirse.
+    el.style.zIndex = String(Math.max(1, 18 - idx));
     packStageShadowEls[idx].style.opacity = (m.curHp<=0) ? "0.15" : "";
   });
   // si la manada anterior tenía más miembros que la actual, borra las sombras que sobran.
@@ -9405,7 +9504,7 @@ function renderMoveGrid(){
       btn.className = "move-btn" + (mv.type==="buff"?" buff":"") + (mv.isUltimate?" ultimate-move":"");
       const canAfford = canAffordMove(mv, player.mp, player.hp, player.maxHp);
       btn.disabled = !canAfford;
-      const costLabel = mv.costsAllMp ? "TODO tu maná" : `MP ${mv.cost||0}`;
+      const costLabel = mv.costsAllMp ? `<span class="move-mp-cost">TODO tu maná</span>` : `<span class="move-mp-cost">MP ${mv.cost||0}</span>`;
       btn.innerHTML = `<div class="mname">${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
       btn.onclick = ()=> battleState.isPack ? packPlayerAction(mv) : playerAction(mv);
       attachMoveTooltip(btn, mv);
@@ -9747,6 +9846,65 @@ function triggerQuickSweepChallenge(onResolve, customMs){
   const timeout = setTimeout(()=> finish(false), customMs || 1600);
 }
 
+/** Zonas de potencia de "Disparo Certero" (ver classes.js, mv.interactive==="precision") — de
+ *  izquierda a derecha, más angosta y más arriba de recompensa: 0-50% verde (80% daño), 50-75%
+ *  amarillo (100%), 75-90% naranja (125% + 5% crít.), 90-100% rojo "disparo perfecto" (150% +
+ *  20% crít.). Coincide con los porcentajes de flex-grow de .ps-zone-* en main.css. */
+function precisionShotZoneAt(pct){
+  if(pct >= 90) return {mult:1.5, critBonus:0.20, label:"¡DISPARO PERFECTO!"};
+  if(pct >= 75) return {mult:1.25, critBonus:0.05, label:"¡Excelente disparo!"};
+  if(pct >= 50) return {mult:1.0, critBonus:0, label:"Buen disparo"};
+  return {mult:0.8, critBonus:0, label:"Disparo flojo"};
+}
+
+/** Barra de potencia de "Disparo Certero": un marcador recorre la barra de punta a punta y VUELVE
+ *  sin parar solo (pedido explícito: "si te pasas la barra no se detiene, va y vuelve") — hay que
+ *  tocar la pantalla en el momento justo para soltar la flecha en la zona que se quiera. `onResolve`
+ *  recibe la zona alcanzada ({mult, critBonus, label}), que quien llama aplica a mv.power/mv.crit
+ *  antes de resolver el golpe (igual que ya hace triggerUltimateMinigame con su multiplicador). */
+function triggerPrecisionShotMinigame(onResolve){
+  const overlay = $("precisionShotOverlay");
+  const marker = $("precisionShotMarker");
+  const SWEEP_MS = 850; // tiempo de un extremo al otro — un poco más rápido que el resto de los QTE, es una barra de reflejos
+  let resolved = false;
+  let rafId = null;
+  const startTime = performance.now();
+
+  function pctAt(now){
+    const elapsed = (now - startTime) % (SWEEP_MS*2);
+    // rampa 0→100 en la primera mitad del ciclo, 100→0 en la segunda — vaivén continuo
+    return elapsed < SWEEP_MS ? (elapsed/SWEEP_MS*100) : (100 - (elapsed-SWEEP_MS)/SWEEP_MS*100);
+  }
+  function tick(now){
+    if(resolved) return;
+    marker.style.left = pctAt(now)+"%";
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function finish(){
+    if(resolved) return;
+    resolved = true;
+    if(rafId) cancelAnimationFrame(rafId);
+    cleanup();
+    overlay.classList.add("hidden");
+    onResolve(precisionShotZoneAt(pctAt(performance.now())));
+  }
+  function onRelease(e){ e.preventDefault(); finish(); }
+  function cleanup(){
+    overlay.removeEventListener("touchstart", onRelease);
+    overlay.removeEventListener("mousedown", onRelease);
+    clearTimeout(safetyTimeout);
+  }
+  overlay.addEventListener("touchstart", onRelease, {passive:false});
+  overlay.addEventListener("mousedown", onRelease);
+
+  overlay.classList.remove("hidden");
+  marker.style.left = "0%";
+  rafId = requestAnimationFrame(tick);
+  // red de seguridad: si por lo que sea nunca llega un tap/click, no se queda trabado para siempre.
+  const safetyTimeout = setTimeout(()=> finish(), 8000);
+}
+
 function playerAction(mv){
   if(!canAffordMove(mv, player.mp, player.hp, player.maxHp)) return;
   clearTurnTimer();
@@ -9763,6 +9921,15 @@ function playerAction(mv){
         executePlayerAction(mv);
         mv.power = basePower; // se restaura para la proxima vez, no debe quedar modificado permanente
       }, ULTIMATE_CHARGE_MS);
+    });
+  } else if(mv.interactive === "precision"){
+    triggerPrecisionShotMinigame((zone)=>{
+      const basePower = mv.power, baseCrit = mv.crit||0;
+      mv.power = +(basePower*zone.mult).toFixed(2);
+      mv.crit = +(baseCrit + zone.critBonus).toFixed(2);
+      logBattle(`${zone.label} (x${zone.mult} daño${zone.critBonus>0?`, +${Math.round(zone.critBonus*100)}% crít.`:""})`);
+      executePlayerAction(mv);
+      mv.power = basePower; mv.crit = baseCrit;
     });
   } else if(mv.interactive === "tap" || mv.interactive === "swipe" || mv.interactive === "sweep"){
     const challenge = mv.interactive === "tap" ? triggerQuickTapChallenge
@@ -9802,7 +9969,10 @@ function executePlayerAction(mv){
   const isGuerreroMeleeHit = player.classKey === "guerrero" && mv.aoe!==true && !mv.isUltimate;
   // Arquero: mismo criterio — el daño no se revela apenas se elige el movimiento, sino cuando la
   // flecha REALMENTE conecta con el enemigo (ver ARQUERO_ARROW_IMPACT_MS/fireArqueroArrowProjectile).
-  const isArqueroHit = player.classKey === "arquero" && (mv.type === "phys" || mv.type === "magic");
+  // Incluye "debuff" (Flecha Cegadora): el flash blanco tiene que verse recién cuando la flecha
+  // pega, no apenas se aprieta el botón — si no, el aviso queda antes de que la flecha ni siquiera
+  // haya salido disparada.
+  const isArqueroHit = player.classKey === "arquero" && (mv.type === "phys" || mv.type === "magic" || mv.type === "debuff");
   const deferHit = isGuerreroAoeHit || isGuerreroMeleeHit || isGuerreroUltimateHit || isArqueroHit;
   const hitDelayMs = isGuerreroAoeHit ? GUERRERO_AOE_SHAKE_MS : isGuerreroUltimateHit ? GUERRERO_ULTIMATE_LANDING_MS
     : isArqueroHit ? ARQUERO_ARROW_IMPACT_MS : GUERRERO_ATTACK_TRAVEL_MS;
@@ -9820,12 +9990,23 @@ function executePlayerAction(mv){
     logBattle(`Usas ${mv.name} y recuperas ${heal} HP.`);
     animateSprite("spritePlayer","attackp");
     flashSprite("spritePlayer","green");
+    spawnFloatingNumber("spritePlayer", "+"+heal, "heal");
   } else if(mv.type==="debuff"){
     if(mv.stat==="def") mon.def = +(mon.def*(1-mv.amount)).toFixed(1);
     if(mv.stat==="atk") mon.atk = +(mon.atk*(1-mv.amount)).toFixed(1);
-    logBattle(`Usas ${mv.name}. ¡${mon.tpl.name} se ve más débil!`);
+    // "accuracy" no toca ninguna stat de daño — le da al enemigo una chance fija de fallar su
+    // propio golpe por el resto del combate (ver el chequeo de mon.missChance al principio de
+    // enemyTurn/resolveEnemyDirectAttack). Guarda el mayor valor en vez de sumar: usar Flecha
+    // Cegadora dos veces no debería volver al enemigo incapaz de acertar nunca.
+    if(mv.stat==="accuracy") mon.missChance = Math.max(mon.missChance||0, mv.amount);
     animateSprite("spritePlayer","attackp");
-    flashSprite("spriteEnemy","red");
+    const revealDebuff = ()=>{
+      logBattle(mv.stat==="accuracy"
+        ? `Usas ${mv.name}. ¡${mon.tpl.name} queda encandilado!`
+        : `Usas ${mv.name}. ¡${mon.tpl.name} se ve más débil!`);
+      flashSprite("spriteEnemy", mv.stat==="accuracy" ? "white" : "red");
+    };
+    if(deferHit) setTimeout(revealDebuff, hitDelayMs); else revealDebuff();
   } else if(battleState.thiefTauntActive){
     // Se cobra la promesa de "¿A que no puedes darme?" del turno pasado (ver enemyTurn) — el golpe
     // falla seguro, una sola vez, sin importar evasionChance ni nada más.
@@ -9875,6 +10056,7 @@ function executePlayerAction(mv){
       if(mon.tpl.name === "Slime Salvaje") triggerSlimeSalvajePose("hurt", 600);
       if(mon.tpl.name === "Espectro") triggerEspectroPose("hurt", 600);
       maybeShowCrit(totalDmg, mon.maxHp);
+      spawnFloatingNumber("spriteEnemy", "-"+totalDmg, (totalDmg >= mon.maxHp*0.5) ? "crit" : "damage");
       logBattle(`Usas ${mv.name}: ${totalDmg} de daño${hits>1?` (${hits} golpes)`:""}.`);
     };
     if(deferHit) setTimeout(revealHit, hitDelayMs); else revealHit();
@@ -10413,6 +10595,17 @@ function enemyTurn(){
   const pet = battleState.summonedPets && battleState.summonedPets[0];
   const attacksPet = pet && pet.hp > 0 && Math.random() < 0.3; // 30% de que el enemigo se distraiga con tu mascota
 
+  // Flecha Cegadora (Arquero, ver classes.js): el enemigo encandilado tiene una chance fija de
+  // fallar CUALQUIER golpe que intente (jugador o mascota) — chequeo aparte del esquive por QTE de
+  // más abajo (isStrongAttack), que depende de la destreza del jugador, no de este debuff.
+  if(mon.missChance && Math.random() < mon.missChance){
+    animateSprite("spriteEnemy","attacke");
+    showBattlePopup("¡Falla!", "miss");
+    logBattle(`✨ ¡${mon.tpl.name} sigue encandilado y falla su golpe!`);
+    finishEnemyTurn();
+    return;
+  }
+
   if(attacksPet){
     animateSprite("spriteEnemy","attacke");
     if(Math.random() < (pet.dodgeChance||0.15)){
@@ -10513,6 +10706,7 @@ function resolveEnemyDirectAttack(mon, power, spdMod, outcome){
   animateSprite("spriteEnemy","attacke");
   flashSprite("spritePlayer","red");
   maybeShowCrit(dmg, player.maxHp);
+  spawnFloatingNumber("spritePlayer", "-"+dmg, (dmg >= player.maxHp*0.5) ? "crit" : "damage");
   if(mon.tpl === THIEF_TEMPLATE) triggerThiefAttackPose();
   if(mon.tpl.name === "Lobo Umbrío") triggerLoboAttackPose();
   if(mon.tpl.name === "Demonio Menor") triggerDemonioAttackPose();
@@ -10589,14 +10783,40 @@ function animateSprite(id, cls){
   el.classList.add(cls);
 }
 
+/** Número flotante ("-128", "+64"...) que sube y se desvanece sobre un sprite de combate — solo
+ *  cableado por ahora en el combate 1v1 normal (jugador vs enemigo solo, ver resolveEnemyDirectAttack
+ *  y el "revealHit" de la resolución de movimientos del jugador); no toca manada/PvP/grupo todavía.
+ *  Se ancla al elemento SPRITE real (no al wrapper .perspective-anchor) y lo agrega como hijo de
+ *  `.stage`, así funciona igual con o sin el sistema de perspectiva activo. */
+function spawnFloatingNumber(spriteElId, text, kind){
+  const spriteEl = document.getElementById(spriteElId);
+  const stageEl = document.querySelector(".stage");
+  if(!spriteEl || !stageEl) return;
+  const spriteRect = spriteEl.getBoundingClientRect();
+  const stageRect = stageEl.getBoundingClientRect();
+  if(!spriteRect.width || !stageRect.width) return;
+  const el = document.createElement("div");
+  el.className = "floating-dmg-number floating-dmg-" + kind;
+  el.textContent = text;
+  const leftPct = ((spriteRect.left + spriteRect.width/2 - stageRect.left) / stageRect.width) * 100;
+  const topPct = ((spriteRect.top - stageRect.top) / stageRect.height) * 100;
+  el.style.left = leftPct + "%";
+  el.style.top = topPct + "%";
+  // desvío horizontal al azar para que golpes seguidos (multi-hit) no se apilen exactos uno sobre otro
+  el.style.setProperty("--fdn-drift", (Math.random()*36-18).toFixed(1)+"px");
+  stageEl.appendChild(el);
+  el.addEventListener("animationend", ()=> el.remove());
+  setTimeout(()=>{ if(el.parentNode) el.remove(); }, 1500); // red de seguridad si animationend no dispara
+}
+
 /** Parpadeo rojo (daño), verde (curación) o dorado-intenso (impacto del movimiento definitivo). */
 function flashSprite(id, color){
   const el = $(id);
   if(!el) return;
-  el.classList.remove("flash-red","flash-green","flash-ultimate","flash-orange","flash-purple");
+  el.classList.remove("flash-red","flash-green","flash-ultimate","flash-orange","flash-purple","flash-white");
   void el.offsetWidth;
   const cls = color==="green" ? "flash-green" : color==="ultimate" ? "flash-ultimate"
-    : color==="orange" ? "flash-orange" : color==="purple" ? "flash-purple" : "flash-red";
+    : color==="orange" ? "flash-orange" : color==="purple" ? "flash-purple" : color==="white" ? "flash-white" : "flash-red";
   el.classList.add(cls);
   clearTimeout(el._flashTimer);
   el._flashTimer = setTimeout(()=> el.classList.remove(cls), color==="ultimate" ? 950 : 600);
@@ -12166,8 +12386,11 @@ function renderPackStage(){
   const count = battleState.mons.length;
   // entre más enemigos, más chico el arte de cada uno (para que quepan bien repartidos por sus
   // anchors) — la posición/superposición real ahora la decide el sistema de perspectiva
-  // (refreshBattleStagePerspective → repositionPackStageMembers), no un margen a mano.
-  const size = count<=2 ? 46 : count===3 ? 38 : count===4 ? 32 : 27;
+  // (refreshBattleStagePerspective → repositionPackStageMembers), no un margen a mano. Ahora que
+  // pickPackClusterAnchor los abre en abanico usando la calle libre (en vez de amontonarlos en un
+  // cuadradito chico), ya no hace falta achicarlos tanto para que "entren" — pedido explícito:
+  // "si son solo dos o tres no los hagas pequeños" (y con 4-5 tampoco hace falta exagerar).
+  const size = count<=2 ? 72 : count===3 ? 62 : count===4 ? 52 : 42;
   battleState.mons.forEach((m, idx)=>{
     const dead = m.curHp <= 0;
     const justDied = dead && !m._deadRendered;
@@ -12178,7 +12401,11 @@ function renderPackStage(){
     // imagen a escala reducida acá, en vez de caer siempre al emoji genérico como antes.
     const spriteHtml = enemySpriteHtml(m.tpl, {extraClass:"pack-sprite-img", style:`max-height:${size+18}px;max-width:${size+18}px;`});
     const bodyHtml = spriteHtml ? spriteHtml : m.tpl.emoji;
-    el.innerHTML = `<div class="psm-bar"><div class="psm-fill" style="width:${pct(m.curHp,m.maxHp)}%"></div></div>
+    // Nombre chico flotando arriba de la barra (sin caja/fondo azul detrás, para no gastar espacio
+    // en manada) — reemplaza a los cartelitos separados de #packEnemyPanels (ahora ocultos, ver
+    // main.css), que quedaban sueltos arriba de la pantalla sin relación visual con cada sprite.
+    el.innerHTML = `<div class="psm-name">${m.tpl.name} <span class="psm-lvl">Nv.${m.level}</span></div>
+      <div class="psm-bar" style="width:${Math.round(size*0.85)}px;"><div class="psm-fill" style="width:${pct(m.curHp,m.maxHp)}%"></div></div>
       <div class="psm-emoji"${spriteHtml ? "" : ` style="font-size:${size}px;"`}>${bodyHtml}</div>`;
     if(!dead) el.onclick = ()=> selectPackTarget(idx);
     wrap.appendChild(el);
@@ -12257,6 +12484,15 @@ function packPlayerAction(mv){
         mv.power = basePower;
       }, ULTIMATE_CHARGE_MS);
     });
+  } else if(mv.interactive === "precision"){
+    triggerPrecisionShotMinigame((zone)=>{
+      const basePower = mv.power, baseCrit = mv.crit||0;
+      mv.power = +(basePower*zone.mult).toFixed(2);
+      mv.crit = +(baseCrit + zone.critBonus).toFixed(2);
+      logBattle(`${zone.label} (x${zone.mult} daño${zone.critBonus>0?`, +${Math.round(zone.critBonus*100)}% crít.`:""})`);
+      executePackPlayerAction(mv);
+      mv.power = basePower; mv.crit = baseCrit;
+    });
   } else if(mv.interactive === "tap" || mv.interactive === "swipe" || mv.interactive === "sweep"){
     const challenge = mv.interactive === "tap" ? triggerQuickTapChallenge
       : mv.interactive === "sweep" ? triggerQuickSweepChallenge
@@ -12278,6 +12514,11 @@ function executePackPlayerAction(mv){
   const targetIdx = battleState.selectedTarget;
   const target = currentPackTarget();
   triggerClassAttackAnim(mv);
+  // hoisteados fuera del if/else de abajo: hacen falta más tarde, después de renderPackStage(), para
+  // mostrar el número flotante de daño sobre packStageMon{idx} (ver flashPackMon más abajo) — ese
+  // elemento recién existe fresco en el DOM después del render, así que el número se dispara ahí.
+  let totalDmg = 0;
+  const aoeDmgByIdx = {};
 
   if(mv.type==="buff"){
     if(mv.buff==="atk"){ battleState.playerBuffs.atk = 1+mv.amount; battleState.playerBuffs.turnsAtk = mv.dur; }
@@ -12291,6 +12532,7 @@ function executePackPlayerAction(mv){
     logBattle(`Usas ${mv.name} y recuperas ${heal} HP.`);
     animateSprite("spritePlayer","attackp");
     flashSprite("spritePlayer","green");
+    spawnFloatingNumber("spritePlayer", "+"+heal, "heal");
   } else if(mv.type==="debuff"){
     if(mv.stat==="def") target.def = +(target.def*(1-mv.amount)).toFixed(1);
     if(mv.stat==="atk") target.atk = +(target.atk*(1-mv.amount)).toFixed(1);
@@ -12314,13 +12556,13 @@ function executePackPlayerAction(mv){
         if(m.curHp<=0) break;
       }
       totalAll += dmg;
+      aoeDmgByIdx[idx] = dmg;
       logBattle(`${mv.name} golpea a ${m.tpl.name}: ${dmg} de daño.${m.curHp<=0?` ¡Cae derrotado!`:""}`);
     });
     maybeShowCrit(totalAll, battleState.mons.reduce((s,m)=>s+m.maxHp,0));
     if(mv.selfDmg){ const sd=Math.round(player.maxHp*mv.selfDmg); player.hp=Math.max(1, player.hp-sd); logBattle(`El esfuerzo te cuesta ${sd} HP.`); }
   } else {
     const hits = mv.hits||1;
-    let totalDmg = 0;
     for(let h=0; h<hits; h++){
       let def = target.def;
       if(mv.pierce) def = def*(1-mv.pierce);
@@ -12373,10 +12615,16 @@ function executePackPlayerAction(mv){
       battleState.mons.forEach((m, idx)=>{
         animatePackMon(idx, mv.isUltimate ? "ultimate-hit" : "hitshake");
         flashPackMon(idx, mv.isUltimate ? "ultimate" : "red");
+        if(aoeDmgByIdx[idx] != null){
+          spawnFloatingNumber("packStageMon"+idx, "-"+aoeDmgByIdx[idx], (aoeDmgByIdx[idx] >= m.maxHp*0.5) ? "crit" : "damage");
+        }
       });
     } else {
       animatePackMon(targetIdx, mv.isUltimate ? "ultimate-hit" : "hitshake");
       flashPackMon(targetIdx, mv.isUltimate ? "ultimate" : "red");
+      if(totalDmg > 0){
+        spawnFloatingNumber("packStageMon"+targetIdx, "-"+totalDmg, (totalDmg >= target.maxHp*0.5) ? "crit" : "damage");
+      }
     }
     if(mv.isUltimate) animateSprite("spritePlayer","ultimate-strike");
   }
@@ -12450,6 +12698,7 @@ function packEnemyTurn(){
       animateSprite("spritePlayer","hitshake");
       flashSprite("spritePlayer","red");
       maybeShowCrit(dmg, player.maxHp);
+      spawnFloatingNumber("spritePlayer", "-"+dmg, (dmg >= player.maxHp*0.5) ? "crit" : "damage");
       updateBattleBars(); refreshHud();
       setTimeout(attackNext, 500); // pausa tras el golpe antes de pasar al siguiente atacante
     }, 480); // ventana en la que se ve el "!" antes de que el golpe se resuelva
@@ -12720,6 +12969,7 @@ function moveTargetIcon(mv){
   if(mv.interactive==="tap") icon += ` <span title="Toca rápido al usarlo para que salga a daño completo">👆</span>`;
   if(mv.interactive==="swipe") icon += ` <span title="Sigue el patrón al usarlo para que salga a daño completo">🌀</span>`;
   if(mv.interactive==="sweep") icon += ` <span title="Desliza bien amplio al usarlo para que salga a daño completo">↔️</span>`;
+  if(mv.interactive==="precision") icon += ` <span title="Toca en el momento justo de la barra de potencia">🎯</span>`;
   return icon;
 }
 
@@ -13450,7 +13700,7 @@ function renderPvpMoveGrid(){
     btn.className = "move-btn" + (mv.type==="buff"?" buff":"") + (mv.isUltimate?" ultimate-move":"");
     const canAfford = canAffordMove(mv, pvp.mp[pvp.role], pvp.hp[pvp.role], maxHpFor(pvp.role));
     btn.disabled = !canAfford;
-    const costLabel = mv.costsAllMp ? "TODO tu maná" : `MP ${mv.cost||0}`;
+    const costLabel = mv.costsAllMp ? `<span class="move-mp-cost">TODO tu maná</span>` : `<span class="move-mp-cost">MP ${mv.cost||0}</span>`;
     btn.innerHTML = `<div class="mname">${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
     btn.onclick = ()=> pvpPlayerAction(mv);
     attachMoveTooltip(btn, mv);
@@ -13565,8 +13815,12 @@ function pvpPlayerAction(mv){
   };
 
   // Golpes fuertes: primero el gesto de ataque (tocar/deslizar/patrón, según la clase y el movimiento),
-  // y luego, siempre, el gesto de defensa — el tiempo de ambos depende de tu VEL.
-  if(mv.isUltimate || mv.interactive){
+  // y luego, siempre, el gesto de defensa — el tiempo de ambos depende de tu VEL. La barra de
+  // precisión de Disparo Certero (interactive:"precision") todavía no está cableada acá — el PvP
+  // sincroniza el resultado por red con un simple atkMult 0.65/1, y esta barra da 4 resultados
+  // distintos + bono de crítico, así que por ahora cae al mismo camino que un movimiento normal
+  // (sin minijuego de ataque) en vez de caer por error en el desafío de deslizar.
+  if(mv.isUltimate || (mv.interactive && mv.interactive !== "precision")){
     const attackChallenge = mv.isUltimate
       ? (cb)=> triggerUltimateMinigame(mv, cb)
       : mv.interactive==="tap" ? (cb)=> triggerQuickTapChallenge(cb, myTimeMs)
@@ -13590,12 +13844,17 @@ function openPvpPetSummonPicker(){
     list.innerHTML = `<div class="empty-note">No tienes mascotas disponibles para invocar.</div>`;
   }
   available.forEach(pet=>{
+    // Mismo criterio que openPetSummonPicker: solo las especies con diseño de batalla terminado
+    // se pueden invocar por ahora (ver SUMMONABLE_PET_SPECIES en game/config/pets.js).
+    const summonable = SUMMONABLE_PET_SPECIES.includes(pet.name);
     const row = document.createElement("div");
     row.className = "cm-item";
     row.innerHTML = `<div style="flex:1;"><span>${pet.emoji} ${petDisplayName(pet)}</span>
-      <small style="display:block; color:var(--dim); font-size:10.5px;">Nv.${pet.level} · ${pet.hp}/${pet.maxHp} HP</small></div>
-      <button>Invocar</button>`;
-    row.querySelector("button").onclick = ()=>{ $("petSummonOverlay").classList.add("hidden"); pvpSummonPetChoice(pet); };
+      <small style="display:block; color:var(--dim); font-size:10.5px;">Nv.${pet.level} · ${pet.hp}/${pet.maxHp} HP${!summonable?" · aún sin diseño de batalla":""}</small></div>
+      <button ${summonable?"":"disabled"}>${summonable?"Invocar":"Solo colección"}</button>`;
+    if(summonable){
+      row.querySelector("button").onclick = ()=>{ $("petSummonOverlay").classList.add("hidden"); pvpSummonPetChoice(pet); };
+    }
     list.appendChild(row);
   });
   $("petSummonOverlay").classList.remove("hidden");
@@ -13806,6 +14065,7 @@ function applyPvpMove(side, other, mv, rng){
     pvp.hp[side] = Math.min(maxHpFor(side), pvp.hp[side]+heal);
     logBattle(`${actorName} usa ${mv.name} y recupera ${heal} HP.`);
     flashSprite(elFor(side), "green");
+    spawnFloatingNumber(elFor(side), "+"+heal, "heal");
   } else if(mv.type === "debuff"){
     if(mv.stat==="def") pvp.buffs[other].def = Math.max(0.25, pvp.buffs[other].def*(1-mv.amount));
     if(mv.stat==="atk") pvp.buffs[other].atk = Math.max(0.25, pvp.buffs[other].atk*(1-mv.amount));
@@ -13831,6 +14091,7 @@ function applyPvpMove(side, other, mv, rng){
     animateSprite(elFor(other), mv.isUltimate ? "ultimate-hit" : "hitshake");
     flashSprite(elFor(other), mv.isUltimate ? "ultimate" : "red");
     maybeShowCrit(total, maxHpFor(other));
+    spawnFloatingNumber(elFor(other), "-"+total, (total >= maxHpFor(other)*0.5) ? "crit" : "damage");
     logBattle(`${actorName} usa ${mv.name}: ${total} de daño${hits>1?` (${hits} golpes)`:""}.`);
     if(mv.drain){ const h=Math.round(total*mv.drain); pvp.hp[side]=Math.min(maxHpFor(side), pvp.hp[side]+h); logBattle(`${actorName} absorbe ${h} HP.`); }
     if(mv.stun && rng() < mv.stun){ logBattle(`¡${nameFor(other)} queda aturdido!`); }
@@ -14071,14 +14332,127 @@ $("btnFleeCorner").onclick = ()=>{
   if(battleState && battleState.isDungeon) return dungeonSurrender();
   if(battleState && battleState.isColiseo) return coliseoSurrender();
   if(pvp) return pvpConcede();
-  if(battleState.isPack) return proposeGroupFlee();
-  fleeBattle();
+  // Bug: acá decía `battleState.isPack` para decidir si mandar a proposeGroupFlee() — pero esa
+  // función es para la batalla de GRUPO multijugador, que vive en `groupBattle` (variable aparte,
+  // battleState queda en null durante todo un combate de grupo). En manada (battleState.isPack)
+  // esto llamaba a proposeGroupFlee() con groupBattle=null, que no hace nada (return inmediato) —
+  // por eso el botón no servía en manada. Y en grupo de verdad, `battleState.isPack` explotaba
+  // (battleState es null ahí), tirando abajo todo el handler en silencio.
+  if(groupBattle) return proposeGroupFlee();
+  if(battleState) return fleeBattle();
 };
 
+/** Orden fijo de las 8 cuñas del menú radial (mismo orden horario de siempre, arrancando arriba).
+ *  `content` es el sufijo de su .wheel-slice-content-N. Mascotas/Bases son "condicionales": solo
+ *  entran en el reparto si el jugador ya las desbloqueó — ver layoutWheelMenu(). */
+const WHEEL_SLOT_ORDER = [
+  {btn:"btnFriends", content:0},
+  {btn:"btnParty", content:1},
+  {btn:"btnAttrs", content:2},
+  {btn:"btnBases", content:3, requires:"base"},
+  {btn:"btnForge", content:4},
+  {btn:"btnEquip", content:5},
+  {btn:"btnPets", content:6, requires:"pets"},
+  {btn:"btnReturnToMenu", content:7},
+];
+/** Punto en el círculo del menú (fracción de 0-100, mismo sistema que ya usaba el CSS estático)
+ *  a un radio dado y un ángulo en grados, 0°=arriba, sentido horario. */
+function wheelPolarPct(radius, deg){
+  const rad = deg * Math.PI/180;
+  return { x: 50 + radius*Math.sin(rad), y: 50 - radius*Math.cos(rad) };
+}
+/** Reacomoda el menú radial en tiempo real para que NUNCA quede un sector vacío cuando Mascotas
+ *  y/o Bases están ocultas (pedido explícito: "elimina completamente el espacio, que no quede
+ *  nada vacío") — las posiciones fijas por CSS (.wheel-slice-N / .wheel-slice-content-N /
+ *  .wheel-gem-N / el patrón de líneas divisorias) solo cubrían el caso de las 8 cuñas completas;
+ *  acá se recalculan a mano vía trigonometría para cualquier cantidad de cuñas visibles (6, 7 u 8),
+ *  repartiéndolas parejo alrededor del círculo completo mientras se mantiene su orden relativo
+ *  (ver WHEEL_SLOT_ORDER). Se llama cada vez que se abre el menú (nunca cambia con el menú ya
+ *  abierto en pantalla), y de paso hace la revelación con énfasis de una cuña recién desbloqueada
+ *  (ver player._justUnlockedPetSlice/_justUnlockedBaseSlice, seteadas en attemptCapture/placeOwnBase). */
+function layoutWheelMenu(){
+  const hasPets = !!(player.pets && player.pets.length > 0);
+  const hasBase = !!player.baseEverPlaced;
+  const unlocked = {pets:hasPets, base:hasBase};
+  const visible = WHEEL_SLOT_ORDER.filter(slot=> !slot.requires || unlocked[slot.requires]);
+  const N = visible.length;
+  const step = 360/N;
+  const LINE_WIDTH_DEG = 1.2;
+
+  WHEEL_SLOT_ORDER.forEach(slot=>{
+    const btn = $(slot.btn);
+    const content = document.querySelector(".wheel-slice-content-"+slot.content);
+    const show = visible.includes(slot);
+    if(btn) btn.style.display = show ? "" : "none";
+    if(content) content.style.display = show ? "" : "none";
+  });
+
+  visible.forEach((slot, i)=>{
+    const centerDeg = i*step;
+    const halfStep = step/2;
+    const btn = $(slot.btn);
+    const content = document.querySelector(".wheel-slice-content-"+slot.content);
+    if(btn){
+      // subdivide el arco en tramos de ~22.5° (igual que el diseño original de 8 cuñas) para que
+      // el borde se vea curvo incluso en arcos más anchos (60° con 6 cuñas, etc.) — mínimo 2 tramos.
+      const segments = Math.max(2, Math.round(step/22.5));
+      const pts = [];
+      for(let s=0; s<=segments; s++){
+        const deg = centerDeg - halfStep + (step*s/segments);
+        const p = wheelPolarPct(50, deg);
+        pts.push(`${p.x.toFixed(2)}% ${p.y.toFixed(2)}%`);
+      }
+      btn.style.clipPath = `polygon(50% 50%, ${pts.join(", ")})`;
+    }
+    if(content){
+      const p = wheelPolarPct(35, centerDeg); // mismo radio que ya usaban los .wheel-slice-content-N fijos
+      content.style.left = p.x.toFixed(2)+"%";
+      content.style.top = p.y.toFixed(2)+"%";
+    }
+  });
+
+  // Gemas divisorias: una por cada borde entre cuñas (N en total) — reusa los 8 elementos
+  // .wheel-gem-N que ya existen en el HTML, reposicionando los primeros N y ocultando el resto.
+  for(let i=0;i<8;i++){
+    const gem = document.querySelector(".wheel-gem-"+i);
+    if(!gem) continue;
+    if(i < N){
+      const p = wheelPolarPct(50, i*step - step/2);
+      gem.style.left = p.x.toFixed(2)+"%";
+      gem.style.top = p.y.toFixed(2)+"%";
+      gem.style.display = "";
+    } else {
+      gem.style.display = "none";
+    }
+  }
+
+  // Líneas doradas divisorias del anillo — recalculadas para N cuñas (ver #wheelDividers en
+  // main.css, antes un ::before fijo a 8).
+  const dividers = $("wheelDividers");
+  if(dividers){
+    dividers.style.background = `repeating-conic-gradient(from ${(-step/2).toFixed(3)}deg, `
+      + `rgba(232,196,104,.55) 0deg ${LINE_WIDTH_DEG}deg, transparent ${LINE_WIDTH_DEG}deg ${step.toFixed(3)}deg)`;
+  }
+
+  // Revelación con énfasis de una cuña recién desbloqueada (pop + brillo dorado, una sola vez).
+  const petContent = document.querySelector(".wheel-slice-content-6");
+  const baseContent = document.querySelector(".wheel-slice-content-3");
+  if(hasPets && player._justUnlockedPetSlice && petContent){
+    petContent.classList.remove("slice-emphasis"); void petContent.offsetWidth;
+    petContent.classList.add("slice-emphasis");
+    player._justUnlockedPetSlice = false;
+  }
+  if(hasBase && player._justUnlockedBaseSlice && baseContent){
+    baseContent.classList.remove("slice-emphasis"); void baseContent.offsetWidth;
+    baseContent.classList.add("slice-emphasis");
+    player._justUnlockedBaseSlice = false;
+  }
+}
 $("btnFabToggle").onclick = ()=>{
   const open = $("fabMenu").classList.toggle("open");
   setFabToggleIcon(open);
   $("fabMenuBackdrop").classList.toggle("show", open);
+  if(open) layoutWheelMenu();
 };
 $("fabMenuBackdrop").onclick = ()=>{
   $("fabMenu").classList.remove("open");
@@ -14350,15 +14724,17 @@ function buildShopCard(item, isBuy){
       if(!locked){
         card.querySelector("button").onclick = ()=>{
           if(!canAfford) return;
-          player.gold -= goldCost;
-          if(matCost){
-            player.wood -= matCost.wood; player.stone -= matCost.stone; player.iron -= matCost.iron;
-            player.eliteWeaponsBought = (player.eliteWeaponsBought||0) + 1;
-          }
-          pushItemSafe({...item});
-          refreshHud(); saveGame();
-          toast(`Compraste ${item.emoji} ${item.name}.`);
-          renderShopBuyList(); renderShopSellList();
+          showConfirm(`¿Comprar <b>${item.name}</b> por 💰${goldCost}${matCost?" (más los materiales indicados)":""}?`, ()=>{
+            player.gold -= goldCost;
+            if(matCost){
+              player.wood -= matCost.wood; player.stone -= matCost.stone; player.iron -= matCost.iron;
+              player.eliteWeaponsBought = (player.eliteWeaponsBought||0) + 1;
+            }
+            pushItemSafe({...item});
+            refreshHud(); saveGame();
+            toast(`Compraste ${item.emoji} ${item.name}.`);
+            renderShopBuyList(); renderShopSellList();
+          }, {icon:"🛒", title:"Confirmar compra", confirmLabel:"Comprar"});
         };
       }
     } else {
@@ -14369,13 +14745,15 @@ function buildShopCard(item, isBuy){
         <div class="it">${item.name}${qtyTag}${meta.tag}<small>${item.desc}</small></div>
         <button>+💰${sellPrice}</button>`;
       card.querySelector("button").onclick = ()=>{
-        const idx = player.inventory.findIndex(x=>x.id===item.id);
-        if(idx<0) return;
-        player.gold += sellPrice;
-        player.inventory.splice(idx,1);
-        refreshHud(); saveGame();
-        toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
-        renderShopBuyList(); renderShopSellList();
+        showConfirm(`¿Vender <b>${item.name}</b> por 💰${sellPrice}?`, ()=>{
+          const idx = player.inventory.findIndex(x=>x.id===item.id);
+          if(idx<0) return;
+          player.gold += sellPrice;
+          player.inventory.splice(idx,1);
+          refreshHud(); saveGame();
+          toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
+          renderShopBuyList(); renderShopSellList();
+        }, {icon:"💸", title:"Confirmar venta", confirmLabel:"Vender"});
       };
     }
     return card;
@@ -14399,11 +14777,13 @@ function buildShopCard(item, isBuy){
     if(!locked){
       card.querySelector("button").onclick = ()=>{
         if(player.gold < shopPrice(item)) return;
-        player.gold -= shopPrice(item);
-        pushItemSafe({...item});
-        refreshHud(); saveGame();
-        toast(`Compraste ${item.emoji} ${item.name}.`);
-        renderShopBuyList(); renderShopSellList();
+        showConfirm(`¿Comprar <b>${item.name}</b> por 💰${shopPrice(item)}?`, ()=>{
+          player.gold -= shopPrice(item);
+          pushItemSafe({...item});
+          refreshHud(); saveGame();
+          toast(`Compraste ${item.emoji} ${item.name}.`);
+          renderShopBuyList(); renderShopSellList();
+        }, {icon:"🛒", title:"Confirmar compra", confirmLabel:"Comprar"});
       };
     }
   } else {
@@ -14415,13 +14795,15 @@ function buildShopCard(item, isBuy){
        <div class="sc-desc">${item.desc}</div>
        <button>+💰${sellPrice}</button>`;
     card.querySelector("button").onclick = ()=>{
-      const idx = player.inventory.findIndex(x=>x.id===item.id);
-      if(idx<0) return;
-      player.gold += sellPrice;
-      player.inventory.splice(idx,1);
-      refreshHud(); saveGame();
-      toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
-      renderShopBuyList(); renderShopSellList();
+      showConfirm(`¿Vender <b>${item.name}</b> por 💰${sellPrice}?`, ()=>{
+        const idx = player.inventory.findIndex(x=>x.id===item.id);
+        if(idx<0) return;
+        player.gold += sellPrice;
+        player.inventory.splice(idx,1);
+        refreshHud(); saveGame();
+        toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
+        renderShopBuyList(); renderShopSellList();
+      }, {icon:"💸", title:"Confirmar venta", confirmLabel:"Vender"});
     };
   }
   return card;
@@ -15107,6 +15489,41 @@ $("btnConfirmReturnMenu").onclick = async ()=>{
   await initContinueScreen();
 };
 $("btnClosePets").onclick = ()=> $("petsOverlay").classList.add("hidden");
+$("btnOpenMonsterCodex").onclick = ()=>{ renderMonsterCodex(); $("monsterCodexOverlay").classList.remove("hidden"); };
+$("btnCloseMonsterCodex").onclick = ()=> $("monsterCodexOverlay").classList.add("hidden");
+/** Todas las especies "coleccionables" del Bestiario — monstruos normales del mapa + jefes de
+ *  región. NO incluye enemigos especiales no capturables (Lobo Nocturno, Lobo Sombrío, uncapturable:true
+ *  en sus templates) ni NPCs especiales (Ladrón Errante, Comerciante, Vagabundo) — esos son
+ *  encuentros puntuales, no parte de la colección "de bestiario" pensada acá. */
+function monsterCodexSpecies(){
+  return [...MONSTER_TEMPLATES, ...BOSS_TEMPLATES];
+}
+/** Página del Bestiario por especie: la registrada en player.monsterRegistry (ver attemptCapture)
+ *  se revela con su emoji/nombre real; la que nunca capturaste queda en silueta "???" — la idea es
+ *  ir llenando el libro de a poco, como pedido explícito ("un libro con tarjetas de monstruos"). */
+function renderMonsterCodex(){
+  const list = $("monsterCodexList");
+  if(!list) return;
+  list.innerHTML = "";
+  const registry = player.monsterRegistry || {};
+  const species = monsterCodexSpecies();
+  let capturedCount = 0;
+  species.forEach(tpl=>{
+    const entry = registry[tpl.name];
+    if(entry) capturedCount++;
+    const isBossSpecies = BOSS_TEMPLATES.some(t=>t.name===tpl.name);
+    const card = document.createElement("div");
+    card.className = "inv-card-v2 codex-piece-slot" + (entry ? "" : " missing");
+    card.innerHTML = entry
+      ? `<div class="icv-icon">${tpl.emoji}</div><div class="icv-name">${tpl.name}</div>
+         <div class="icv-lvl">Capturado${entry.count>1?` x${entry.count}`:""}${isBossSpecies?" · 👑 Jefe":""}</div>`
+      : `<div class="icv-icon">❓</div><div class="icv-name">???</div>
+         <div class="icv-lvl">No capturado</div>`;
+    list.appendChild(card);
+  });
+  const progressEl = $("monsterCodexProgress");
+  if(progressEl) progressEl.textContent = `${capturedCount}/${species.length} páginas completas`;
+}
 /** Determina la rareza "de carta coleccionable" de una mascota — para mascotas capturadas antes de
  *  este sistema (sin las banderas nuevas) se hace una estimación por el nombre de la especie. */
 function petRarityInfo(pet){
@@ -15456,7 +15873,7 @@ function renderGroupMoveGrid(){
     btn.className = "move-btn" + (mv.type==="buff"?" buff":"") + (mv.isUltimate?" ultimate-move":"");
     const canAfford = canAffordMove(mv, me.mp, me.hp, me.maxHp);
     btn.disabled = !canAfford;
-    const costLabel = mv.costsAllMp ? "TODO tu maná" : `MP ${mv.cost||0}`;
+    const costLabel = mv.costsAllMp ? `<span class="move-mp-cost">TODO tu maná</span>` : `<span class="move-mp-cost">MP ${mv.cost||0}</span>`;
     btn.innerHTML = `<div class="mname">${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
     btn.onclick = ()=> groupPlayerAction(mv);
     attachMoveTooltip(btn, mv);
@@ -15615,9 +16032,11 @@ function resolveGroupTurn(aliveIds){
         if(targetId === myPlayerId){
           animateSprite("spritePlayer","hitshake");
           flashSprite("spritePlayer","red");
+          spawnFloatingNumber("spritePlayer", "-"+dmg, (dmg >= t.maxHp*0.5) ? "crit" : "damage");
         } else {
           animateAllyMini(targetId, "hitshake");
           flashAllyMini(targetId, "red");
+          spawnFloatingNumber("allySprite-"+targetId, "-"+dmg, (dmg >= t.maxHp*0.5) ? "crit" : "damage");
         }
         maybeShowCrit(dmg, t.maxHp);
         setTimeout(processNext, 1100);
@@ -15641,8 +16060,16 @@ function resolveGroupTurn(aliveIds){
         renderPartyStatusRow();
         if(act.mv.type === "heal"){
           const recId = (result && result.healRecipientId) || act.id;
-          if(recId === myPlayerId) flashSprite("spritePlayer","green"); else flashAllyMini(recId, "green");
+          const healAmount = result && result.healAmount;
+          if(recId === myPlayerId){
+            flashSprite("spritePlayer","green");
+            if(healAmount) spawnFloatingNumber("spritePlayer", "+"+healAmount, "heal");
+          } else {
+            flashAllyMini(recId, "green");
+            if(healAmount) spawnFloatingNumber("allySprite-"+recId, "+"+healAmount, "heal");
+          }
         } else if(act.mv.type !== "buff"){
+          const monDmg = monHpBefore - mon.hp;
           if(act.mv.isUltimate){
             if(isMe) animateSprite("spritePlayer","ultimate-strike"); else animateAllyMini(act.id, "ultimate-strike");
             animateSprite("spriteEnemy","ultimate-hit");
@@ -15651,7 +16078,8 @@ function resolveGroupTurn(aliveIds){
             animateSprite("spriteEnemy","hitshake");
             flashSprite("spriteEnemy","red");
           }
-          maybeShowCrit(monHpBefore - mon.hp, mon.maxHp);
+          if(monDmg > 0) spawnFloatingNumber("spriteEnemy", "-"+monDmg, (monDmg >= mon.maxHp*0.5) ? "crit" : "damage");
+          maybeShowCrit(monDmg, mon.maxHp);
         }
         if(act.mv.isUltimate && isMe) slowDrainMp("bPMp");
         if(mon.hp <= 0){ setTimeout(finishGroupTurn, 500); return; }
@@ -15709,7 +16137,7 @@ function applyGroupMemberMove(id, mv, rng){
     logBattle(mv.allyHeal
       ? `${isMe?"Usas":m.name+" usa"} ${mv.name} sobre ${recipientId===id?"sí mismo":recName}: +${heal} HP.`
       : `${isMe?"Usas":m.name+" usa"} ${mv.name} y recupera ${heal} HP.`);
-    return {healRecipientId: recipientId};
+    return {healRecipientId: recipientId, healAmount: heal};
   } else if(mv.type === "debuff"){
     if(mv.stat==="def") mon.def = +(mon.def*(1-mv.amount)).toFixed(1);
     if(mv.stat==="atk") mon.atk = +(mon.atk*(1-mv.amount)).toFixed(1);

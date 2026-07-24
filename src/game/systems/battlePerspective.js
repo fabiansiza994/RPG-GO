@@ -138,21 +138,56 @@ export function pickGroundAnchor(sceneConfig, index){
   return fixed;
 }
 
-/** Elige un flyingAnchor por índice (con vuelta de rueda). No se valida contra groundPolygon
- *  porque, por definición, un punto de vuelo está fuera del suelo transitable. */
-export function pickFlyingAnchor(sceneConfig, index){
-  const list = sceneConfig.flyingAnchors;
-  if(!list || !list.length) return {x:0.5, y:0.35, shadowX:0.5, shadowY:0.7};
-  return list[index % list.length];
+/** Punto de apoyo de un miembro de MANADA — a diferencia de pickGroundAnchor (pensado para un
+ *  enemigo a la vez, por eso enemyAnchors reparte lejano/medio/cercano por toda la calle), una
+ *  manada tiene que verse agrupada pero SIN aplastarse: el índice 0 (el "líder") va exacto en el
+ *  punto base (el mismo que usaría un enemigo solo — normalmente del lado derecho de la calle,
+ *  cerca de donde está el jugador parado del otro lado); cada índice siguiente se abre en ABANICO
+ *  hacia la IZQUIERDA del líder, aprovechando la calle libre que ese lado casi siempre tiene en
+ *  los escenarios actuales (probado con "Una manada de 4 Lobo Umbrío" — con el zigzag angosto
+ *  anterior quedaban todos amontonados en un cuadradito chico a la derecha, sin usar nada de ese
+ *  espacio, y encima había que achicarlos mucho para que "entraran" ahí). El corrimiento en Y es
+ *  chico a propósito: apenas los suficiente para que el orden de profundidad (calculatePerspectiveScale
+ *  + computeDepthZIndex) haga que el líder tape un poco al segundo, el segundo al tercero, etc.
+ *  ("un paso más adelante"), sin que la escala baje tanto como para verse enanos.
+ *  0.14/0.025 por índice (primer intento) eran demasiado — con 4 miembros el último terminaba
+ *  pisando el borde del groundPolygon (la calle se angosta hacia el fondo) y quedaba medio afuera
+ *  de la carretera aunque técnicamente se reubicara adentro por findNearestPointInsidePolygon.
+ *  0.09/0.015 deja bastante margen respecto al borde real incluso con manadas grandes. */
+export function pickPackClusterAnchor(baseAnchor, index, sceneConfig){
+  if(index === 0) return {x:baseAnchor.x, y:baseAnchor.y};
+  const x = clamp(baseAnchor.x - index*0.09, 0.08, 0.94);
+  const y = Math.max(0, baseAnchor.y - index*0.015);
+  if(!sceneConfig || !sceneConfig.groundPolygon) return {x, y};
+  return findNearestPointInsidePolygon(x, y, sceneConfig.groundPolygon);
 }
 
-/** Dónde cae la sombra de un flyingAnchor si la config no trae shadowX/shadowY explícitos: una
- *  banda de suelo razonable debajo del punto de vuelo, cerca de la cámara. */
-export function projectFlyingShadow(anchor, sceneConfig){
-  const x = anchor.shadowX != null ? anchor.shadowX : anchor.x;
-  const y = anchor.shadowY != null ? anchor.shadowY
-    : sceneConfig.groundBottomY - (sceneConfig.groundBottomY - sceneConfig.horizonY) * 0.18;
-  return { x, y };
+/** Cuánto "flota" un enemigo volador por encima de su propio punto de apoyo en el suelo — fracción
+ *  de imagen (mismo sistema que horizonY/groundBottomY). Es la ÚNICA perilla que hay que tocar
+ *  para subir o bajar a TODOS los voladores a la vez (Cuervo Corrupto, Dragón Menor, Dragón
+ *  Ancestral, cualquier futuro `flying:true`) sin retocar anchors uno por uno — antes cada
+ *  escenario traía su propio array `flyingAnchors` calibrado a mano, con puntos que quedaban
+ *  "en el cielo" (por encima del castillo) y que había que ajustar de nuevo por cada monstruo/
+ *  escenario nuevo aunque compartieran el mismo punto de apoyo. Valor calibrado a ojo: 0.66 (el
+ *  soloEnemyAnchor de "medieval") menos 0.04 fue el punto donde el Cuervo Corrupto dejó de verse
+ *  "en el aire" y empezó a leerse como que sobrevuela justo ese lugar de la calle.
+ */
+export const FLYING_HOVER_HEIGHT_FRAC = 0.02;
+
+/** Deriva el anchor de un enemigo volador a partir del punto de apoyo que tendría un enemigo
+ *  TERRESTRE en esa misma posición (soloEnemyAnchor o enemyAnchors[idx], vía pickGroundAnchor) —
+ *  la sombra queda EXACTO en ese punto de piso, igual que pisa cualquier terrestre (rata mutante,
+ *  etc.), y el sprite se dibuja FLYING_HOVER_HEIGHT_FRAC más arriba de ESE mismo punto. Como el
+ *  punto de referencia es el mismo que usaría un terrestre ahí, todos los voladores flotan la
+ *  misma altura relativa a su propia sombra sin importar tamaño de sprite ni tier — no hace falta
+ *  un array de puntos aparte por escenario ni recalibrar por monstruo. */
+export function pickFlyingAnchor(groundAnchor){
+  return {
+    x: groundAnchor.x,
+    y: Math.max(0, groundAnchor.y - FLYING_HOVER_HEIGHT_FRAC),
+    shadowX: groundAnchor.x,
+    shadowY: groundAnchor.y,
+  };
 }
 
 /** Crea el nodo de sombra elíptica (ver .perspective-shadow en main.css) — un div vacío, sin
@@ -186,7 +221,7 @@ function pagePointToContainerPct(pageX, pageY, containerRect){
  * El ancla se coloca con su CENTRO INFERIOR en el punto (fx,fy): `transform:translate(-50%,-100%)`
  * + `transform-origin:bottom center`, tal como pisa un personaje. La sombra (si se pasa) usa
  * `shadowFx/shadowFy` — normalmente igual a fx/fy, salvo en voladores, donde vive aparte, siempre
- * sobre el suelo (ver projectFlyingShadow).
+ * sobre el suelo (ver pickFlyingAnchor).
  *
  * anchorEl NO es el sprite animado en sí — es un wrapper (.perspective-anchor) que lo envuelve, a
  * propósito: el sprite adentro sigue usando sus propias animaciones de ataque/golpe (que ya

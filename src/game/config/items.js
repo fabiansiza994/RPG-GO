@@ -1,17 +1,12 @@
+// Pedido explícito: se sacaron las Gemas (Fuerza/Defensa/Viento/Astral/Mayores) y los Núcleos
+// (Vital/Arcano) — ya no se venden en la tienda ni salen como botín aleatorio (rollLoot usa esta
+// misma tabla). Solo quedan las pociones/elixires.
 export const ITEM_TABLE = [
   {id:"potion_s", name:"Poción pequeña", emoji:"🧪", type:"heal", amount:0.3, weight:34, value:20, desc:"Restaura 30% de tu HP."},
   {id:"potion_m", name:"Poción de maná", emoji:"🔵", type:"mana", amount:0.4, weight:22, value:18, desc:"Restaura 40% de tu MP."},
   {id:"elixir", name:"Elixir mayor", emoji:"⚗️", type:"heal", amount:0.6, weight:10, value:45, desc:"Restaura 60% de tu HP."},
   {id:"elixir_total", name:"Elixir de Vida Total", emoji:"💖", type:"heal", amount:1.0, weight:4, value:95, desc:"Restaura 100% de tu HP."},
   {id:"mana_total", name:"Cristal de Maná Puro", emoji:"💠", type:"mana", amount:1.0, weight:4, value:85, desc:"Restaura 100% de tu MP."},
-  {id:"gem_atk", name:"Gema de Fuerza", emoji:"🔺", type:"stat", stat:"atk", amount:1, weight:12, value:35, desc:"+1 ATQ permanente."},
-  {id:"gem_def", name:"Gema de Defensa", emoji:"🔷", type:"stat", stat:"def", amount:1, weight:12, value:35, desc:"+1 DEF permanente."},
-  {id:"gem_spd", name:"Gema de Viento", emoji:"🟡", type:"stat", stat:"spd", amount:1, weight:8, value:30, desc:"+1 VEL permanente."},
-  {id:"gem_hp", name:"Núcleo Vital", emoji:"❤️", type:"stat", stat:"maxHp", amount:4, weight:8, value:30, desc:"+4 HP máx. permanente."},
-  {id:"gem_mp", name:"Núcleo Arcano", emoji:"💙", type:"stat", stat:"maxMp", amount:3, weight:8, value:30, desc:"+3 MP máx. permanente."},
-  {id:"gem_matk", name:"Gema Astral", emoji:"🟣", type:"stat", stat:"matk", amount:1, weight:10, value:35, desc:"+1 AT.MÁG permanente."},
-  {id:"gem_atk_big", name:"Gema de Fuerza Mayor", emoji:"🔻", type:"stat", stat:"atk", amount:3, weight:3, value:95, desc:"+3 ATQ permanente."},
-  {id:"gem_def_big", name:"Gema de Defensa Mayor", emoji:"🔹", type:"stat", stat:"def", amount:3, weight:3, value:95, desc:"+3 DEF permanente."},
 ];
 
 export const PET_ITEM_TABLE = [
@@ -19,9 +14,13 @@ export const PET_ITEM_TABLE = [
   {id:"pet_collar", name:"Collar de Vínculo", emoji:"🎗️", type:"pet_item", petLevelUp:2, value:120, desc:"Sube el nivel de una mascota +2."},
 ];
 
+/** La Carta de Captura también se gana gratis al derrotar a los 5 guardianes de región (ver
+ *  `allDefeated`/`pendingCaptureCard` en main.js) — esta es la versión comprable, un atajo caro
+ *  para quien no quiera esperar a completar esa hazaña. Mismo `id` que la de guardián ("capture_card")
+ *  a propósito, para que ambos caminos produzcan exactamente el mismo ítem. */
 export const TEST_SHOP_ITEMS = [
-  {id:"capture_card_test", name:"Carta de Captura", emoji:"🎴", type:"capture_card", tradeable:false, value:150,
-    desc:"[PRUEBA] Úsala en combate cuando el enemigo tenga poca vida para capturarlo como mascota."},
+  {id:"capture_card", name:"Carta de Captura", emoji:"🎴", type:"capture_card", tradeable:false, value:150000,
+    desc:"Úsala en combate cuando el enemigo tenga poca vida (20% HP o menos) para capturarlo como mascota."},
 ];
 
 export const RARITY_TIERS = [
@@ -221,9 +220,14 @@ export const SHOP_CATEGORIES = [
   {key:"accessory", label:"Accesorios",      test:it=> it.slot==="accessory" && it.type!=="book"},
   {key:"books",     label:"📖 Libros",        test:it=> it.type==="book", classOnly:["mago"]},
   {key:"potion",    label:"Pociones",        test:it=> it.type==="heal"||it.type==="mana"},
-  {key:"special",   label:"Objetos especiales", test:it=> it.type==="stat"},
   {key:"pets",      label:"🐾 Mascotas",     test:it=> it.type==="pet_item", requiresPet:true},
-  {key:"test",      label:"🧪 Pruebas",      test:it=> it.type==="capture_card", hidden:true},
+  // Las Gemas/Núcleos que vivían acá se sacaron del juego (ver ITEM_TABLE) — "Objetos especiales"
+  // ahora es solo la Carta de Captura (antes en una categoría oculta de pruebas, liberada acá con
+  // precio alto: 150.000 oro en el ítem, ver TEST_SHOP_ITEMS, para que siga siendo un lujo caro y
+  // no un atajo barato a la captura gratis por derrotar a los 5 guardianes de región). Base
+  // Personal y los Picos NO viven en esta grilla por categorías — son sus propias tarjetas fijas
+  // arriba de la tienda (#baseShopCard/#pickaxeShopCard en index.html), siempre visibles.
+  {key:"special",   label:"🎴 Objetos especiales", test:it=> it.type==="capture_card"},
 ];
 
 export const SHOP_PREVIEW_LEVEL_CAP = 50;
