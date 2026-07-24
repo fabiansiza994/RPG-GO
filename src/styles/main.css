@@ -935,9 +935,9 @@
   .region-card .rc-mons{font-size:20px; letter-spacing:2px;}
   .region-card.locked{opacity:.55;}
   .region-card .rc-mons.blurred{filter:blur(3px); opacity:.6;}
-  .mon-real-sprite{height:40px; width:auto; border-radius:8px; border:2px solid var(--danger);
-    background:rgba(120,40,50,.35); padding:2px;
-    box-shadow:0 0 8px rgba(239,93,111,.7), 0 3px 6px rgba(0,0,0,.6); object-fit:cover;}
+  .mon-real-sprite{height:40px; width:auto; border-radius:8px;
+     padding:2px;
+    }
   /* Ladrón/Ninja errante: a diferencia del resto de mapSprite (recortados dentro de una cajita
      con borde rojo, ver .mon-real-sprite arriba), este muestra el personaje completo de pie con
      su propia sombra en el suelo — se pidió que se vea "parado" en el mapa, no como un ícono. */
@@ -1935,11 +1935,42 @@
   #battleWrap.group-mode #spriteEnemy img[data-dragon-ancestral="1"]{max-height:150px; max-width:160px; margin-right:0;}
   #spriteEnemy img[data-lobo-nocturno="1"]{max-height:200px; max-width:215px; margin-right:-18px;}
   #battleWrap.group-mode #spriteEnemy img[data-lobo-nocturno="1"]{max-height:145px; max-width:155px; margin-right:0;}
+  /* El arte de la Rata Mutante viene dibujado mirando hacia el mismo lado que el espejado
+     automático de #spriteEnemy (scaleX(-1), más abajo) termina invirtiendo — sin esto se ve mirando
+     hacia la derecha (lejos del jugador) en vez de hacia la izquierda. Mismo criterio que Golem/Dragón. */
+  #spriteEnemy img[data-rata="1"]{transform:scaleX(-1);}
+  #spriteEnemy img[data-rata="1"].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+  /* Mismo ajuste si aparece en manada — ahí el espejado automático es el de .psm-emoji, no #spriteEnemy. */
+  .pack-stage-mon .psm-emoji img[data-rata="1"]{transform:scaleX(-1);}
+  /* Mismo caso que la Rata Mutante — el arte del Cuervo Corrupto también viene dibujado mirando
+     hacia el mismo lado que el espejado automático termina invirtiendo. */
+  #spriteEnemy img[data-cuervo="1"]{transform:scaleX(-1);}
+  #spriteEnemy img[data-cuervo="1"].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+  .pack-stage-mon .psm-emoji img[data-cuervo="1"]{transform:scaleX(-1);}
+  /* Mismo caso que la Rata Mutante/Cuervo Corrupto — el arte del Espectro también viene dibujado
+     mirando hacia el mismo lado que el espejado automático termina invirtiendo. */
+  #spriteEnemy img[data-espectro="1"]{transform:scaleX(-1);}
+  #spriteEnemy img[data-espectro="1"].attacking{transform:scaleX(-1.1) scaleY(1.1);}
+  .pack-stage-mon .psm-emoji img[data-espectro="1"]{transform:scaleX(-1);}
   #spriteEnemy, .pack-stage-mon .psm-emoji{transform:scaleX(-1);} /* mira hacia el jugador, como en Golden Sun */
   #spriteEnemy img{transform:none;} /* las ilustraciones/fotos no se voltean, solo los emoji genéricos */
-  .sprite.hitshake{animation:shake .55s;}
-  .sprite.attackp{animation:lungeR .5s;}
-  .sprite.attacke{animation:lungeL .5s;}
+  /* Respiración idle: un pulso de escala sutil y continuo para que jugador/enemigos no se vean
+     estáticos entre golpes — se declara como una animación MÁS (separada por coma) junto a
+     shake/lunge en vez de reemplazar esas reglas, así el "effect stack" de CSS Animations la deja
+     de lado mientras el golpe (corto, no-infinito) está activo y la retoma sola apenas termina, sin
+     tocar nada del sistema de posicionamiento por perspectiva (que vive en .perspective-anchor, un
+     nivel más arriba) ni las poses de ataque propias de cada especie (que viven en el <img> de
+     adentro, un nivel más abajo — ver #spriteEnemy img[data-*].attacking más arriba). #spriteEnemy/
+     .psm-emoji usan la variante "Flipped" para no perder su espejado fijo (scaleX(-1)) mientras respiran. */
+  .sprite{animation:breathe 3.4s ease-in-out infinite;}
+  #spriteEnemy{animation:breatheFlipped 3.4s ease-in-out infinite;}
+  .sprite.hitshake{animation:breathe 3.4s ease-in-out infinite, shake .55s;}
+  .sprite.attackp{animation:breathe 3.4s ease-in-out infinite, lungeR .5s;}
+  .sprite.attacke{animation:breathe 3.4s ease-in-out infinite, lungeL .5s;}
+  #spriteEnemy.hitshake{animation:breatheFlipped 3.4s ease-in-out infinite, shake .55s;}
+  #spriteEnemy.attacke{animation:breatheFlipped 3.4s ease-in-out infinite, lungeL .5s;}
+  @keyframes breathe{0%,100%{transform:scale(1);}50%{transform:scale(1.022);}}
+  @keyframes breatheFlipped{0%,100%{transform:scaleX(-1) scale(1);}50%{transform:scaleX(-1) scale(1.022);}}
   .sprite{position:relative;}
   /* Sacudida larga del enemigo para Terremoto (Guerrero) — pedido explícito: ~2s de temblor antes
      de que se calcule/revele el daño (ver triggerGuerreroEarthquakeShake en main.js). #spriteEnemy
@@ -2013,9 +2044,10 @@
      arma en JS con la Web Animations API (ver playCharacterSlideInFx en main.js) en vez de una
      clase CSS — con clases, el truco de "sacar y volver a poner" para reiniciar la animación
      dejaba de disparar después del primer combate. */
-  .am-sprite.hitshake{animation:allyShake .55s;}
-  .am-sprite.attackp{animation:allyLungeR .5s;}
-  .am-sprite.attacke{animation:allyLungeL .5s;}
+  .am-sprite{animation:breathe 3.8s ease-in-out infinite;}
+  .am-sprite.hitshake{animation:breathe 3.8s ease-in-out infinite, allyShake .55s;}
+  .am-sprite.attackp{animation:breathe 3.8s ease-in-out infinite, allyLungeR .5s;}
+  .am-sprite.attacke{animation:breathe 3.8s ease-in-out infinite, allyLungeL .5s;}
   @keyframes allyShake{0%,100%{transform:scale(.78) translateX(0)}25%{transform:scale(.78) translateX(-8px)}75%{transform:scale(.78) translateX(8px)}}
   @keyframes allyLungeR{50%{transform:scale(.78) translateX(18px)}}
   @keyframes allyLungeL{50%{transform:scale(.78) translateX(-18px)}}
@@ -2273,9 +2305,10 @@
      de más, sobre todo con varios juntos y superpuestos. */
   .pack-stage-mon .psm-emoji img.pack-sprite-img{width:auto; height:auto;
     filter:drop-shadow(0 4px 6px rgba(0,0,0,.5));}
-  .pack-stage-mon .psm-emoji.attackp{animation:lungeR .5s;}
-  .pack-stage-mon .psm-emoji.attacke{animation:lungeL .5s;}
-  .pack-stage-mon .psm-emoji.hitshake{animation:shake .55s;}
+  .pack-stage-mon .psm-emoji{animation:breatheFlipped 3.2s ease-in-out infinite;}
+  .pack-stage-mon .psm-emoji.attackp{animation:breatheFlipped 3.2s ease-in-out infinite, lungeR .5s;}
+  .pack-stage-mon .psm-emoji.attacke{animation:breatheFlipped 3.2s ease-in-out infinite, lungeL .5s;}
+  .pack-stage-mon .psm-emoji.hitshake{animation:breatheFlipped 3.2s ease-in-out infinite, shake .55s;}
   .pack-stage-mon{position:relative;}
 
   /* Aviso de "va a atacar": un "!" aparece un instante arriba del miembro de la manada que le

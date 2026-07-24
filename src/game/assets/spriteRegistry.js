@@ -2,6 +2,8 @@
 // cachebustea con el BUILD_ID para que un reemplazo de archivo (como el de esta sesión, arte nuevo
 // del Ladrón Errante) se descargue de nuevo en vez de servir la versión vieja cacheada.
 const THIEF_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+// Mismo motivo — reemplazo de arte del Espectro (la pose "hurt") en esta sesión.
+const ESPECTRO_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
 export const spriteRegistry = {
 	THIEF_SPRITES: {
 		map: `/assets/sprites/thief/map.png?v=${THIEF_SPRITE_V}`,
@@ -21,11 +23,39 @@ export const spriteRegistry = {
 		petBaseOpponent: "/assets/sprites/lobo-umbrio/pet-base-opponent.png",
 		petAttackOpponent: "/assets/sprites/lobo-umbrio/pet-attack-opponent.png",
 		enemy: "/assets/sprites/lobo-umbrio/enemy.png",
+		// Variante usada para el/los compañero(s) de manada, así no todos los Lobo Umbrío se ven
+		// idénticos cuando salen en grupo (ver enemySpriteSrc en main.js, que alterna enemy/enemyVar
+		// según el índice del miembro dentro de la manada).
+		enemyVar: "/assets/sprites/lobo-umbrio/enemy_var.png",
+		// Pose de ataque como enemigo — antes solo se resaltaba la ilustración fija (ver
+		// triggerLoboAttackPose en main.js), ahora cambia a esta imagen mientras dura el golpe.
+		enemyAttack: "/assets/sprites/lobo-umbrio/enemy_ataque.png",
+		// Ilustración del marcador en el mapa (reemplaza el emoji 🐺) — ver asignación a
+		// MONSTER_TEMPLATES en main.js, mismo mecanismo que DUNGEON_AURA_ENEMY_MAP_SPRITES.
+		map: "/new_elements/lobo_map.png",
 	},
 	DEMONIO_MENOR_SPRITES: {
 		enemy: "/assets/sprites/demonio-menor/enemy.png",
 		petBase: "/assets/sprites/demonio-menor/pet-base.png",
 		petAttack: "/assets/sprites/demonio-menor/pet-attack.png",
+		// Pose de ataque como enemigo — mismo patrón que LOBO_UMBRIO_SPRITES.enemyAttack
+		// (ver triggerDemonioAttackPose/triggerPackDemonioAttackPose en main.js).
+		enemyAttack: "/assets/sprites/demonio-menor/enemy_ataque.png",
+		// Ilustración del marcador en el mapa (reemplaza el emoji 👹) — mismo mecanismo que
+		// LOBO_UMBRIO_SPRITES.map, ver asignación a MONSTER_TEMPLATES en main.js.
+		map: "/new_elements/demonio_meno_mapa.png",
+	},
+	CUERVO_CORRUPTO_SPRITES: {
+		enemy: "/assets/sprites/cuervo-corrupto/cuervo_corrupto.png",
+		// Variante para el/los compañero(s) de manada — mismo mecanismo que LOBO_UMBRIO_SPRITES.enemyVar.
+		enemyVar: "/assets/sprites/cuervo-corrupto/cuervo_corrupto_variante.png",
+		// Pose de ataque como enemigo — mismo patrón que LOBO_UMBRIO_SPRITES.enemyAttack.
+		enemyAttack: "/assets/sprites/cuervo-corrupto/cuervo_corrupto_ataque.png",
+		// Ilustración del marcador en el mapa (reemplaza el emoji 🐦‍⬛).
+		map: "/assets/sprites/cuervo-corrupto/cuervo_corrupto_map.png",
+		// Pose de golpe recibido — cuando el JUGADOR le pega a él (no confundir con enemyAttack,
+		// que es cuando ÉL ataca al jugador). Mismo patrón que RATA_MUTANTE_SPRITES.hurt.
+		hurt: "/assets/sprites/cuervo-corrupto/hurt.png",
 	},
 	GOLEM_ROCA_SPRITES: {
 		enemy: "/assets/sprites/golem-roca/enemy.png",
@@ -49,15 +79,25 @@ export const spriteRegistry = {
 	LOBO_NOCTURNO_SPRITES: {
 		enemy: "/assets/sprites/lobo-nocturno/enemy.png",
 	},
+	RATA_MUTANTE_SPRITES: {
+		base: "/assets/sprites/rata-gigante/rata-base.png",
+		attack: "/assets/sprites/rata-gigante/rata-ataque.png",
+		hurt: "/assets/sprites/rata-gigante/rata-golpe.png",
+		// Ilustración del marcador en el mapa (reemplaza el emoji 🐀).
+		map: "/assets/sprites/rata-gigante/rata-map.png",
+	},
 	SLIME_SALVAJE_SPRITES: {
 		base: "/assets/sprites/slime-salvaje/base.png",
 		attack: "/assets/sprites/slime-salvaje/attack.png",
 		hurt: "/assets/sprites/slime-salvaje/hurt.png",
+		// Ilustración del marcador en el mapa (reemplaza el emoji 🟢) — mismo mecanismo que
+		// LOBO_UMBRIO_SPRITES.map, ver asignación a MONSTER_TEMPLATES en main.js.
+		map: "/assets/sprites/slime-salvaje/slime_map.png",
 	},
 	ESPECTRO_SPRITES: {
 		base: "/assets/sprites/espectro/base.png",
 		attack: "/assets/sprites/espectro/attack.png",
-		hurt: "/assets/sprites/espectro/hurt.png",
+		hurt: `/assets/sprites/espectro/hurt.png?v=${ESPECTRO_SPRITE_V}`,
 	},
 	CLASS_PORTRAITS: {
 		arquero: {
@@ -134,11 +174,13 @@ export const spriteRegistry = {
 export const THIEF_SPRITES = spriteRegistry.THIEF_SPRITES;
 export const LOBO_SOMBRIO_SPRITES = spriteRegistry.LOBO_SOMBRIO_SPRITES;
 export const LOBO_UMBRIO_SPRITES = spriteRegistry.LOBO_UMBRIO_SPRITES;
+export const CUERVO_CORRUPTO_SPRITES = spriteRegistry.CUERVO_CORRUPTO_SPRITES;
 export const DEMONIO_MENOR_SPRITES = spriteRegistry.DEMONIO_MENOR_SPRITES;
 export const GOLEM_ROCA_SPRITES = spriteRegistry.GOLEM_ROCA_SPRITES;
 export const DRAGON_MENOR_SPRITES = spriteRegistry.DRAGON_MENOR_SPRITES;
 export const DRAGON_ANCESTRAL_SPRITES = spriteRegistry.DRAGON_ANCESTRAL_SPRITES;
 export const LOBO_NOCTURNO_SPRITES = spriteRegistry.LOBO_NOCTURNO_SPRITES;
+export const RATA_MUTANTE_SPRITES = spriteRegistry.RATA_MUTANTE_SPRITES;
 export const SLIME_SALVAJE_SPRITES = spriteRegistry.SLIME_SALVAJE_SPRITES;
 export const ESPECTRO_SPRITES = spriteRegistry.ESPECTRO_SPRITES;
 export const CLASS_PORTRAITS = spriteRegistry.CLASS_PORTRAITS;

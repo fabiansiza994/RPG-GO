@@ -110,11 +110,13 @@ import {
   TRAVELER_ATTACKED_SPRITES,
   LOBO_SOMBRIO_SPRITES,
   LOBO_UMBRIO_SPRITES,
+  CUERVO_CORRUPTO_SPRITES,
   DEMONIO_MENOR_SPRITES,
   GOLEM_ROCA_SPRITES,
   DRAGON_MENOR_SPRITES,
   DRAGON_ANCESTRAL_SPRITES,
   LOBO_NOCTURNO_SPRITES,
+  RATA_MUTANTE_SPRITES,
   SLIME_SALVAJE_SPRITES,
   ESPECTRO_SPRITES,
   CLASS_PORTRAITS,
@@ -132,6 +134,24 @@ import {
   ARQUERO_BATTLE_SPRITES,
   CHAR_SELECT_ART,
 } from "./game/assets/spriteRegistry.js";
+
+// El Lobo Umbrío ya tenía arte de combate propio, pero en el mapa seguía cayendo al emoji 🐺
+// genérico (MONSTER_TEMPLATES se mantiene como datos puros, sin importar spriteRegistry.js — ver
+// nota en DUNGEON_AURA_ENEMY_MAP_SPRITES) — se le asigna su ilustración de marcador acá, una sola
+// vez, así makeMonster() la toma directo de tpl.mapSprite para TODO spawn de esta especie
+// (normal, emboscada, evento de mundo, misión, manada).
+{
+  const loboUmbrioTpl = MONSTER_TEMPLATES.find(t=>t.name==="Lobo Umbrío");
+  if(loboUmbrioTpl) loboUmbrioTpl.mapSprite = LOBO_UMBRIO_SPRITES.map;
+  const demonioMenorTpl = MONSTER_TEMPLATES.find(t=>t.name==="Demonio Menor");
+  if(demonioMenorTpl) demonioMenorTpl.mapSprite = DEMONIO_MENOR_SPRITES.map;
+  const cuervoCorruptoTpl = MONSTER_TEMPLATES.find(t=>t.name==="Cuervo Corrupto");
+  if(cuervoCorruptoTpl) cuervoCorruptoTpl.mapSprite = CUERVO_CORRUPTO_SPRITES.map;
+  const slimeSalvajeTpl = MONSTER_TEMPLATES.find(t=>t.name==="Slime Salvaje");
+  if(slimeSalvajeTpl) slimeSalvajeTpl.mapSprite = SLIME_SALVAJE_SPRITES.map;
+  const rataMutanteTpl = MONSTER_TEMPLATES.find(t=>t.name==="Rata Mutante");
+  if(rataMutanteTpl) rataMutanteTpl.mapSprite = RATA_MUTANTE_SPRITES.map;
+}
 
 /** Construye la versión del movimiento definitivo para un nivel de evolución (1, 2 o 3). */
 function buildUltimateMoveForTier(base, tier){
@@ -2330,21 +2350,63 @@ function triggerShadowWolfPose(poseKey, holdMs){
     img.classList.remove("attacking");
   }, holdMs || 900);
 }
-/** El Lobo Umbrío como ENEMIGO usa una sola ilustración fija — al atacar solo se resalta un poco (sin cambiar de imagen). */
+/** El Lobo Umbrío como ENEMIGO cambia momentáneamente a su pose de ataque dedicada (enemy_ataque)
+ *  y vuelve solo a su ilustración base — mismo patrón que triggerShadowWolfPose/triggerSlimeSalvajePose. */
 function triggerLoboAttackPose(){
   const img = document.querySelector('#spriteEnemy img[data-lobo="1"]');
   if(!img) return;
+  const baseSrc = img.dataset.loboBase || img.src;
+  img.dataset.loboBase = baseSrc;
+  img.src = LOBO_UMBRIO_SPRITES.enemyAttack;
   img.classList.add("attacking");
   clearTimeout(img._resetTimer);
-  img._resetTimer = setTimeout(()=> img.classList.remove("attacking"), 700);
+  img._resetTimer = setTimeout(()=>{
+    img.src = baseSrc;
+    img.classList.remove("attacking");
+  }, 700);
 }
-/** Igual, pero para el Demonio Menor como enemigo. */
+/** Igual, pero para el Cuervo Corrupto como enemigo. */
+function triggerCuervoAttackPose(){
+  const img = document.querySelector('#spriteEnemy img[data-cuervo="1"]');
+  if(!img) return;
+  const baseSrc = img.dataset.cuervoBase || img.src;
+  img.dataset.cuervoBase = baseSrc;
+  img.src = CUERVO_CORRUPTO_SPRITES.enemyAttack;
+  img.classList.add("attacking");
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{
+    img.src = baseSrc;
+    img.classList.remove("attacking");
+  }, 700);
+}
+/** Igual, pero para cuando el JUGADOR le pega al Cuervo Corrupto (no cuando él ataca). */
+function triggerCuervoHurtPose(){
+  const img = document.querySelector('#spriteEnemy img[data-cuervo="1"]');
+  if(!img) return;
+  const baseSrc = img.dataset.cuervoBase || img.src;
+  img.dataset.cuervoBase = baseSrc;
+  img.src = CUERVO_CORRUPTO_SPRITES.hurt;
+  img.classList.add("attacking");
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{
+    img.src = baseSrc;
+    img.classList.remove("attacking");
+  }, 600);
+}
+/** Igual, pero para el Demonio Menor como enemigo — cambia a su pose de ataque dedicada
+ *  (enemy_ataque) y vuelve sola a la base, mismo patrón que triggerLoboAttackPose. */
 function triggerDemonioAttackPose(){
   const img = document.querySelector('#spriteEnemy img[data-demonio="1"]');
   if(!img) return;
+  const baseSrc = img.dataset.demonioBase || img.src;
+  img.dataset.demonioBase = baseSrc;
+  img.src = DEMONIO_MENOR_SPRITES.enemyAttack;
   img.classList.add("attacking");
   clearTimeout(img._resetTimer);
-  img._resetTimer = setTimeout(()=> img.classList.remove("attacking"), 700);
+  img._resetTimer = setTimeout(()=>{
+    img.src = baseSrc;
+    img.classList.remove("attacking");
+  }, 700);
 }
 /** Igual, pero para el Golem de Roca como enemigo. */
 function triggerGolemAttackPose(){
@@ -2388,6 +2450,18 @@ function triggerSlimeSalvajePose(poseKey, holdMs){
   clearTimeout(img._resetTimer);
   img._resetTimer = setTimeout(()=>{
     img.src = SLIME_SALVAJE_SPRITES.base;
+    img.classList.remove("attacking");
+  }, holdMs || 700);
+}
+/** Igual, pero para la Rata Mutante. */
+function triggerRataMutantePose(poseKey, holdMs){
+  const img = document.querySelector('#spriteEnemy img[data-rata="1"]');
+  if(!img) return;
+  img.src = RATA_MUTANTE_SPRITES[poseKey] || RATA_MUTANTE_SPRITES.base;
+  img.classList.add("attacking");
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{
+    img.src = RATA_MUTANTE_SPRITES.base;
     img.classList.remove("attacking");
   }, holdMs || 700);
 }
@@ -2830,16 +2904,26 @@ document.querySelectorAll("#genderToggle .gender-btn").forEach(btn=>{
 });
 $("nameInput").addEventListener("input", updateStartBtn);
 
+/** Primera línea de defensa (no la única — ver escapeHtml() en cada sitio donde se MUESTRA un
+ *  nombre ajeno) contra nombres tipo `<img onerror=...>`: se guardan sin `<`/`>`, los únicos
+ *  caracteres que hacen falta para inyectar una etiqueta HTML. El escapeHtml() en cada
+ *  innerHTML que muestra nombres de OTROS jugadores (torres, bases, amigos, grupo, notificaciones,
+ *  ranking del Coliseo, etc.) sigue siendo necesario: un cliente modificado podría publicar un
+ *  nombre malicioso directamente por PubNub sin pasar nunca por este input. */
+function sanitizePlayerName(raw){
+  return (raw||"").replace(/[<>]/g,"").trim();
+}
 $("btnStart").onclick = async ()=>{
   showMapLoadingScreen();
   const c = CLASSES[selectedClass];
+  const chosenName = sanitizePlayerName($("nameInput").value) || "Aventurero";
   player = {
     classKey: selectedClass,
     className: c.name,
     emoji: c.emoji,
     gender: selectedGender || "m",
-    name: $("nameInput").value.trim() || "Aventurero",
-    friendCode: genFriendCode($("nameInput").value.trim() || "Aventurero"),
+    name: chosenName,
+    friendCode: genFriendCode(chosenName),
     level: 1,
     xp: 0,
     xpNext: 100,
@@ -3532,7 +3616,7 @@ function openTowerModal(tower){
   } else if(owner.ownerId === myPlayerId){
     $("towerOwnerLine").innerHTML = `👑 Es tuya desde hace un tiempo. ¡Sigue generando oro!`;
   } else {
-    $("towerOwnerLine").innerHTML = `⚔️ Pertenece a <b>${owner.ownerName}</b> (Nv.${owner.ownerStats?.level||"?"}).`;
+    $("towerOwnerLine").innerHTML = `⚔️ Pertenece a <b>${escapeHtml(owner.ownerName)}</b> (Nv.${owner.ownerStats?.level||"?"}).`;
   }
   $("btnTowerChallenge").textContent = (owner && owner.ownerId===myPlayerId) ? "Ya es tuya" : "⚔️ Retar por la torre";
   $("btnTowerChallenge").disabled = !!(owner && owner.ownerId===myPlayerId);
@@ -3561,7 +3645,7 @@ function startTowerChallenge(tower){
   } else {
     const s = owner.ownerStats || {};
     mon = {
-      id:"tower_rival_"+tower.id, tpl:{name:owner.ownerName+" (torre)", emoji:"🗼", aggressive:true}, level: s.level||player.level,
+      id:"tower_rival_"+tower.id, tpl:{name:escapeHtml(owner.ownerName)+" (torre)", emoji:"🗼", aggressive:true}, level: s.level||player.level,
       hp: s.maxHp||200, maxHp: s.maxHp||200, atk: s.atk||20, def: s.def||15, spd: s.spd||10,
       marker:null, packBonus:1, isBoss:true, isTowerRival:true,
     };
@@ -3886,7 +3970,7 @@ function initMap(savedPos){
   updateCameraOrientedEffects();
 
   spawnMonsters(isNightTime() ? 5 : 3);
-  setInterval(()=> maybeAutoSpawn(), 8000); // TEMP testing: antes 25000 — bajado para probar más rápido
+  setInterval(()=> maybeAutoSpawn(), 14000); // pedido explícito: bajar un poco la tasa de aparición — antes 8000 (que a su vez venía de un valor TEMP de testing, 25000 originalmente)
   setInterval(()=> regenPlayerHp(), 8000);
   updateDayNightBadge();
   // El tinte "de verdad" (sin transición, para que ya esté listo desde el primer frame) se aplica
@@ -4794,8 +4878,8 @@ function maybeAutoSpawn(){
   if(expiredCount > 0){
     toast(`${expiredCount>1?"Varios enemigos se fueron":"Un enemigo se fue"} de la zona… aparecerán otros nuevos.`, 2800);
   }
-  const maxMonsters = night ? 14 : 10;      // TEMP testing: antes 9/5 — más enemigos activos a la vez
-  const spawnChance = night ? 1 : 0.95;  // TEMP testing: antes 0.95/0.8 — casi siempre aparece algo nuevo
+  const maxMonsters = night ? 11 : 7;      // pedido explícito: bajar un poco la tasa de aparición — antes 14/10
+  const spawnChance = night ? 0.8 : 0.7;  // pedido explícito: bajar un poco la tasa de aparición — antes 1/0.95
   const packChance = (player.level >= 7) ? (night ? 0.55 : 0.35) : 0; // las manadas son muy duras para un personaje recién empezado
   if(monsters.length < maxMonsters && Math.random() < spawnChance){
     if(packChance > 0 && Math.random() < packChance) spawnPack();
@@ -5775,7 +5859,7 @@ function drawSingleBaseMarker(base){
   const underConstruction = isMine && isBaseUnderConstruction();
   const emoji = underConstruction ? "🚧" : (isMine && player.isBuilding) ? "🏢" : "🏠";
   const icon = L.divIcon({className:'', html:`<div class="base-marker-simple">
-      <div class="bms-label">${base.ownerName}</div>
+      <div class="bms-label">${escapeHtml(base.ownerName)}</div>
       <div class="bms-emoji">${emoji}</div>
     </div>`, iconSize:[54,58], iconAnchor:[27,95]});
   // zIndexOffset por encima del marcador del jugador (1000): si estás parado sobre tu propia
@@ -8896,9 +8980,14 @@ function renderEquipPanel(){
 /** Arte de batalla real (no el emoji genérico) por nombre de plantilla — un solo lugar para esta
  *  lista, reusada tanto por el combate normal (spriteEnemy) como por la escena de manada
  *  (renderPackStage), que antes solo mostraba emoji incluso para enemigos con arte propio. */
-function enemySpriteSrc(tpl){
+function enemySpriteSrc(tpl, idx){
   if(tpl === THIEF_TEMPLATE) return {src:THIEF_SPRITES.base, dataAttr:"thief"};
-  if(tpl.name === "Lobo Umbrío") return {src:LOBO_UMBRIO_SPRITES.enemy, dataAttr:"lobo"};
+  // En manada, los miembros en posición impar (el/los "compañero/s") usan la variante enemy_var
+  // en vez de la ilustración de siempre, para que no todos los Lobo Umbrío se vean idénticos.
+  // Fuera de manada (idx===undefined) siempre es la de siempre.
+  if(tpl.name === "Lobo Umbrío") return {src:(idx%2===1) ? LOBO_UMBRIO_SPRITES.enemyVar : LOBO_UMBRIO_SPRITES.enemy, dataAttr:"lobo"};
+  // Mismo criterio que el Lobo Umbrío: en manada, los miembros en posición impar usan la variante.
+  if(tpl.name === "Cuervo Corrupto") return {src:(idx%2===1) ? CUERVO_CORRUPTO_SPRITES.enemyVar : CUERVO_CORRUPTO_SPRITES.enemy, dataAttr:"cuervo"};
   if(tpl.name === "Demonio Menor") return {src:DEMONIO_MENOR_SPRITES.enemy, dataAttr:"demonio"};
   if(tpl.name === "Golem de Roca") return {src:GOLEM_ROCA_SPRITES.enemy, dataAttr:"golem"};
   if(tpl.name === "Dragón Menor") return {src:DRAGON_MENOR_SPRITES.enemy, dataAttr:"dragon"};
@@ -8906,6 +8995,7 @@ function enemySpriteSrc(tpl){
   if(tpl.name === "Lobo Nocturno") return {src:LOBO_NOCTURNO_SPRITES.enemy, dataAttr:"lobo-nocturno"};
   if(tpl.name === "Lobo Sombrío") return {src:LOBO_SOMBRIO_SPRITES.base, dataAttr:"shadowwolf"};
   if(tpl.name === "Slime Salvaje") return {src:SLIME_SALVAJE_SPRITES.base, dataAttr:"slime"};
+  if(tpl.name === "Rata Mutante") return {src:RATA_MUTANTE_SPRITES.base, dataAttr:"rata"};
   if(tpl.name === "Espectro") return {src:ESPECTRO_SPRITES.base, dataAttr:"espectro"};
   if(tpl.name === "Señor Oscuro") return {src:SENOR_OSCURO_SPRITES.base, dataAttr:"senor-oscuro"};
   if(tpl.name === "Demonio Oscuro") return {src:DEMONIO_OSCURO_SPRITES.base, dataAttr:"demonio-oscuro"};
@@ -8914,8 +9004,8 @@ function enemySpriteSrc(tpl){
 }
 /** `opts.extraClass`/`opts.style` dejan que cada vista (combate solo vs. escenario de manada,
  *  mucho más chico) pida su propio tamaño sin duplicar la tabla de arriba. */
-function enemySpriteHtml(tpl, opts){
-  const s = enemySpriteSrc(tpl);
+function enemySpriteHtml(tpl, opts, idx){
+  const s = enemySpriteSrc(tpl, idx);
   if(!s) return null;
   opts = opts || {};
   const cls = "battle-sprite-img" + (opts.extraClass ? " "+opts.extraClass : "");
@@ -10054,6 +10144,8 @@ function executePlayerAction(mv){
         flashSprite("spriteEnemy","red");
       }
       if(mon.tpl.name === "Slime Salvaje") triggerSlimeSalvajePose("hurt", 600);
+      if(mon.tpl.name === "Rata Mutante") triggerRataMutantePose("hurt", 600);
+      if(mon.tpl.name === "Cuervo Corrupto") triggerCuervoHurtPose();
       if(mon.tpl.name === "Espectro") triggerEspectroPose("hurt", 600);
       maybeShowCrit(totalDmg, mon.maxHp);
       spawnFloatingNumber("spriteEnemy", "-"+totalDmg, (totalDmg >= mon.maxHp*0.5) ? "crit" : "damage");
@@ -10117,6 +10209,24 @@ function isEspadaLunarEquipped(){
   return !!(w && w.lunarWeapon);
 }
 function effectiveDef(){ return player.def * (battleState.playerBuffs.def||1); }
+function effectivePlayerSpd(){ return player.spd * (battleState.playerBuffs.spd||1); }
+/** El "Rayo Helado" del Mago (mv.slow) reduce la VEL real del enemigo, no solo la fuerza de su
+ *  golpe — ver spdMod en enemyTurn/resolveEnemyDirectAttack, mismo battleState.monSlow. */
+function effectiveMonSpd(mon){ return mon.spd * (battleState.monSlow ? (1-battleState.monSlow) : 1); }
+/** Pedido explícito: quien tiene más de 70% de VEL de ventaja sobre su rival tiene una CHANCE
+ *  (no garantía) de actuar una segunda vez seguida en el mismo turno — nunca una tercera. La
+ *  chance arranca en 15% justo al cruzar el umbral y crece con la ventaja, con tope en 45% para que
+ *  ni el build más veloz vuelva el turno extra un hecho garantizado. */
+const EXTRA_TURN_SPD_RATIO = 1.7;
+const EXTRA_TURN_BASE_CHANCE = 0.15;
+const EXTRA_TURN_MAX_CHANCE = 0.45;
+function rollExtraTurnChance(actorSpd, opponentSpd){
+  if(!actorSpd || !opponentSpd) return false;
+  const ratio = actorSpd / opponentSpd;
+  if(ratio < EXTRA_TURN_SPD_RATIO) return false;
+  const chance = Math.min(EXTRA_TURN_MAX_CHANCE, EXTRA_TURN_BASE_CHANCE + (ratio-EXTRA_TURN_SPD_RATIO)*0.25);
+  return Math.random() < chance;
+}
 
 function calcDamage(atk, def, power, critChance){
   let base = atk*power - def*0.4;
@@ -10460,7 +10570,7 @@ function resolveThiefCloneTap(mon, idx){
   }, 550);
 }
 
-function enemyTurn(){
+function enemyTurn(isExtraAttack){
   const mon = battleState.mon;
   if(tickStatusEffect(mon, "spriteEnemy")){
     updateBattleBars(); refreshHud();
@@ -10566,7 +10676,7 @@ function enemyTurn(){
         flashSprite("spritePlayer","purple");
         applyStatusEffect(player, "poison");
         logBattle(`☠️ ¡El shuriken te envenena! -${dmg} HP, y el veneno seguirá quitándote vida.`);
-        finishEnemyTurn();
+        finishEnemyTurn(isExtraAttack);
       }, 700);
       return;
     }
@@ -10709,12 +10819,14 @@ function resolveEnemyDirectAttack(mon, power, spdMod, outcome){
   spawnFloatingNumber("spritePlayer", "-"+dmg, (dmg >= player.maxHp*0.5) ? "crit" : "damage");
   if(mon.tpl === THIEF_TEMPLATE) triggerThiefAttackPose();
   if(mon.tpl.name === "Lobo Umbrío") triggerLoboAttackPose();
+  if(mon.tpl.name === "Cuervo Corrupto") triggerCuervoAttackPose();
   if(mon.tpl.name === "Demonio Menor") triggerDemonioAttackPose();
   if(mon.tpl.name === "Golem de Roca") triggerGolemAttackPose();
   if(mon.tpl.name === "Dragón Menor") triggerDragonAttackPose();
   if(mon.tpl.name === "Dragón Ancestral") triggerDragonAncestralAttackPose();
   if(mon.tpl.name === "Lobo Nocturno") triggerLoboNocturnoAttackPose();
   if(mon.tpl.name === "Slime Salvaje") triggerSlimeSalvajePose("attack", 700);
+  if(mon.tpl.name === "Rata Mutante") triggerRataMutantePose("attack", 700);
   if(mon.tpl.name === "Espectro") triggerEspectroPose("attack", 700);
   if(mon.tpl.name === "Señor Oscuro") triggerSenorOscuroAttackPose(700);
   if(mon.tpl.name === "Demonio Oscuro") triggerAuraEnemyPose("demonio-oscuro", DEMONIO_OSCURO_SPRITES, 700);
@@ -11343,7 +11455,7 @@ function renderColiseoLeaderboard(){
       const row = document.createElement("div");
       row.className = "coliseo-lb-row" + (r.playerId===myPlayerId ? " me" : "");
       row.innerHTML = `<div class="lb-pos">${i+1}</div>
-        <div class="lb-name">${r.playerName} <span style="color:var(--dim); font-size:11px;">Nv.${r.playerLevel}</span></div>
+        <div class="lb-name">${escapeHtml(r.playerName)} <span style="color:var(--dim); font-size:11px;">Nv.${r.playerLevel}</span></div>
         <div class="lb-round">Ronda ${r.bestRound}</div>`;
       box.appendChild(row);
     });
@@ -12399,7 +12511,7 @@ function renderPackStage(){
     el.id = "packStageMon"+idx;
     // enemigos con arte de batalla propio (jefes, esbirros oscuros, lobos, etc.) muestran esa
     // imagen a escala reducida acá, en vez de caer siempre al emoji genérico como antes.
-    const spriteHtml = enemySpriteHtml(m.tpl, {extraClass:"pack-sprite-img", style:`max-height:${size+18}px;max-width:${size+18}px;`});
+    const spriteHtml = enemySpriteHtml(m.tpl, {extraClass:"pack-sprite-img", style:`max-height:${size+18}px;max-width:${size+18}px;`}, idx);
     const bodyHtml = spriteHtml ? spriteHtml : m.tpl.emoji;
     // Nombre chico flotando arriba de la barra (sin caja/fondo azul detrás, para no gastar espacio
     // en manada) — reemplaza a los cartelitos separados de #packEnemyPanels (ahora ocultos, ver
@@ -12427,6 +12539,60 @@ function animatePackMon(idx, cls){
   emoji.classList.remove("hitshake","attackp","attacke","ultimate-strike","ultimate-hit");
   void emoji.offsetWidth;
   emoji.classList.add(cls);
+}
+/** Igual que triggerLoboAttackPose, pero para un Lobo Umbrío específico dentro de una manada — al
+ *  terminar el golpe vuelve a SU variante (enemy/enemy_var, la que le tocó según su índice en
+ *  enemySpriteSrc), no siempre a la ilustración por defecto. */
+function triggerPackLoboAttackPose(idx){
+  const img = document.querySelector(`#packStageMon${idx} img[data-lobo="1"]`);
+  if(!img) return;
+  const baseSrc = img.dataset.loboBase || img.src;
+  img.dataset.loboBase = baseSrc;
+  img.src = LOBO_UMBRIO_SPRITES.enemyAttack;
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{ img.src = baseSrc; }, 700);
+}
+/** Igual, pero para un Demonio Menor específico dentro de una manada. */
+function triggerPackDemonioAttackPose(idx){
+  const img = document.querySelector(`#packStageMon${idx} img[data-demonio="1"]`);
+  if(!img) return;
+  const baseSrc = img.dataset.demonioBase || img.src;
+  img.dataset.demonioBase = baseSrc;
+  img.src = DEMONIO_MENOR_SPRITES.enemyAttack;
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{ img.src = baseSrc; }, 700);
+}
+/** Igual, pero para un Cuervo Corrupto específico dentro de una manada. */
+function triggerPackCuervoAttackPose(idx){
+  const img = document.querySelector(`#packStageMon${idx} img[data-cuervo="1"]`);
+  if(!img) return;
+  const baseSrc = img.dataset.cuervoBase || img.src;
+  img.dataset.cuervoBase = baseSrc;
+  img.src = CUERVO_CORRUPTO_SPRITES.enemyAttack;
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{ img.src = baseSrc; }, 700);
+}
+/** Igual, pero para cuando el JUGADOR le pega a un Cuervo Corrupto específico de la manada. */
+function triggerPackCuervoHurtPose(idx){
+  const img = document.querySelector(`#packStageMon${idx} img[data-cuervo="1"]`);
+  if(!img) return;
+  const baseSrc = img.dataset.cuervoBase || img.src;
+  img.dataset.cuervoBase = baseSrc;
+  img.src = CUERVO_CORRUPTO_SPRITES.hurt;
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{ img.src = baseSrc; }, 600);
+}
+/** Igual que triggerRataMutantePose, pero para una Rata Mutante específica dentro de una manada —
+ *  sirve tanto para su pose de ataque (cuando le pega al jugador, ver packEnemyTurn) como para su
+ *  pose de golpe recibido (cuando el jugador le pega a ELLA, ver executePackPlayerAction). Debe
+ *  llamarse DESPUÉS de que renderPackStage() ya haya reconstruido el HTML de ese turno — si no, el
+ *  <img> que se busca acá todavía no existe (o es el viejo, a punto de ser reemplazado). */
+function triggerPackRataMutantePose(idx, poseKey, holdMs){
+  const img = document.querySelector(`#packStageMon${idx} img[data-rata="1"]`);
+  if(!img) return;
+  img.src = RATA_MUTANTE_SPRITES[poseKey] || RATA_MUTANTE_SPRITES.base;
+  clearTimeout(img._resetTimer);
+  img._resetTimer = setTimeout(()=>{ img.src = RATA_MUTANTE_SPRITES.base; }, holdMs || 700);
 }
 /** Aviso de "va a atacar": un "!" aparece arriba de un miembro específico de la manada — se llama
  *  un instante antes de resolver su golpe (ver packEnemyTurn) para que quede claro cuál enemigo
@@ -12617,6 +12783,8 @@ function executePackPlayerAction(mv){
         flashPackMon(idx, mv.isUltimate ? "ultimate" : "red");
         if(aoeDmgByIdx[idx] != null){
           spawnFloatingNumber("packStageMon"+idx, "-"+aoeDmgByIdx[idx], (aoeDmgByIdx[idx] >= m.maxHp*0.5) ? "crit" : "damage");
+          if(m.tpl.name === "Rata Mutante") triggerPackRataMutantePose(idx, "hurt", 600);
+          if(m.tpl.name === "Cuervo Corrupto") triggerPackCuervoHurtPose(idx);
         }
       });
     } else {
@@ -12624,6 +12792,8 @@ function executePackPlayerAction(mv){
       flashPackMon(targetIdx, mv.isUltimate ? "ultimate" : "red");
       if(totalDmg > 0){
         spawnFloatingNumber("packStageMon"+targetIdx, "-"+totalDmg, (totalDmg >= target.maxHp*0.5) ? "crit" : "damage");
+        if(target.tpl.name === "Rata Mutante") triggerPackRataMutantePose(targetIdx, "hurt", 600);
+        if(target.tpl.name === "Cuervo Corrupto") triggerPackCuervoHurtPose(targetIdx);
       }
     }
     if(mv.isUltimate) animateSprite("spritePlayer","ultimate-strike");
@@ -12695,6 +12865,10 @@ function packEnemyTurn(){
         logBattle(`¡${m.tpl.name} debilita tu ${label}!`);
       }
       animatePackMon(idx, "attacke");
+      if(m.tpl.name === "Lobo Umbrío") triggerPackLoboAttackPose(idx);
+      if(m.tpl.name === "Demonio Menor") triggerPackDemonioAttackPose(idx);
+      if(m.tpl.name === "Cuervo Corrupto") triggerPackCuervoAttackPose(idx);
+      if(m.tpl.name === "Rata Mutante") triggerPackRataMutantePose(idx, "attack", 700);
       animateSprite("spritePlayer","hitshake");
       flashSprite("spritePlayer","red");
       maybeShowCrit(dmg, player.maxHp);
@@ -13272,7 +13446,7 @@ function renderNotifPanel(){
     const row = document.createElement("div");
     row.className = "inv-item";
     row.innerHTML = `<div class="ie">${n.emoji}</div>
-      <div class="it">${n.title}<small>${n.sub}</small></div>
+      <div class="it">${escapeHtml(n.title)}<small>${escapeHtml(n.sub)}</small></div>
       <button data-act="accept" style="margin-right:4px;">✔</button>
       <button data-act="decline" style="background:var(--danger);">✕</button>`;
     row.querySelector('[data-act="accept"]').onclick = ()=>{
@@ -14237,14 +14411,14 @@ function renderFriendsList(){
     const online = isFriendOnline(f.id);
     row.innerHTML = `<div class="ie" style="position:relative;">${(CLASSES[f.classKey]||{}).emoji||"🧑"}
         <span class="friend-status-dot ${online?"online":"offline"}" title="${online?"En línea":"Desconectado"}"></span></div>
-      <div class="it">${f.name}<small>${(CLASSES[f.classKey]||{}).name||""} · Nv. ${f.level}</small></div>
+      <div class="it">${escapeHtml(f.name)}<small>${(CLASSES[f.classKey]||{}).name||""} · Nv. ${f.level}</small></div>
       <button data-act="party" style="margin-right:4px; background:var(--gold); color:#2a1d00;">🛡️</button>
       <button data-act="chat" style="margin-right:4px;">💬</button>
       <button data-act="remove" style="background:var(--danger);">Quitar</button>`;
     row.querySelector('[data-act="party"]').onclick = ()=> sendPartyInvite(f);
     row.querySelector('[data-act="chat"]').onclick = ()=> openChat(f);
     row.querySelector('[data-act="remove"]').onclick = ()=>{
-      showConfirm(`¿Quitar a ${f.name} de tu lista de amigos?`, async ()=>{
+      showConfirm(`¿Quitar a ${escapeHtml(f.name)} de tu lista de amigos?`, async ()=>{
         friends.splice(idx,1);
         await saveFriends();
         renderFriendsList();
@@ -14291,7 +14465,7 @@ function renderChatMessages(){
   });
   wrap.scrollTop = wrap.scrollHeight;
 }
-function escapeHtml(s){ return s.replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
 
 function sendChatMessage(){
   const input = $("chatInput");
@@ -14660,6 +14834,7 @@ $("btnShopModeBuy").onclick = ()=>{
   $("shopTabs").classList.remove("hidden");
   $("shopBuyList").classList.remove("hidden");
   $("shopSellList").classList.add("hidden");
+  updateBaseAndPickaxeCardsVisibility();
 };
 $("btnShopModeSell").onclick = ()=>{
   shopMode = 'sell';
@@ -14668,8 +14843,19 @@ $("btnShopModeSell").onclick = ()=>{
   $("shopTabs").classList.add("hidden");
   $("shopBuyList").classList.add("hidden");
   $("shopSellList").classList.remove("hidden");
+  updateBaseAndPickaxeCardsVisibility();
 };
 
+/** Base Personal y los Picos son tarjetas fijas propias (no ítems de ITEM_TABLE), pero viven
+ *  dentro de la categoría "🎴 Objetos especiales" — se muestran solo ahí (y solo en modo Comprar),
+ *  se ocultan en cualquier otra pestaña o en modo Vender. Se llama junto con renderShopTabs()
+ *  (cubre apertura de tienda + cambio de pestaña) y en cada cambio de shopMode. */
+function updateBaseAndPickaxeCardsVisibility(){
+  const show = shopMode === "buy" && shopActiveCategory === "special";
+  $("baseShopCard").classList.toggle("hidden", !show);
+  $("pickaxeShopCard").classList.toggle("hidden", !show);
+  $("pickaxeTierRow").classList.toggle("hidden", !show);
+}
 function renderShopTabs(){
   const wrap = $("shopTabs");
   wrap.innerHTML = "";
@@ -14688,6 +14874,7 @@ function renderShopTabs(){
     btn.onclick = ()=>{ shopActiveCategory = cat.key; shopPage = 0; renderShopTabs(); renderShopBuyList(); };
     wrap.appendChild(btn);
   });
+  updateBaseAndPickaxeCardsVisibility();
 }
 
 /** Tarjeta compacta de tienda (2 por fila); los épicos/legendarios/botín de jefe se muestran anchos, como antes. */
@@ -15026,7 +15213,7 @@ function openBossInfoModal(mon){
   if(isBossLocked(mon)){
     const lock = bossLocks[mon.id];
     const inQueue = myQueuedBossId === mon.id;
-    $("bossRecommendation").innerHTML = `🔒 <b>Ocupado</b> — ${lock.fighterName} lo está enfrentando ahora mismo. Nadie más puede retarlo hasta que termine.`;
+    $("bossRecommendation").innerHTML = `🔒 <b>Ocupado</b> — ${escapeHtml(lock.fighterName)} lo está enfrentando ahora mismo. Nadie más puede retarlo hasta que termine.`;
     $("btnBossEngage").textContent = inQueue ? "🕒 Ya estás en la fila" : "🕒 Esperar en la fila";
     $("btnBossEngage").disabled = inQueue;
     $("btnBossEngage").onclick = ()=>{
@@ -15446,7 +15633,7 @@ function renderMapPartyPanel(){
     const isMe = m.id === myPlayerId;
     return `<div class="mp-member${isLeader?" leader":""}">
       <span class="mp-emoji">${(CLASSES[m.classKey]||{}).emoji||"🧑"}</span>
-      <span class="mp-info">${m.name}${isMe?" (tú)":""}${isLeader?" 👑":""}<br>Nv. <b>${m.level}</b></span>
+      <span class="mp-info">${escapeHtml(m.name)}${isMe?" (tú)":""}${isLeader?" 👑":""}<br>Nv. <b>${m.level}</b></span>
     </div>`;
   }).join("");
 }
@@ -15468,7 +15655,7 @@ function renderPartyOverlay(){
     const isLeader = m.id === party.leaderId;
     const isMe = m.id === myPlayerId;
     row.innerHTML = `<div class="ie">${(CLASSES[m.classKey]||{}).emoji||"🧑"}</div>
-      <div class="it">${m.name}${isMe?" (tú)":""}<small>${(CLASSES[m.classKey]||{}).name||""} · Nv. ${m.level}${isLeader?" · 👑 Líder":""}</small></div>`;
+      <div class="it">${escapeHtml(m.name)}${isMe?" (tú)":""}<small>${(CLASSES[m.classKey]||{}).name||""} · Nv. ${m.level}${isLeader?" · 👑 Líder":""}</small></div>`;
     list.appendChild(row);
   });
 }

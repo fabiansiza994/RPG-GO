@@ -322,6 +322,10 @@
       <input type="text" id="giftCodeInput" placeholder="🎁 Código de regalo" maxlength="30" autocapitalize="characters">
       <button class="ghostbtn" id="btnRedeemGiftCode" style="width:auto; padding:8px 14px;">Canjear</button>
     </div>
+    <div class="shop-tabs" id="shopTabs"></div>
+    <!-- Base Personal y los Picos viven acá, dentro de "🎴 Objetos especiales" (antes eran tarjetas
+         fijas siempre visibles arriba de la tienda) — se muestran/ocultan junto con esa categoría,
+         ver updateBaseAndPickaxeCardsVisibility() en main.js. -->
     <div class="base-shop-card" id="baseShopCard">
       <div class="bsc-icon">🏠</div>
       <div class="bsc-info">
@@ -344,7 +348,6 @@
       <button class="pickaxe-tier-btn" data-tier="hierro">⛏️<br>Hierro<br><small>🪙220</small></button>
       <button class="pickaxe-tier-btn" data-tier="acero">⛏️<br>Acero<br><small>🪙450</small></button>
     </div>
-    <div class="shop-tabs" id="shopTabs"></div>
     <div class="shop-grid" id="shopBuyList"></div>
     <div class="shop-pager hidden" id="shopPager">
       <button class="ghostbtn" id="btnShopPrevPage" style="width:auto; padding:6px 14px;">‹ Anterior</button>

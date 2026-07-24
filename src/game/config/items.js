@@ -221,12 +221,13 @@ export const SHOP_CATEGORIES = [
   {key:"books",     label:"📖 Libros",        test:it=> it.type==="book", classOnly:["mago"]},
   {key:"potion",    label:"Pociones",        test:it=> it.type==="heal"||it.type==="mana"},
   {key:"pets",      label:"🐾 Mascotas",     test:it=> it.type==="pet_item", requiresPet:true},
-  // Las Gemas/Núcleos que vivían acá se sacaron del juego (ver ITEM_TABLE) — "Objetos especiales"
-  // ahora es solo la Carta de Captura (antes en una categoría oculta de pruebas, liberada acá con
-  // precio alto: 150.000 oro en el ítem, ver TEST_SHOP_ITEMS, para que siga siendo un lujo caro y
-  // no un atajo barato a la captura gratis por derrotar a los 5 guardianes de región). Base
-  // Personal y los Picos NO viven en esta grilla por categorías — son sus propias tarjetas fijas
-  // arriba de la tienda (#baseShopCard/#pickaxeShopCard en index.html), siempre visibles.
+  // Las Gemas/Núcleos que vivían acá se sacaron del juego (ver ITEM_TABLE) — la Carta de Captura
+  // (antes en una categoría oculta de pruebas, liberada acá con precio alto: 150.000 oro en el
+  // ítem, ver TEST_SHOP_ITEMS, para que siga siendo un lujo caro y no un atajo barato a la captura
+  // gratis por derrotar a los 5 guardianes de región) se filtra por este `test` como cualquier otra
+  // categoría. Base Personal y los Picos, en cambio, son tarjetas fijas propias (#baseShopCard/
+  // #pickaxeShopCard/#pickaxeTierRow en index.html, no ítems de ITEM_TABLE) que se muestran/ocultan
+  // junto con ESTA categoría — ver updateBaseAndPickaxeCardsVisibility() en main.js.
   {key:"special",   label:"🎴 Objetos especiales", test:it=> it.type==="capture_card"},
 ];
 
