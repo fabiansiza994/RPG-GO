@@ -1,10 +1,12 @@
+import { POTION_SMALL_ICON_PATH, POTION_MANA_ICON_PATH, ELIXIR_MAYOR_ICON_PATH } from "../assets/spriteRegistry.js";
+
 // Pedido explícito: se sacaron las Gemas (Fuerza/Defensa/Viento/Astral/Mayores) y los Núcleos
 // (Vital/Arcano) — ya no se venden en la tienda ni salen como botín aleatorio (rollLoot usa esta
 // misma tabla). Solo quedan las pociones/elixires.
 export const ITEM_TABLE = [
-  {id:"potion_s", name:"Poción pequeña", emoji:"🧪", type:"heal", amount:0.3, weight:34, value:20, desc:"Restaura 30% de tu HP."},
-  {id:"potion_m", name:"Poción de maná", emoji:"🔵", type:"mana", amount:0.4, weight:22, value:18, desc:"Restaura 40% de tu MP."},
-  {id:"elixir", name:"Elixir mayor", emoji:"⚗️", type:"heal", amount:0.6, weight:10, value:45, desc:"Restaura 60% de tu HP."},
+  {id:"potion_s", name:"Poción pequeña", emoji:"🧪", img:POTION_SMALL_ICON_PATH, type:"heal", amount:0.3, weight:34, value:20, desc:"Restaura 30% de tu HP."},
+  {id:"potion_m", name:"Poción de maná", emoji:"🔵", img:POTION_MANA_ICON_PATH, type:"mana", amount:0.4, weight:22, value:18, desc:"Restaura 40% de tu MP."},
+  {id:"elixir", name:"Elixir mayor", emoji:"⚗️", img:ELIXIR_MAYOR_ICON_PATH, type:"heal", amount:0.6, weight:10, value:45, desc:"Restaura 60% de tu HP."},
   {id:"elixir_total", name:"Elixir de Vida Total", emoji:"💖", type:"heal", amount:1.0, weight:4, value:95, desc:"Restaura 100% de tu HP."},
   {id:"mana_total", name:"Cristal de Maná Puro", emoji:"💠", type:"mana", amount:1.0, weight:4, value:85, desc:"Restaura 100% de tu MP."},
 ];

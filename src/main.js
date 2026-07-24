@@ -2837,6 +2837,47 @@ function showAlert(message, opts){
   showConfirm(message, opts.onClose, {...opts, hideCancel:true, confirmLabel: opts.confirmLabel || "OK", icon: opts.icon || "ℹ️"});
 }
 
+/** Modal de compra con selector de cantidad (imagen del objeto + stepper −/+), usado por buildShopCard
+ *  en vez de un showConfirm de una sola unidad. `unitMatCost` es opcional ({wood,stone,iron}, armas
+ *  élite) — el tope del stepper nunca deja elegir más de lo que el oro (y esos materiales, si aplica)
+ *  alcanzan a pagar, así nunca hace falta validar valores negativos ni de más al confirmar. */
+function openBuyQuantityModal(item, unitGoldCost, unitMatCost, onConfirm){
+  const maxByMatEntry = (have, cost)=> cost>0 ? Math.floor(have/cost) : Infinity;
+  const maxByGold = unitGoldCost>0 ? Math.floor((player.gold||0)/unitGoldCost) : Infinity;
+  const maxByMat = unitMatCost ? Math.min(
+    maxByMatEntry(player.wood||0, unitMatCost.wood||0),
+    maxByMatEntry(player.stone||0, unitMatCost.stone||0),
+    maxByMatEntry(player.iron||0, unitMatCost.iron||0)
+  ) : Infinity;
+  const maxQty = Math.max(1, Math.min(maxByGold, maxByMat));
+  let qty = 1;
+
+  $("buyQtyModalImgWrap").innerHTML = iconFor(item);
+  $("buyQtyModalName").textContent = item.name;
+  $("buyQtyModalDesc").textContent = item.desc || "";
+
+  const valEl = $("buyQtyValue"), minusBtn = $("buyQtyMinus"), plusBtn = $("buyQtyPlus"), totalEl = $("buyQtyModalTotal");
+  function render(){
+    valEl.textContent = qty;
+    let totalTxt = `Total: 💰${unitGoldCost*qty}`;
+    if(unitMatCost) totalTxt += ` · 🪵${unitMatCost.wood*qty} 🪨${unitMatCost.stone*qty} 🔩${unitMatCost.iron*qty}`;
+    totalEl.textContent = totalTxt;
+    minusBtn.disabled = qty<=1;
+    plusBtn.disabled = qty>=maxQty;
+  }
+  minusBtn.onclick = ()=>{ if(qty>1){ qty--; render(); } };
+  plusBtn.onclick = ()=>{ if(qty<maxQty){ qty++; render(); } };
+  render();
+
+  const overlay = $("buyQtyModalOverlay");
+  overlay.classList.remove("hidden");
+  $("buyQtyCancel").onclick = ()=> overlay.classList.add("hidden");
+  $("buyQtyConfirm").onclick = ()=>{
+    overlay.classList.add("hidden");
+    onConfirm(qty);
+  };
+}
+
 /** Aviso tipo "anuncio": entra deslizándose desde la izquierda y sale por la derecha (para alertas de enemigos). */
 function slideNotice(msg, ms=3600){
   const wrap = $("slideNoticeWrap");
@@ -7880,6 +7921,7 @@ let inBattleItemMode = false; // true cuando el inventario se abrió desde dentr
 /** Devuelve clase CSS de rareza, etiqueta coloreada y partículas decorativas para un objeto de equipo. */
 /** Ícono a mostrar para un ítem: si es una armadura, usa la ilustración real; si no, su emoji de siempre. */
 function iconFor(item){
+  if(item && item.img) return `<img src="${item.img}" alt="" style="height:34px; width:auto; display:block; margin:auto;">`;
   if(item && item.slot === "armor") return `<img src="${ARMOR_ICON_PATH}" alt="" style="height:34px; width:auto; display:block; margin:auto;">`;
   if(item && item.name === "Espada Lunar") return `<img src="${ESPADA_LUNAR_ICON_PATH}" alt="" style="height:34px; width:auto; display:block; margin:auto;">`;
   return item ? item.emoji : "";
@@ -9313,6 +9355,7 @@ function startBattle(mon, opts){
     eventId: opts.eventId || null,
     turn: "choice",
     playerBuffs:{atk:1, def:1, spd:1, turnsAtk:0, turnsDef:0},
+    playerExtraTurnActive: false,
     log:[]
   };
   // Un estado (p.ej. el veneno del Shuriken del Ladrón Errante) es cosa de ESTE combate — nunca debe
@@ -10181,6 +10224,16 @@ function executePlayerAction(mv){
       battleState.monFled = true;
       return shadowWolfFlee(mon);
     }
+    // Misma chance por ventaja de VEL que el enemigo (ver rollExtraTurnChance/maybeExtraEnemyTurn) —
+    // `playerExtraTurnActive` evita que este segundo turno sortee un tercero.
+    if(!battleState.playerExtraTurnActive && rollExtraTurnChance(effectivePlayerSpd(), effectiveMonSpd(mon))){
+      battleState.playerExtraTurnActive = true;
+      logBattle(`💨 ¡Eres tan veloz que puedes actuar de nuevo!`);
+      disableMoves(false);
+      renderMoveGrid();
+      return;
+    }
+    battleState.playerExtraTurnActive = false;
     maybeDoPetTurn(enemyTurn);
   }, postPlayerActionDelay(mv));
 }
@@ -10226,6 +10279,17 @@ function rollExtraTurnChance(actorSpd, opponentSpd){
   if(ratio < EXTRA_TURN_SPD_RATIO) return false;
   const chance = Math.min(EXTRA_TURN_MAX_CHANCE, EXTRA_TURN_BASE_CHANCE + (ratio-EXTRA_TURN_SPD_RATIO)*0.25);
   return Math.random() < chance;
+}
+/** Cierra el turno del enemigo — salvo que acabe de conectar un golpe real (no aplica tras fallar,
+ *  curarse, etc.) y la ventaja de VEL le dé el turno extra (ver rollExtraTurnChance). `isExtraAttack`
+ *  evita que ese segundo golpe intente sortear un tercero. */
+function maybeExtraEnemyTurn(mon, isExtraAttack){
+  if(!isExtraAttack && player.hp>0 && mon.curHp>0 && rollExtraTurnChance(effectiveMonSpd(mon), effectivePlayerSpd())){
+    logBattle(`💨 ¡${mon.tpl.name} es tan veloz que ataca de nuevo!`);
+    setTimeout(()=> enemyTurn(true), 500);
+  } else {
+    finishEnemyTurn();
+  }
 }
 
 function calcDamage(atk, def, power, critChance){
@@ -10572,7 +10636,10 @@ function resolveThiefCloneTap(mon, idx){
 
 function enemyTurn(isExtraAttack){
   const mon = battleState.mon;
-  if(tickStatusEffect(mon, "spriteEnemy")){
+  // El DOT del monstruo (p.ej. veneno que le aplicó el jugador) ya se descontó en el primer golpe
+  // de este turno — no se vuelve a tickear en el segundo golpe del mismo turno extra (ver
+  // rollExtraTurnChance/maybeExtraEnemyTurn), o el veneno haría el doble de daño en rondas rápidas.
+  if(!isExtraAttack && tickStatusEffect(mon, "spriteEnemy")){
     updateBattleBars(); refreshHud();
     disableMoves(false);
     setTimeout(()=> winBattle(), 500);
@@ -10676,7 +10743,7 @@ function enemyTurn(isExtraAttack){
         flashSprite("spritePlayer","purple");
         applyStatusEffect(player, "poison");
         logBattle(`☠️ ¡El shuriken te envenena! -${dmg} HP, y el veneno seguirá quitándote vida.`);
-        finishEnemyTurn(isExtraAttack);
+        maybeExtraEnemyTurn(mon, isExtraAttack);
       }, 700);
       return;
     }
@@ -10732,7 +10799,7 @@ function enemyTurn(isExtraAttack){
       }
     }
     renderPetStageSlot();
-    finishEnemyTurn();
+    maybeExtraEnemyTurn(mon, isExtraAttack);
   } else {
     // Golpes fuertes (power alto o enfurecido) dan chance de esquivarlos deslizando el dedo a tiempo.
     const isStrongAttack = power >= 1.25;
@@ -10753,7 +10820,7 @@ function enemyTurn(isExtraAttack){
       triggerDodgeQTE(mon, (dodged)=>{
         const outcome = dodged ? (isBlockDefender ? "blocked" : "dodged") : "hit";
         resolveEnemyDirectAttack(mon, power, spdMod, outcome);
-        finishEnemyTurn();
+        maybeExtraEnemyTurn(mon, isExtraAttack);
       }, isBlockDefender);
     } else {
       if(isStrongAttack && undodgeableAtNight){
@@ -10762,7 +10829,7 @@ function enemyTurn(isExtraAttack){
         logBattle(`🛡️ Tu barra de defensa está agotada — ya no puedes bloquear golpes fuertes en este combate.`);
       }
       resolveEnemyDirectAttack(mon, power, spdMod, "hit");
-      finishEnemyTurn();
+      maybeExtraEnemyTurn(mon, isExtraAttack);
     }
   }
 }
@@ -14911,17 +14978,19 @@ function buildShopCard(item, isBuy){
       if(!locked){
         card.querySelector("button").onclick = ()=>{
           if(!canAfford) return;
-          showConfirm(`¿Comprar <b>${item.name}</b> por 💰${goldCost}${matCost?" (más los materiales indicados)":""}?`, ()=>{
-            player.gold -= goldCost;
+          openBuyQuantityModal(item, goldCost, matCost, (qty)=>{
+            let bought = 0;
+            for(let i=0;i<qty;i++){ if(!pushItemSafe({...item})) break; bought++; }
+            if(bought<=0) return;
+            player.gold -= goldCost*bought;
             if(matCost){
-              player.wood -= matCost.wood; player.stone -= matCost.stone; player.iron -= matCost.iron;
-              player.eliteWeaponsBought = (player.eliteWeaponsBought||0) + 1;
+              player.wood -= matCost.wood*bought; player.stone -= matCost.stone*bought; player.iron -= matCost.iron*bought;
+              player.eliteWeaponsBought = (player.eliteWeaponsBought||0) + bought;
             }
-            pushItemSafe({...item});
             refreshHud(); saveGame();
-            toast(`Compraste ${item.emoji} ${item.name}.`);
+            toast(`Compraste ${bought>1?`${bought}x `:""}${item.emoji} ${item.name}.`);
             renderShopBuyList(); renderShopSellList();
-          }, {icon:"🛒", title:"Confirmar compra", confirmLabel:"Comprar"});
+          });
         };
       }
     } else {
@@ -14964,13 +15033,15 @@ function buildShopCard(item, isBuy){
     if(!locked){
       card.querySelector("button").onclick = ()=>{
         if(player.gold < shopPrice(item)) return;
-        showConfirm(`¿Comprar <b>${item.name}</b> por 💰${shopPrice(item)}?`, ()=>{
-          player.gold -= shopPrice(item);
-          pushItemSafe({...item});
+        openBuyQuantityModal(item, shopPrice(item), null, (qty)=>{
+          let bought = 0;
+          for(let i=0;i<qty;i++){ if(!pushItemSafe({...item})) break; bought++; }
+          if(bought<=0) return;
+          player.gold -= shopPrice(item)*bought;
           refreshHud(); saveGame();
-          toast(`Compraste ${item.emoji} ${item.name}.`);
+          toast(`Compraste ${bought>1?`${bought}x `:""}${item.emoji} ${item.name}.`);
           renderShopBuyList(); renderShopSellList();
-        }, {icon:"🛒", title:"Confirmar compra", confirmLabel:"Comprar"});
+        });
       };
     }
   } else {

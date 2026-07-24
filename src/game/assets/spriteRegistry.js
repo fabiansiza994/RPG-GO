@@ -223,6 +223,10 @@ export const TRAVELER_ATTACKED_SPRITES = [
 /** Ilustración real de la armadura, usada en vez del emoji 🛡️ en la tienda y en las pantallas de equipo. */
 export const ARMOR_ICON_PATH = "/assets/sprites/equipment/armor.png";
 export const ESPADA_LUNAR_ICON_PATH = "/assets/sprites/items/espada-lunar.png";
+/** Ilustraciones reales de pociones/elixir, usadas en vez del emoji en la tienda (ver iconFor en main.js). */
+export const POTION_SMALL_ICON_PATH = "/new_elements/pocion-pequena.png";
+export const POTION_MANA_ICON_PATH = "/new_elements/pocion-mana.png";
+export const ELIXIR_MAYOR_ICON_PATH = "/new_elements/elixir-mayor.png";
 /** Ilustración del portal de cada mazmorra, usada en vez del emoji genérico en su marcador del mapa —
  *  clave = dungeon.id (game/config/dungeons.js), así una mazmorra nueva solo agrega una fila acá. */
 export const DUNGEON_PORTAL_SPRITES = {

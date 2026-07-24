@@ -1167,6 +1167,25 @@
   </div>
 </div>
 
+<!-- Compra en la tienda: elegir cuántas unidades (imagen del objeto + stepper +/-, validado contra el oro disponible) -->
+<div class="overlay hidden" id="buyQtyModalOverlay" style="z-index:410;">
+  <div class="sheet" style="text-align:center; max-width:340px;">
+    <div id="buyQtyModalImgWrap" style="font-size:44px; margin-bottom:2px;"></div>
+    <h1 class="title" id="buyQtyModalName">—</h1>
+    <p class="sub" id="buyQtyModalDesc">—</p>
+    <div class="attr-stepper" style="justify-content:center; margin:14px 0;">
+      <button class="attr-step-btn" id="buyQtyMinus" style="width:38px; height:38px; font-size:20px;">−</button>
+      <span class="attr-step-val" id="buyQtyValue" style="min-width:44px; font-size:18px;">1</span>
+      <button class="attr-step-btn" id="buyQtyPlus" style="width:38px; height:38px; font-size:20px;">+</button>
+    </div>
+    <p class="sub" id="buyQtyModalTotal">Total: 💰0</p>
+    <div style="display:flex; gap:10px; margin-top:14px;">
+      <button class="ghostbtn" id="buyQtyCancel" style="flex:1;">Cancelar</button>
+      <button class="primarybtn" id="buyQtyConfirm" style="flex:1;">Comprar</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay hidden" id="resultOverlay">
   <div class="sheet" style="text-align:center">
     <div style="font-size:46px" id="resultEmoji">🏆</div>
