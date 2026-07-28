@@ -984,6 +984,22 @@
   </div>
 </div>
 
+<!-- TUTORIAL DE BATALLA — aparece solo una vez, señalando botones reales del combate (ver
+     maybeShowBattleTutorial/BATTLE_TUTORIAL_STEPS en main.js). Fuera de #battleWrap a propósito
+     (sibling, no hijo) para no quedar recortado por el overflow:hidden de .stage. -->
+<div class="hidden" id="battleTutorialOverlay">
+  <div id="battleTutorialSpotlight"></div>
+  <div id="battleTutorialCard">
+    <div id="battleTutorialProgress"></div>
+    <div id="battleTutorialTitle"></div>
+    <div id="battleTutorialText"></div>
+    <div id="battleTutorialActions">
+      <button class="ghostbtn" id="btnBattleTutorialSkip">Saltar</button>
+      <button class="primarybtn" id="btnBattleTutorialNext">Siguiente</button>
+    </div>
+  </div>
+</div>
+
 <!-- LEVEL UP -->
 <div class="overlay hidden" id="levelupOverlay">
   <div class="sheet">
@@ -1020,6 +1036,7 @@
     </div>
     <div class="inv-resource-bar" id="invResourceBar"></div>
     <div class="inv-cat-tabs" id="invTabs"></div>
+    <div class="inv-cat-tabs inv-class-tabs" id="invClassTabs"></div>
     <div class="inv-search-row">
       <input id="invSearchInput" class="inv-search-input" placeholder="🔍 Buscar objeto..." />
       <select id="invSortSelect" class="inv-sort-select">

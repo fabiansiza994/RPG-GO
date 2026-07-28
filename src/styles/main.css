@@ -1224,7 +1224,7 @@
      necesitan quedar por delante de esa, no detrás. */
   #petDetailOverlay, #releasePetOverlay, #petItemPickOverlay, #petSummonOverlay, #healPetPickOverlay{z-index:135;}
   .hidden{display:none !important;}
-  .sheet{background:linear-gradient(180deg,#141a2a,#0f131f); border:1px solid var(--line); border-radius:20px;
+  .sheet{background:#000002; border:1px solid var(--line); border-radius:20px;
     width:100%; max-width:430px; max-height:92vh; overflow-y:auto; padding:20px; box-shadow:0 8px 20px rgba(0,0,0,.22);}
 
   /* Evento de mundo "Viajero Atacado": el viajero en un medallón circular, rodeado de badges con
@@ -1267,6 +1267,9 @@
     padding:7px 14px; font-size:12px; font-weight:700; color:var(--dim); white-space:nowrap; transition:all .2s ease;}
   .inv-cat-tab.active{background:linear-gradient(180deg, rgba(94,225,201,.28), rgba(94,225,201,.14)); color:var(--accent);
     border-color:var(--accent); box-shadow:0 0 10px rgba(94,225,201,.35);}
+  /* Fila de filtro por clase (Todos/Guerrero/Arquero/Mago/Berserk) — mismas pastillas que las
+     pestañas de categoría, un poco más pegada arriba para leerse como su propia fila secundaria. */
+  .inv-class-tabs{margin-top:-4px;}
 
   .inv-search-row{display:flex; gap:8px; margin-bottom:12px;}
   .inv-search-input{flex:1; background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:10px;
@@ -1296,6 +1299,14 @@
   .inv-card-v2 .icv-qty{position:absolute; bottom:5px; right:7px; font-size:11px; font-weight:900; color:var(--text);
     background:rgba(0,0,0,.55); border-radius:6px; padding:0 5px;}
   .inv-card-v2 .icv-check{position:absolute; top:5px; right:7px; font-size:11px; color:#4fd67a;}
+  /* Distintivo de clase (🟥🟩🟦🟪) — pedido explícito, esquina inferior izquierda para no chocar
+     con favorito/bloqueo (arriba) ni con la cantidad apilada (abajo a la derecha). */
+  .inv-card-v2 .icv-class-badge{position:absolute; bottom:5px; left:7px; font-size:11px; z-index:2;}
+  .inv-card-v2 .icv-other-class{font-size:8px; color:var(--dim); margin-top:2px; font-style:italic;}
+  /* Separador "Otras clases" del equipamiento inteligente — pedido explícito: tus armas primero,
+     el resto de clases agrupado debajo de este título. */
+  .inv-section-sep{grid-column:1/-1; font-size:11px; font-weight:800; color:var(--dim);
+    text-transform:uppercase; letter-spacing:.06em; padding:8px 2px 2px; border-top:1px solid var(--line); margin-top:2px;}
 
   .inv-mass-actions{display:flex; gap:8px; margin-bottom:10px;}
   .inv-buy-slot-card{border-style:dashed !important; border-color:var(--accent) !important; opacity:.85;}
@@ -1685,9 +1696,7 @@
      Con "contain" se ve la ilustración COMPLETA (logo incluido) ocupando esta franja de arriba, y
      el checklist vive tranquilo en su propio espacio debajo, sin pisarse con nada. */
   .map-loading-bg{flex:0 0 60%; position:relative; overflow:hidden;
-    background:url('/assets/ui/loading-bg.jpg') center top/contain no-repeat;
-    animation:mapLoadingBgZoom 12s ease-in-out infinite alternate; transform-origin:center top;}
-  @keyframes mapLoadingBgZoom{ from{transform:scale(1);} to{transform:scale(1.045);} }
+    background:url('/assets/ui/loading-bg.jpg') center top/contain no-repeat;}
   /* Oscurece solo el borde inferior de la ilustración, para que la transición hacia el fondo liso
      de abajo (donde vive el checklist) se sienta continua en vez de un corte brusco. */
   .map-loading-scrim{position:absolute; left:0; right:0; bottom:0; height:34%; pointer-events:none;
@@ -1742,6 +1751,26 @@
     22%{opacity:0;}
     100%{opacity:0;}
   }
+
+  /* ---------- Tutorial de batalla — pedido explícito: aparece solo la primera vez, señalando
+     botones REALES del combate. La oscurecida + el "agujero" alrededor del botón resaltado son
+     UN SOLO elemento (#battleTutorialSpotlight) con el truco clásico de box-shadow gigante — no
+     hace falta una capa aparte de fondo oscuro. position:fixed (no absolute) porque este overlay
+     vive fuera de #battleWrap a propósito (ver comentario en index.html), directo bajo <body>. ---- */
+  #battleTutorialOverlay{position:fixed; inset:0; z-index:650; pointer-events:none;}
+  #battleTutorialSpotlight{position:fixed; border-radius:14px; pointer-events:none;
+    box-shadow:0 0 0 9999px rgba(6,8,13,.74), 0 0 0 3px var(--accent), 0 0 22px rgba(94,225,201,.55);
+    transition:left .25s ease, top .25s ease, width .25s ease, height .25s ease;}
+  #battleTutorialSpotlight.hidden{display:none;}
+  #battleTutorialCard{position:fixed; width:250px; max-width:calc(100vw - 24px);
+    background:linear-gradient(180deg,#1d2540,#121826); border:1px solid var(--line); border-radius:14px;
+    padding:14px 16px; box-shadow:0 10px 26px rgba(0,0,0,.45); pointer-events:auto;
+    transition:left .25s ease, top .25s ease, bottom .25s ease;}
+  #battleTutorialProgress{font-size:10px; font-weight:800; color:var(--dim); letter-spacing:.06em; margin-bottom:4px;}
+  #battleTutorialTitle{font-size:14px; font-weight:800; color:var(--accent); margin-bottom:4px;}
+  #battleTutorialText{font-size:12.5px; color:var(--text); line-height:1.4;}
+  #battleTutorialActions{display:flex; gap:8px; margin-top:12px;}
+  #battleTutorialActions button{flex:1; font-size:11.5px; padding:8px 6px;}
 
   /* battle */
   /* El fondo con imagen NO va en .battle-wrap (ese cubre TODA la pantalla, incluyendo detrás del
@@ -2003,25 +2032,24 @@
   .sprite.attacke{animation:breathe 3.4s ease-in-out infinite, lungeL .5s;}
   /* Pedido explícito: al recibir un golpe, el enemigo ya no solo "tiembla" en el lugar (shake) —
      retrocede (se aleja del jugador, que está a la izquierda) por un instante y vuelve solo a su
-     posición normal. translateX positivo = derecha = alejándose, mismo sentido que ya usa lungeL
-     (-18px, hacia el jugador) para el ataque, solo que invertido.
-     OJO: el desplazamiento usa calc(14px + 12%) en vez de un píxel fijo — %  en translateX() se
-     mide sobre el ANCHO PROPIO del elemento animado. Los enemigos con emoji genérico (.sprite,
-     font-size:64px) y los que tienen arte propio (#spriteEnemy img[data-lobo/demonio/dragon/...],
-     hasta 240px de ancho — ver más arriba) NO miden lo mismo; con un valor fijo en px, el
-     retroceso se veía perfecto en los emoji chicos pero casi imperceptible en las ilustraciones
-     grandes (26px es ~40% del ancho de un emoji, pero solo ~11% del ancho de un Lobo Umbrío/
-     Demonio Menor). El 12% + una base de 14px lo mantiene visible en ambos casos sin que las
-     ilustraciones grandes salgan volando del escenario (.stage tiene overflow:hidden). */
+     posición normal. IMPORTANTE — este retroceso anima `left`, NO `transform`: #spriteEnemy YA
+     tiene una animación infinita corriendo sobre `transform` (breatheFlipped, para no perder el
+     espejado scaleX(-1) mientras respira) — dos @keyframes simultáneos animando la MISMA propiedad
+     `transform` en el mismo elemento no se combinan de forma confiable entre navegadores (el que
+     esté listado último puede terminar pisando por completo al otro mientras esté activo, en vez
+     de sumarse), y era justo por eso que el retroceso no se veía. `left` es una propiedad
+     completamente aparte — se anima en paralelo sin pisarle nada a breatheFlipped, garantizado.
+     #spriteEnemy/.psm-emoji ya son position:relative, así que `left` los desplaza visualmente sin
+     afectar el layout de sus hermanos (mascota, barra de vida), igual que haría un transform. */
   #spriteEnemy.hitshake{animation:breatheFlipped 3.4s ease-in-out infinite, enemyRecoil 1s ease-out;}
   #spriteEnemy.attacke{animation:breatheFlipped 3.4s ease-in-out infinite, lungeL .5s;}
   @keyframes breathe{0%,100%{transform:scale(1);}50%{transform:scale(1.022);}}
   @keyframes breatheFlipped{0%,100%{transform:scaleX(-1) scale(1);}50%{transform:scaleX(-1) scale(1.022);}}
   @keyframes enemyRecoil{
-    0%{transform:translateX(0);}
-    18%{transform:translateX(calc(14px + 12%));}
-    62%{transform:translateX(calc(14px + 12%));}
-    100%{transform:translateX(0);}
+    0%{left:0;}
+    18%{left:30px;}
+    62%{left:30px;}
+    100%{left:0;}
   }
   .sprite{position:relative;}
   /* Sacudida larga del enemigo para Terremoto (Guerrero) — pedido explícito: ~2s de temblor antes
@@ -2351,7 +2379,7 @@
   .pack-stage-mon .psm-lvl{color:var(--gold);}
   .pack-stage-mon .psm-bar{width:52px; height:5px; border-radius:4px; background:#0c0f18; overflow:hidden; border:1px solid var(--line);}
   .pack-stage-mon .psm-fill{height:100%; background:linear-gradient(90deg,#ff7a86,var(--hp)); transition:width .6s ease;}
-  .pack-stage-mon .psm-emoji{font-size:36px; transition:transform .18s ease; display:flex; align-items:flex-end; justify-content:center;}
+  .pack-stage-mon .psm-emoji{position:relative; font-size:36px; transition:transform .18s ease; display:flex; align-items:flex-end; justify-content:center;}
   /* Sin borde/fondo de "marco" alrededor del arte propio (Espectro, Lobo Umbrío, etc.) — pedido
      explícito: ese recuadro rojo alrededor de cada enemigo de la manada se veía como un margen
      de más, sobre todo con varios juntos y superpuestos. */

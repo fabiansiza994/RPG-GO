@@ -1,4 +1,5 @@
 import { POTION_SMALL_ICON_PATH, POTION_MANA_ICON_PATH, ELIXIR_MAYOR_ICON_PATH } from "../assets/spriteRegistry.js";
+import { CLASS_ID_MAP } from "./classes.js";
 
 // Pedido explícito: se sacaron las Gemas (Fuerza/Defensa/Viento/Astral/Mayores) y los Núcleos
 // (Vital/Arcano) — ya no se venden en la tienda ni salen como botín aleatorio (rollLoot usa esta
@@ -232,6 +233,16 @@ export const SHOP_CATEGORIES = [
   // junto con ESTA categoría — ver updateBaseAndPickaxeCardsVisibility() en main.js.
   {key:"special",   label:"🎴 Objetos especiales", test:it=> it.type==="capture_card"},
 ];
+
+// `requiredClass` (warrior/archer/mage/berserker, en inglés — pedido explícito del rediseño de
+// inventario) es un alias de solo lectura de `classKey` (que se queda en español, es la verdad
+// interna que ya usa todo el motor de combate) — se calcula una sola vez acá para toda tabla de
+// objetos ESTÁTICA definida arriba, en vez de escribirlo a mano en cada objeto suelto. Las tablas
+// que se arman en tiempo de ejecución (EQUIP_TABLE vía pushEquip, ofertas rotativas vía
+// rotatingItemToEquip, ambas en main.js) ya lo agregan ellas mismas al crear cada objeto.
+[...EXCLUSIVE_TABLE, ...BOSS_BOOK_TABLE, ...BOOK_TABLE].forEach(it=>{
+  it.requiredClass = CLASS_ID_MAP[it.classKey] || null;
+});
 
 export const SHOP_PREVIEW_LEVEL_CAP = 50;
 

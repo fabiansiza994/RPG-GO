@@ -12,7 +12,10 @@ import {
   ULTIMATE_TIER2_LEVEL,
   ULTIMATE_TIER3_LEVEL,
   ULTIMATE_TIER_HP_COST,
+  CLASS_ID_MAP,
+  CLASS_BADGE,
 } from "./game/config/classes.js";
+import { INVENTORY_CAPACITY_TIERS, INVENTORY_TIER_COST } from "./game/config/inventoryCapacity.js";
 import { CITY_REGISTRY, DEFAULT_CITY_KEY, SHRINE_TYPES, POI_TYPES, getCityPOIs } from "./game/config/world.js";
 import {
   DYNAMIC_ENTITY_STATE, DYNAMIC_ENTITY_TYPES, buildCandidateLocations, pickValidCandidateLocation,
@@ -524,7 +527,8 @@ function pushEquip(slot, classKey, baseName, emoji, baseBonuses, basePrice){
       const name = lt.suffix ? `${tierName}${lt.suffix}` : tierName;
       EQUIP_TABLE.push({
         id: "eq"+_eqIdSeq,
-        name, emoji, type:"equip", slot, classKey: classKey||null, rarity:t.key, weight: t.weight,
+        name, emoji, type:"equip", slot, classKey: classKey||null, requiredClass: CLASS_ID_MAP[classKey]||null,
+        rarity:t.key, weight: t.weight,
         bonuses, value: Math.round(basePrice*t.priceMult*lt.priceMult),
         reqLevel,
         desc: bonusDesc(bonuses) + (reqLevel>1 ? ` · requiere Nv.${reqLevel}` : "")
@@ -1129,6 +1133,7 @@ function generateParkWeaponItem(parkId, classKey){
   const id = "parkweapon_" + Math.random().toString(36).slice(2,10);
   const item = {
     id, name: park.weaponNames[classKey] || `Arma de ${park.name}`, emoji:"⚔️", type:"equip", slot:"weapon", classKey,
+    requiredClass: CLASS_ID_MAP[classKey]||null,
     isBossLoot: true, bossName: park.guardianName, auraColor: park.auraColor,
     bonuses, value: Math.round(80 * mult),
     reqLevel: Math.max(1, player.level-2),
@@ -1224,6 +1229,7 @@ function generateBossLootItem(bossTplName, bossLevel, classKeyForWeapon){
   const id = "bossloot_" + Math.random().toString(36).slice(2,10);
   const item = {
     id, name, emoji: theme.emoji, type:"equip", slot: theme.slot, classKey,
+    requiredClass: CLASS_ID_MAP[classKey]||null,
     isBossLoot: true, bossName: bossTplName, auraColor: theme.auraColor,
     bonuses, value: Math.round(60 * mult),
     reqLevel: Math.max(1, bossLevel-3),
@@ -2543,7 +2549,17 @@ function seededRandom(seedStr){
 let player = null; // se crea al elegir clase
 let selectedClass = null;
 let selectedGender = "m"; // 'm' | 'f' — solo cambia la apariencia, nunca las estadísticas
-let takenClasses = new Set(); // clases que ya tienen personaje creado (uno de cada tipo permitido)
+/** Caché en memoria de qué tiene puesto CADA héroe YA CREADO — ids + nivel de mejora + durabilidad,
+ *  no objetos completos (mismo patrón que ya usaba equipmentIds). Solo el héroe activo
+ *  (player.classKey) se recalcula desde player.equipment en cada saveGame(); los demás se
+ *  preservan tal cual se cargaron. Ver saveGame/rebuildPlayer/resolveEquipmentForHero. */
+let equippedByHeroCache = {};
+/** Pedido explícito: los 4 héroes NO se crean todos de una — la cuenta se crea con UNO (el elegido
+ *  en la grilla) y los demás se crean cuando el jugador lo pide, uno a la vez, desde "Crear
+ *  personaje" en la pantalla de selección (como ya funcionaba antes del rediseño). Esta variable lleva
+ *  registro de cuáles YA existen (tienen un documento 'player_'+classKey guardado) — se recalcula
+ *  en cada initContinueScreen(), mismo mecanismo que el `takenClasses` original. */
+let takenClasses = new Set();
 let playerLatLng = null; // {lat,lng}
 let map, meMarker, meRing, meMagicCircle;
 let monsters = []; // {id, marker, lat, lng, level, tpl, hp, maxHp, atk, def, spd, moves}
@@ -2893,6 +2909,9 @@ function slideNotice(msg, ms=3600){
 /* ============================================================
    1. PANTALLA DE SELECCIÓN DE CLASE
    ============================================================ */
+/** Pedido explícito: volver a crear los héroes de a uno — esta grilla marca como "tomada" (gris,
+ *  no seleccionable) cualquier clase que ya tenga un héroe creado en la cuenta (takenClasses, ver
+ *  initContinueScreen), igual que antes del rediseño de perfil compartido. */
 function buildClassGrid(){
   const grid = $("classGrid");
   grid.innerHTML = "";
@@ -2955,55 +2974,30 @@ $("nameInput").addEventListener("input", updateStartBtn);
 function sanitizePlayerName(raw){
   return (raw||"").replace(/[<>]/g,"").trim();
 }
+/** Crea UN héroe nuevo de la clase elegida en la grilla — pedido explícito: los héroes se crean de
+ *  a uno, no los 4 de golpe. Dos casos:
+ *  - Primera vez que se juega en este dispositivo (todavía no hay cuenta guardada): se crea la
+ *    cuenta compartida desde cero (oro/materiales/inventario en 0) junto con este primer héroe.
+ *  - Ya hay cuenta (el jugador tocó "Crear personaje" desde la pantalla de selección para agregar
+ *    otra clase): la cuenta existente NO se toca — oro, materiales, inventario, mascotas, etc.
+ *    siguen igual, solo se agrega el héroe nuevo. */
 $("btnStart").onclick = async ()=>{
   showMapLoadingScreen();
-  const c = CLASSES[selectedClass];
   const chosenName = sanitizePlayerName($("nameInput").value) || "Aventurero";
-  player = {
-    classKey: selectedClass,
-    className: c.name,
-    emoji: c.emoji,
-    gender: selectedGender || "m",
-    name: chosenName,
-    friendCode: genFriendCode(chosenName),
-    level: 1,
-    xp: 0,
-    xpNext: 100,
-    gold: 20,
-    crystals: 0,
-    darkEssence: 0,
-    attributePoints: 0,
-    attrSpent: {maxHp:0, maxMp:0, atk:0, matk:0, def:0, spd:0},
-    lastDailyBonus: null,
-    totalDistanceM: 0,
-    medals: [],
-    zoneDistanceM: {},
-    parkWeaponsObtained: [],
-    parkGuardianState: {},
-    visitedZones: [],
-    pets: [],
-    everGotCaptureCard: false,
-    redeemedCodes: [],
-    coliseumStats: null,
-    wood: 0, stone: 0, iron: 0,
-    isBuilding: false, buildingLastCollectAt: null, buildingUpgradeEndsAt: null,
-    dynamicEntities: [],
-    worldEvents: [], lastEventResolvedAt: null,
-    lastRegionId: null,
-    pickaxe: null,
-    maxHp: c.base.hp, hp: c.base.hp,
-    maxMp: c.base.mp, mp: c.base.mp,
-    atk: c.base.atk, matk: c.base.matk, def: c.base.def, spd: c.base.spd,
-    growth: c.growth,
-    movePool: c.movePool,
-    moves: c.movePool.filter(m=>m.lvl===1).slice(0,3), // movimientos iniciales
-    learnedIds: new Set(c.movePool.filter(m=>m.lvl===1).map(m=>m.id)),
-    everLearnedIds: new Set(c.movePool.filter(m=>m.lvl===1).map(m=>m.id)), // historial completo (nunca se borra, para poder "recordar" luego)
-    declinedMoveIds: new Set(), // movimientos que se ofrecieron al subir de nivel y se saltearon (ver showLearnMoveChoice) — también recordables por el vagabundo
-    ultimateMove: null, ultimateBaseId: null,
-    inventory: [],
-    equipment: {weapon:null, offhand:null, armor:null, helmet:null, boots:null, accessory:[null]}
-  };
+  let accountData = await loadAccount();
+  if(!accountData){
+    accountData = freshAccountData(chosenName);
+    equippedByHeroCache = {};
+    bossLootRegistry = {};
+  } else {
+    equippedByHeroCache = accountData.equippedByHero || {};
+    bossLootRegistry = accountData.bossLootRegistry || {};
+  }
+  activeQuest = null;
+  const heroData = freshHeroData(selectedClass);
+  heroData.gender = selectedGender || "m";
+  if(AppStorage) await AppStorage.set('player_'+selectedClass, JSON.stringify(heroData), false);
+  rebuildPlayer(accountData, heroData);
   $("classOverlay").classList.add("hidden");
   $("hudIconEmoji").textContent = player.emoji;
   updateNotifBell();
@@ -3029,38 +3023,70 @@ function checkDailyBonus(){
   const today = todayStr();
   if(player.lastDailyBonus === today) return;
   player.lastDailyBonus = today;
-  player.gold += 50;
-  player.crystals = (player.crystals||0) + 1;
+  const goldReward = 50, crystalReward = 1;
+  player.gold += goldReward;
+  player.crystals = (player.crystals||0) + crystalReward;
   refreshHud();
   saveGame();
-  toast("🎁 ¡Bono diario! +50 💰 de oro y +1 💎 diamante solo por entrar a jugar hoy.", 4500);
+  // Pedido explícito: mostrar en un modal QUÉ se dio exactamente, en vez de un toast que se
+  // desvanece solo — reusa showAlert (icono+título+mensaje+un botón), mismo mecanismo que ya usa
+  // el resto del juego para avisos de un solo paso.
+  showAlert(
+    `Por entrar a jugar hoy, recibiste:
+     <div style="display:flex; gap:18px; justify-content:center; margin:12px 0 2px; font-size:16px; font-weight:800; color:var(--text);">
+       <span>💰 +${goldReward} oro</span>
+       <span>💎 +${crystalReward} diamante</span>
+     </div>`,
+    {icon:"🎁", title:"¡Bono diario!", confirmLabel:"¡Genial!"}
+  );
 }
 
 /* ============================================================
    1b. PERSISTENCIA (AppStorage) — guarda/recupera tu partida
    ============================================================ */
 let storageAvailable = true;
+/** ============================================================
+ *  PERFIL ÚNICO + 4 HÉROES — modelo de guardado
+ *  ------------------------------------------------------------
+ *  Antes cada clase era un save 100% independiente (oro, inventario, misiones, TODO por separado),
+ *  guardado en la clave 'player_'+classKey — esa clave es justo la que AppStorage.get/set/delete
+ *  redirige a la nube cuando hay sesión iniciada (ver PLAYER_SAVE_KEY_RE, más arriba: cualquier
+ *  clave con forma 'player_<letras>' se manda a /api/saves/<letras> en vez de a localStorage).
+ *  Para no tener que tocar ese backend (vive en otro repo, worker/index.js, no está acá), el nuevo
+ *  esquema REUSA esa misma forma de clave en vez de inventar una nueva:
+ *  - 'player_account': UNA cuenta compartida (oro, materiales, inventario, mascotas, logros, mapa,
+ *    misiones de mundo, torres, portales, equipo puesto de cada héroe...).
+ *  - 'player_'+classKey (LA MISMA clave que antes, ahora con menos campos): documento de héroe —
+ *    nivel, xp, stats, habilidades, apariencia, misión activa. Se crean DE A UNO (no los 4 de
+ *    golpe) — ver btnStart/takenClasses/initContinueScreen: la pantalla de selección solo muestra
+ *    los héroes que el jugador ya creó, más una tarjeta para crear otro (hasta 4).
+ *  El objeto `player` en memoria NO cambia de forma (sigue siendo el mismo objeto plano de siempre,
+ *  mismos campos que ya lee/escribe todo el motor de combate/misiones/tienda) — lo único que
+ *  cambia es de dónde se arma (rebuildPlayer junta account+hero) y a dónde se guarda (saveGame
+ *  reparte los campos entre los dos documentos). El equipo puesto de cada héroe vive en
+ *  account.equippedByHero[classKey] (ids + mejora + durabilidad, no objetos completos — mismo
+ *  patrón que ya usaba equipmentIds), cacheado en `equippedByHeroCache` durante la sesión.
+ *  Sin migración: los saves viejos (guardados como un solo personaje por clave, con TODO adentro)
+ *  se sobrescriben con el nuevo formato la primera vez que se guarda — decisión ya tomada con el
+ *  usuario (empezar de cero, sin fusionar progreso viejo).
+ *  ============================================================ */
 async function saveGame(){
   if(!player || !AppStorage || !storageAvailable) return;
   try{
-    const data = {
-      classKey: player.classKey,
+    const accountData = {
       name: player.name,
-      gender: player.gender,
       friendCode: player.friendCode,
-      level: player.level, xp: player.xp, xpNext: player.xpNext, gold: player.gold, crystals: player.crystals||0, darkEssence: player.darkEssence||0,
+      activeHero: player.classKey,
+      gold: player.gold, crystals: player.crystals||0, darkEssence: player.darkEssence||0,
       lastBossCrystalDay: player.lastBossCrystalDay || null,
-      extraInventorySlots: player.extraInventorySlots||0,
+      inventoryCapacityTier: player.inventoryCapacityTier||0,
       base: player.base || null, baseStorage: player.baseStorage || [], baseExtraSlots: player.baseExtraSlots||0, hasBase: player.hasBase||false, baseEverPlaced: player.baseEverPlaced||false,
       isBuilding: player.isBuilding||false, buildingLastCollectAt: player.buildingLastCollectAt||null,
       buildingUpgradeEndsAt: player.buildingUpgradeEndsAt||null,
       shadowWolfNightKey: player.shadowWolfNightKey||null, shadowWolfEscapes: player.shadowWolfEscapes||0,
-      eliteWeaponsBought: player.eliteWeaponsBought||0,
       dynamicEntities: player.dynamicEntities||[],
       worldEvents: player.worldEvents||[], lastEventResolvedAt: player.lastEventResolvedAt||null,
       lastRegionId: player.lastRegionId||null,
-      attributePoints: player.attributePoints||0,
-      attrSpent: player.attrSpent || {maxHp:0,maxMp:0,atk:0,matk:0,def:0,spd:0},
       lastDailyBonus: player.lastDailyBonus || null,
       totalDistanceM: player.totalDistanceM || 0,
       medals: player.medals || [],
@@ -3076,6 +3102,23 @@ async function saveGame(){
       dungeonProgress: player.dungeonProgress || {},
       activeDungeonRun: player.activeDungeonRun || null,
       dungeonPortalCooldowns: player.dungeonPortalCooldowns || {},
+      wood: player.wood||0, stone: player.stone||0, iron: player.iron||0,
+      pickaxe: player.pickaxe || null,
+      seenBattleTutorial: player.seenBattleTutorial || false,
+      inventoryIds: player.inventory.map(it=>it.id),
+      inventoryDurability: player.inventory.map(it=> durabilitySaveData(it)),
+      bossLootRegistry: bossLootRegistry, // objetos únicos de jefe generados en tiempo real (no viven en las tablas fijas)
+      equippedByHero: buildEquippedByHeroForSave(),
+      lastPos: playerLatLng || null,
+      savedAt: Date.now()
+    };
+    const heroData = {
+      classKey: player.classKey,
+      gender: player.gender,
+      level: player.level, xp: player.xp, xpNext: player.xpNext,
+      attributePoints: player.attributePoints||0,
+      attrSpent: player.attrSpent || {maxHp:0,maxMp:0,atk:0,matk:0,def:0,spd:0},
+      eliteWeaponsBought: player.eliteWeaponsBought||0,
       activeTitle: player.activeTitle || null,
       activeFrameClass: player.activeFrameClass || null,
       maxHp: player.maxHp, hp: player.hp, maxMp: player.maxMp, mp: player.mp,
@@ -3086,77 +3129,36 @@ async function saveGame(){
       learnedIds: Array.from(player.learnedIds),
       everLearnedIds: Array.from(player.everLearnedIds||player.learnedIds),
       declinedMoveIds: Array.from(player.declinedMoveIds||[]),
-      inventoryIds: player.inventory.map(it=>it.id),
-      equipmentIds: {
-        weapon: player.equipment.weapon ? player.equipment.weapon.id : null,
-        offhand: player.equipment.offhand ? player.equipment.offhand.id : null,
-        armor: player.equipment.armor ? player.equipment.armor.id : null,
-        helmet: player.equipment.helmet ? player.equipment.helmet.id : null,
-        boots: player.equipment.boots ? player.equipment.boots.id : null,
-        accessory: (player.equipment.accessory||[]).map(it=> it ? it.id : null)
-      },
-      equipmentUpgrades: {
-        weapon: (player.equipment.weapon && player.equipment.weapon.upgradeLevel) || 0,
-        offhand: (player.equipment.offhand && player.equipment.offhand.upgradeLevel) || 0,
-        armor: (player.equipment.armor && player.equipment.armor.upgradeLevel) || 0,
-        helmet: (player.equipment.helmet && player.equipment.helmet.upgradeLevel) || 0,
-        boots: (player.equipment.boots && player.equipment.boots.upgradeLevel) || 0,
-        accessory: (player.equipment.accessory||[]).map(it=> (it && it.upgradeLevel) || 0)
-      },
-      equipmentDurability: {
-        weapon: durabilitySaveData(player.equipment.weapon),
-        offhand: durabilitySaveData(player.equipment.offhand),
-        armor: durabilitySaveData(player.equipment.armor),
-        helmet: durabilitySaveData(player.equipment.helmet),
-        boots: durabilitySaveData(player.equipment.boots),
-      },
-      inventoryDurability: player.inventory.map(it=> durabilitySaveData(it)),
-      bossLootRegistry: bossLootRegistry, // objetos únicos de jefe generados en tiempo real (no viven en las tablas fijas)
-      wood: player.wood||0, stone: player.stone||0, iron: player.iron||0,
-      pickaxe: player.pickaxe || null,
       activeQuest: activeQuest ? {template:activeQuest.template, destName:activeQuest.destName, destLat:activeQuest.destLat, destLng:activeQuest.destLng,
         killGoal:activeQuest.killGoal, killProgress:activeQuest.killProgress, itemObtained:activeQuest.itemObtained, targetSpawned:activeQuest.targetSpawned} : null,
-      lastPos: playerLatLng || null,
       savedAt: Date.now()
     };
-    // cada clase tiene su propia partida guardada (uno de cada tipo bajo el mismo dispositivo/usuario)
-    await AppStorage.set('player_'+player.classKey, JSON.stringify(data), false);
+    await AppStorage.set('player_account', JSON.stringify(accountData), false);
+    await AppStorage.set('player_'+player.classKey, JSON.stringify(heroData), false);
   }catch(e){
     storageAvailable = false; // evita reintentos ruidosos; el juego sigue funcionando sin guardado
   }
 }
 
-async function loadCharacterSlot(classKey){
-  if(!AppStorage) return null;
-  try{
-    const res = await AppStorage.get('player_'+classKey, false);
-    if(res && res.value) return JSON.parse(res.value);
-  }catch(e){ /* no hay partida guardada para esta clase */ }
-  return null;
+/** Guarda una instancia de equipo (id + mejora + durabilidad, no el objeto completo) para
+ *  account.equippedByHero — null si ese hueco está vacío. */
+function equipInstanceSaveData(item){
+  if(!item) return null;
+  return { id: item.id, upgradeLevel: item.upgradeLevel||0, durability: durabilitySaveData(item) };
 }
-
-/** Carga los 4 posibles personajes (uno por clase). Si es una partida vieja de un solo personaje
- *  (antes de este sistema), la migra automáticamente al nuevo esquema por clase. */
-async function loadAllCharacters(){
-  const slots = {};
-  for(const key of Object.keys(CLASSES)){
-    slots[key] = await loadCharacterSlot(key);
-  }
-  const anyNew = Object.values(slots).some(Boolean);
-  if(!anyNew && AppStorage){
-    try{
-      const old = await AppStorage.get('player', false);
-      if(old && old.value){
-        const data = JSON.parse(old.value);
-        if(data && data.classKey && CLASSES[data.classKey]){
-          slots[data.classKey] = data;
-          await AppStorage.set('player_'+data.classKey, old.value, false);
-          await AppStorage.delete('player', false); // ya se migró — se borra para que no pueda "revivir" nada más adelante
-        }
-      }
-    }catch(e){ /* tampoco había partida vieja */ }
-  }
-  return slots;
+/** Arma el mapa completo {classKey: equipo} para guardar — recalcula SOLO el héroe activo desde
+ *  player.equipment (lo único que vive en memoria ahora mismo); los otros 3 héroes se preservan
+ *  tal cual se cargaron en equippedByHeroCache, porque su equipo no está en memoria. */
+function buildEquippedByHeroForSave(){
+  equippedByHeroCache[player.classKey] = {
+    weapon: equipInstanceSaveData(player.equipment.weapon),
+    offhand: equipInstanceSaveData(player.equipment.offhand),
+    armor: equipInstanceSaveData(player.equipment.armor),
+    helmet: equipInstanceSaveData(player.equipment.helmet),
+    boots: equipInstanceSaveData(player.equipment.boots),
+    accessory: (player.equipment.accessory||[]).map(equipInstanceSaveData),
+  };
+  return equippedByHeroCache;
 }
 
 function findItemById(id){
@@ -3164,106 +3166,153 @@ function findItemById(id){
     || BOOK_TABLE.find(it=>it.id===id) || BOSS_BOOK_TABLE.find(it=>it.id===id) || bossLootRegistry[id];
 }
 
-function rebuildPlayerFromSave(data){
-  const c = CLASSES[data.classKey];
-  const eq = data.equipmentIds || {};
-  const eqUp = data.equipmentUpgrades || {};
-  /** Copia independiente de un objeto por id (evita que dos slots con el mismo objeto base
-   *  compartan referencia — si no, mejorar uno afectaría al otro sin querer). */
+/** Reconstruye el set de equipo COMPLETO (objetos, no ids) de un héroe a partir de
+ *  equippedByHeroCache[classKey] — mismo mecanismo que antes (freshCopy + reaplicar mejora/
+ *  durabilidad), solo que ahora lee de la caché de cuenta en vez del propio save del héroe. */
+function resolveEquipmentForHero(classKey, level){
+  const eq = equippedByHeroCache[classKey] || {};
   function freshCopy(id){ const it = findItemById(id); return it ? {...it} : null; }
-  let accessoryArr = Array.isArray(eq.accessory) ? eq.accessory.map(id=> id?freshCopy(id):null)
-    : (eq.accessory ? [freshCopy(eq.accessory)] : [null]); // migración de guardados viejos (1 solo slot)
-  const slots = maxAccessorySlots(data.level, data.classKey);
+  function build(slotData){
+    if(!slotData || !slotData.id) return null;
+    const it = freshCopy(slotData.id);
+    if(!it) return null;
+    if(slotData.upgradeLevel) applyUpgradeToItem(it, slotData.upgradeLevel);
+    const dur = slotData.durability;
+    if(dur){ it.durability = dur.durability; it.maxDurability = dur.maxDurability; it.material = dur.material; }
+    return it;
+  }
+  let accessoryArr = Array.isArray(eq.accessory) ? eq.accessory.map(build) : [];
+  const slots = maxAccessorySlots(level, classKey);
   while(accessoryArr.length < slots) accessoryArr.push(null);
-  const accUpLevels = Array.isArray(eqUp.accessory) ? eqUp.accessory : [];
-  accessoryArr.forEach((it,i)=>{ if(it && accUpLevels[i]) applyUpgradeToItem(it, accUpLevels[i]); });
+  return {
+    weapon: build(eq.weapon), offhand: build(eq.offhand), armor: build(eq.armor),
+    helmet: build(eq.helmet), boots: build(eq.boots), accessory: accessoryArr,
+  };
+}
 
-  const weaponItem = eq.weapon ? freshCopy(eq.weapon) : null;
-  const offhandItem = eq.offhand ? freshCopy(eq.offhand) : null;
-  const armorItem = eq.armor ? freshCopy(eq.armor) : null;
-  const helmetItem = eq.helmet ? freshCopy(eq.helmet) : null;
-  const bootsItem = eq.boots ? freshCopy(eq.boots) : null;
-  if(weaponItem && eqUp.weapon) applyUpgradeToItem(weaponItem, eqUp.weapon);
-  if(offhandItem && eqUp.offhand) applyUpgradeToItem(offhandItem, eqUp.offhand);
-  if(armorItem && eqUp.armor) applyUpgradeToItem(armorItem, eqUp.armor);
-  if(helmetItem && eqUp.helmet) applyUpgradeToItem(helmetItem, eqUp.helmet);
-  if(bootsItem && eqUp.boots) applyUpgradeToItem(bootsItem, eqUp.boots);
-  // la durabilidad/material es estado propio de cada instancia — freshCopy() no la trae (viene
-  // de la tabla fija), así que se restaura aparte, igual que ya se hace con equipmentUpgrades.
-  const eqDur = data.equipmentDurability || {};
+async function loadAccount(){
+  if(!AppStorage) return null;
+  try{
+    const res = await AppStorage.get('player_account', false);
+    if(res && res.value) return JSON.parse(res.value);
+  }catch(e){ /* sin cuenta guardada todavía */ }
+  return null;
+}
+async function loadHero(classKey){
+  if(!AppStorage) return null;
+  try{
+    const res = await AppStorage.get('player_'+classKey, false);
+    if(res && res.value) return JSON.parse(res.value);
+  }catch(e){ /* este héroe todavía no se jugó */ }
+  return null;
+}
+/** Cuenta recién creada — recursos y colecciones en cero, sin equipo puesto en ningún héroe. */
+function freshAccountData(name){
+  return {
+    name, friendCode: genFriendCode(name), activeHero: null,
+    gold: 20, crystals: 0, darkEssence: 0, lastBossCrystalDay: null, inventoryCapacityTier: 0,
+    base: null, baseStorage: [], baseExtraSlots: 0, hasBase: false, baseEverPlaced: false,
+    isBuilding: false, buildingLastCollectAt: null, buildingUpgradeEndsAt: null,
+    shadowWolfNightKey: null, shadowWolfEscapes: 0,
+    dynamicEntities: [], worldEvents: [], lastEventResolvedAt: null, lastRegionId: null,
+    lastDailyBonus: null, totalDistanceM: 0, medals: [], zoneDistanceM: {},
+    parkWeaponsObtained: [], parkGuardianState: {}, visitedZones: [], pets: [],
+    everGotCaptureCard: false, redeemedCodes: [], coliseumStats: null, ownedTowers: null,
+    dungeonProgress: {}, activeDungeonRun: null, dungeonPortalCooldowns: {},
+    wood: 0, stone: 0, iron: 0, pickaxe: null,
+    inventoryIds: [], inventoryDurability: [], bossLootRegistry: {}, equippedByHero: {},
+    seenBattleTutorial: false,
+    lastPos: null, savedAt: Date.now(),
+  };
+}
+/** Héroe recién creado (nivel 1, stats base de su clase) — se genera para los 4 a la vez al crear
+ *  la cuenta, así los 4 "existen" desde el primer momento aunque solo se juegue con uno. */
+function freshHeroData(classKey){
+  const c = CLASSES[classKey];
+  const starterMoveIds = c.movePool.filter(m=>m.lvl===1).slice(0,3).map(m=>m.id);
+  return {
+    classKey, gender: "m", level: 1, xp: 0, xpNext: 100,
+    attributePoints: 0, attrSpent: {maxHp:0,maxMp:0,atk:0,matk:0,def:0,spd:0},
+    eliteWeaponsBought: 0, activeTitle: null, activeFrameClass: null,
+    maxHp: c.base.hp, hp: c.base.hp, maxMp: c.base.mp, mp: c.base.mp,
+    atk: c.base.atk, matk: c.base.matk, def: c.base.def, spd: c.base.spd,
+    moveIds: starterMoveIds,
+    ultimateMove: null, ultimateBaseId: null,
+    learnedIds: starterMoveIds, everLearnedIds: starterMoveIds, declinedMoveIds: [],
+    activeQuest: null, savedAt: Date.now(),
+  };
+}
+
+/** Arma el `player` plano de siempre juntando el documento de cuenta + el de un héroe — mismo
+ *  objeto/campos que usa todo el motor de combate/misiones/tienda, sin cambios ahí. */
+function rebuildPlayer(accountData, heroData){
+  const c = CLASSES[heroData.classKey];
+  function freshCopy(id){ const it = findItemById(id); return it ? {...it} : null; }
   function applyDurability(item, durData){
     if(item && durData){ item.durability = durData.durability; item.maxDurability = durData.maxDurability; item.material = durData.material; }
   }
-  applyDurability(weaponItem, eqDur.weapon);
-  applyDurability(offhandItem, eqDur.offhand);
-  applyDurability(armorItem, eqDur.armor);
-  applyDurability(helmetItem, eqDur.helmet);
-  applyDurability(bootsItem, eqDur.boots);
-  const invDur = data.inventoryDurability || [];
-  const inventoryItems = data.inventoryIds.map((id,i)=>{
+  const invDur = accountData.inventoryDurability || [];
+  const inventoryItems = (accountData.inventoryIds||[]).map((id,i)=>{
     const it = freshCopy(id);
     applyDurability(it, invDur[i]);
     return it;
   }).filter(Boolean);
 
+  const equipment = resolveEquipmentForHero(heroData.classKey, heroData.level);
+
   player = {
-    classKey: data.classKey,
+    classKey: heroData.classKey,
     className: c.name,
     emoji: c.emoji,
-    gender: data.gender || "m",
-    name: data.name,
-    friendCode: data.friendCode || genFriendCode(data.name),
-    level: data.level, xp: data.xp, xpNext: data.xpNext, gold: data.gold, crystals: data.crystals||0, darkEssence: data.darkEssence||0,
-    lastBossCrystalDay: data.lastBossCrystalDay || null,
-    extraInventorySlots: data.extraInventorySlots||0,
-    base: data.base || null, baseStorage: data.baseStorage || [], baseExtraSlots: data.baseExtraSlots||0, hasBase: data.hasBase||false, baseEverPlaced: data.baseEverPlaced||false,
-    isBuilding: data.isBuilding||false, buildingLastCollectAt: data.buildingLastCollectAt||null,
-    buildingUpgradeEndsAt: data.buildingUpgradeEndsAt||null,
-    shadowWolfNightKey: data.shadowWolfNightKey||null, shadowWolfEscapes: data.shadowWolfEscapes||0,
-    eliteWeaponsBought: data.eliteWeaponsBought||0,
-    dynamicEntities: data.dynamicEntities||[],
-    worldEvents: data.worldEvents||[], lastEventResolvedAt: data.lastEventResolvedAt||null,
-    lastRegionId: data.lastRegionId||null,
-    attributePoints: data.attributePoints||0,
-    attrSpent: data.attrSpent || {maxHp:0,maxMp:0,atk:0,matk:0,def:0,spd:0},
-    lastDailyBonus: data.lastDailyBonus || null,
-    totalDistanceM: data.totalDistanceM || 0,
-    medals: data.medals || [],
-    zoneDistanceM: data.zoneDistanceM || {},
-    parkWeaponsObtained: data.parkWeaponsObtained || [],
-    parkGuardianState: data.parkGuardianState || {},
-    visitedZones: data.visitedZones || [],
-    pets: data.pets || [],
-    everGotCaptureCard: data.everGotCaptureCard || false,
-    redeemedCodes: data.redeemedCodes || [],
-    coliseumStats: data.coliseumStats || null,
-    ownedTowers: data.ownedTowers || null,
-    dungeonProgress: data.dungeonProgress || {},
-    activeDungeonRun: data.activeDungeonRun || null,
-    dungeonPortalCooldowns: data.dungeonPortalCooldowns || {},
-    activeTitle: data.activeTitle || null,
-    activeFrameClass: data.activeFrameClass || null,
-    wood: data.wood||0, stone: data.stone||0, iron: data.iron||0,
-    pickaxe: data.pickaxe || null,
-    maxHp: data.maxHp, hp: data.hp, maxMp: data.maxMp, mp: data.mp,
-    atk: data.atk, matk: data.matk||0, def: data.def, spd: data.spd,
+    gender: heroData.gender || "m",
+    name: accountData.name,
+    friendCode: accountData.friendCode || genFriendCode(accountData.name),
+    level: heroData.level, xp: heroData.xp, xpNext: heroData.xpNext,
+    gold: accountData.gold, crystals: accountData.crystals||0, darkEssence: accountData.darkEssence||0,
+    lastBossCrystalDay: accountData.lastBossCrystalDay || null,
+    inventoryCapacityTier: accountData.inventoryCapacityTier||0,
+    base: accountData.base || null, baseStorage: accountData.baseStorage || [], baseExtraSlots: accountData.baseExtraSlots||0, hasBase: accountData.hasBase||false, baseEverPlaced: accountData.baseEverPlaced||false,
+    isBuilding: accountData.isBuilding||false, buildingLastCollectAt: accountData.buildingLastCollectAt||null,
+    buildingUpgradeEndsAt: accountData.buildingUpgradeEndsAt||null,
+    shadowWolfNightKey: accountData.shadowWolfNightKey||null, shadowWolfEscapes: accountData.shadowWolfEscapes||0,
+    eliteWeaponsBought: heroData.eliteWeaponsBought||0,
+    dynamicEntities: accountData.dynamicEntities||[],
+    worldEvents: accountData.worldEvents||[], lastEventResolvedAt: accountData.lastEventResolvedAt||null,
+    lastRegionId: accountData.lastRegionId||null,
+    attributePoints: heroData.attributePoints||0,
+    attrSpent: heroData.attrSpent || {maxHp:0,maxMp:0,atk:0,matk:0,def:0,spd:0},
+    lastDailyBonus: accountData.lastDailyBonus || null,
+    totalDistanceM: accountData.totalDistanceM || 0,
+    medals: accountData.medals || [],
+    zoneDistanceM: accountData.zoneDistanceM || {},
+    parkWeaponsObtained: accountData.parkWeaponsObtained || [],
+    parkGuardianState: accountData.parkGuardianState || {},
+    visitedZones: accountData.visitedZones || [],
+    pets: accountData.pets || [],
+    everGotCaptureCard: accountData.everGotCaptureCard || false,
+    redeemedCodes: accountData.redeemedCodes || [],
+    coliseumStats: accountData.coliseumStats || null,
+    ownedTowers: accountData.ownedTowers || null,
+    dungeonProgress: accountData.dungeonProgress || {},
+    activeDungeonRun: accountData.activeDungeonRun || null,
+    dungeonPortalCooldowns: accountData.dungeonPortalCooldowns || {},
+    activeTitle: heroData.activeTitle || null,
+    activeFrameClass: heroData.activeFrameClass || null,
+    wood: accountData.wood||0, stone: accountData.stone||0, iron: accountData.iron||0,
+    pickaxe: accountData.pickaxe || null,
+    seenBattleTutorial: accountData.seenBattleTutorial || false,
+    maxHp: heroData.maxHp, hp: heroData.hp, maxMp: heroData.maxMp, mp: heroData.mp,
+    atk: heroData.atk, matk: heroData.matk||0, def: heroData.def, spd: heroData.spd,
     growth: c.growth,
     movePool: c.movePool,
-    moves: data.moveIds.map(id=> c.movePool.find(m=>m.id===id)).filter(Boolean),
-    ultimateMove: data.ultimateMove || null,
-    ultimateBaseId: data.ultimateBaseId || null,
-    learnedIds: new Set(data.learnedIds),
-    everLearnedIds: new Set(data.everLearnedIds || data.learnedIds), // compatibilidad con partidas viejas sin este campo
-    declinedMoveIds: new Set(data.declinedMoveIds || []), // compatibilidad con partidas viejas sin este campo
+    moves: heroData.moveIds.map(id=> c.movePool.find(m=>m.id===id)).filter(Boolean),
+    ultimateMove: heroData.ultimateMove || null,
+    ultimateBaseId: heroData.ultimateBaseId || null,
+    learnedIds: new Set(heroData.learnedIds),
+    everLearnedIds: new Set(heroData.everLearnedIds || heroData.learnedIds),
+    declinedMoveIds: new Set(heroData.declinedMoveIds || []),
     inventory: inventoryItems,
-    equipment: {
-      weapon: weaponItem,
-      offhand: offhandItem,
-      armor: armorItem,
-      helmet: helmetItem,
-      boots: bootsItem,
-      accessory: accessoryArr
-    }
+    equipment,
   };
   // sincroniza el flag de "ya se le aplicó la penalización de Dañado" con la realidad — las
   // estadísticas guardadas (atk/def/etc) ya reflejan esa penalización si corresponde, así que
@@ -3274,37 +3323,68 @@ function rebuildPlayerFromSave(data){
   });
 }
 
-async function initContinueScreen(){
-  const slots = await loadAllCharacters();
-  takenClasses = new Set(Object.keys(slots).filter(k=>slots[k]));
-  const area = $("continueArea");
-  const existingCount = takenClasses.size;
+/** Poder total (misma fórmula que ya usa la ficha de personaje, renderCharSheet) — reutilizado acá
+ *  para las tarjetas de héroe de la pantalla de selección. */
+function heroPowerScore(h){
+  return Math.round((h.atk||0)*3 + (h.matk||0)*3 + (h.def||0)*3 + (h.spd||0)*2 + (h.maxHp||0)*0.5 + (h.maxMp||0)*0.5);
+}
+/** Nombre+ícono cortos del arma/armadura puesta de un héroe, para el resumen de su tarjeta —
+ *  no arma el equipo completo (no hace falta aplicar mejora/durabilidad solo para mostrar nombre). */
+function heroEquipSummary(classKey){
+  const eq = equippedByHeroCache[classKey] || {};
+  const weapon = eq.weapon && eq.weapon.id ? findItemById(eq.weapon.id) : null;
+  const armor = eq.armor && eq.armor.id ? findItemById(eq.armor.id) : null;
+  const parts = [];
+  if(weapon) parts.push(`${weapon.emoji||"⚔️"} ${weapon.name}`);
+  if(armor) parts.push(`${armor.emoji||"🛡️"} ${armor.name}`);
+  return parts.length ? parts.join(" · ") : "";
+}
 
+async function initContinueScreen(){
+  const accountData = await loadAccount();
   $("btnBackToCharList").classList.add("hidden");
-  if(existingCount === 0){
-    area.innerHTML = "";
+  if(!accountData){
+    // Cuenta nueva — todavía no hay ni cuenta ni héroes: se pide nombre/género/clase inicial
+    // (ver btnStart, que crea la cuenta con ESE primer héroe únicamente).
+    takenClasses = new Set();
+    $("continueArea").innerHTML = "";
     $("classTitle").textContent = "Elige tu clase";
     $("classTitle").classList.remove("hidden");
     $("classGrid").classList.remove("hidden");
     return;
   }
+  equippedByHeroCache = accountData.equippedByHero || {};
+  // Pedido explícito: solo se muestran los héroes que el jugador YA creó — no los 4 de una.
+  const heroSlots = {};
+  for(const key of Object.keys(CLASSES)){
+    const h = await loadHero(key);
+    if(h) heroSlots[key] = h;
+  }
+  takenClasses = new Set(Object.keys(heroSlots));
+  const existingCount = takenClasses.size;
+  const area = $("continueArea");
 
   // El banner ya trae "Bienvenido de nuevo" + subtítulo dibujados — el h1 de siempre se oculta.
   let html = `<img class="welcome-banner-img" src="${CHAR_SELECT_ART.welcomeBanner}" alt="Bienvenido de nuevo">`;
   html += `<div class="char-select-list">`;
-  Object.entries(slots).forEach(([key, data])=>{
-    if(!data) return;
+  Object.entries(heroSlots).forEach(([key, data])=>{
     const c = CLASSES[key];
-    const goldTxt = Number(data.gold||0).toLocaleString("es-CO");
+    const power = heroPowerScore(data);
     html += `
       <div class="continue-card big-continue-card cc-art-card cc-theme-${key}">
         <img class="cc-art-img" src="${CHAR_SELECT_ART.cards[key]}" alt="${c.name}">
-        <div class="cc-art-name"><span>${data.name}</span></div>
+        <div class="cc-art-name"><span>${accountData.name}</span></div>
         <div class="cc-art-meta">
           <span class="cc-art-class">${c.name}</span><span class="cc-art-dot">·</span><span class="cc-art-level">Nv. ${data.level}</span>
         </div>
-        <div class="cc-art-gold">${goldTxt}</div>
-        <button class="cc-art-btn btn-continue-char" data-classkey="${key}">Continuar aventura</button>
+        <div class="cc-art-hero-stats">
+          <span class="stat-chip">⚔️ Poder ${power}</span>
+          <span class="stat-chip">❤️ ${Math.round(data.maxHp)}</span>
+          <span class="stat-chip">💥 ${Math.round(data.atk)}</span>
+          <span class="stat-chip">🛡️ ${Math.round(data.def)}</span>
+        </div>
+        <div class="cc-art-equip-summary">${heroEquipSummary(key)}</div>
+        <button class="cc-art-btn btn-continue-char" data-classkey="${key}">Seleccionar</button>
         <button class="cc-art-trash btn-delete-char" data-classkey="${key}" title="Eliminar personaje" aria-label="Eliminar personaje"></button>
       </div>`;
   });
@@ -3318,7 +3398,6 @@ async function initContinueScreen(){
   area.innerHTML = html;
   $("classTitle").textContent = "Bienvenido de nuevo";
   $("classTitle").classList.add("hidden");
-  // se ocultan hasta que el usuario pida explícitamente crear un personaje nuevo
   $("classGrid").classList.add("hidden");
   $("classSubText").classList.add("hidden");
   $("genderSection").classList.add("hidden");
@@ -3329,19 +3408,19 @@ async function initContinueScreen(){
     btn.onclick = async ()=>{
       showMapLoadingScreen();
       const key = btn.dataset.classkey;
-      const data = slots[key];
-      bossLootRegistry = data.bossLootRegistry || {};
-      activeQuest = data.activeQuest || null;
-      rebuildPlayerFromSave(data);
+      const heroData = heroSlots[key];
+      bossLootRegistry = accountData.bossLootRegistry || {};
+      activeQuest = heroData.activeQuest || null;
+      rebuildPlayer(accountData, heroData);
       $("classOverlay").classList.add("hidden");
       $("hudIconEmoji").textContent = player.emoji;
-  updateNotifBell();
+      updateNotifBell();
       refreshHud();
       teardownMapIfExists();
       setupBuilderModeUI();
-  setupDungeonCodexUI();
+      setupDungeonCodexUI();
       const _mapLoadGen = mapLoadingGen;
-      initMap(data.lastPos);
+      initMap(accountData.lastPos);
       armMapLoadingHide(_mapLoadGen);
       // el marcador del jugador (meMarker) recién existe DESPUÉS de initMap() — refreshHud() de
       // arriba corrió antes, así que el aura del Legado (y cualquier otra cosa que dependa del
@@ -3365,7 +3444,7 @@ async function initContinueScreen(){
     btn.onclick = (e)=>{
       e.stopPropagation();
       const key = btn.dataset.classkey;
-      confirmDeleteCharacter(key, slots[key].name);
+      confirmDeleteCharacter(key, CLASSES[key].name);
     };
   });
   if(existingCount < 4){
@@ -3380,39 +3459,51 @@ async function initContinueScreen(){
       $("btnStart").classList.remove("hidden");
       $("btnBackToCharList").classList.remove("hidden");
       buildClassGrid();
-      // El nombre es tuyo como jugador, no de cada personaje — si ya tienes otro personaje,
-      // se reutiliza el mismo nombre y no se puede cambiar al crear uno nuevo.
-      const existingNames = Object.values(slots).filter(Boolean).map(s=>s.name).filter(Boolean);
-      if(existingNames.length > 0){
-        $("nameInput").value = existingNames[0];
-        $("nameInput").readOnly = true;
-        $("nameInput").title = "Tu nombre de jugador ya está definido por tu primer personaje.";
-      } else {
-        $("nameInput").value = "";
-        $("nameInput").readOnly = false;
-        $("nameInput").title = "";
-      }
+      // El nombre es de la CUENTA, no de cada héroe — si ya hay cuenta creada, se reutiliza y no
+      // se puede cambiar al agregar otro héroe.
+      $("nameInput").value = accountData.name;
+      $("nameInput").readOnly = true;
+      $("nameInput").title = "Tu nombre de jugador ya está definido.";
       updateStartBtn();
     };
   }
 }
 $("btnBackToCharList").onclick = ()=> initContinueScreen();
 
-/** Borra por completo el personaje guardado de esa clase (pide confirmación antes). */
+/** Borra por completo el héroe de esa clase (pide confirmación antes) — vuelve a estar disponible
+ *  para crear de nuevo desde cero. El resto de la cuenta (oro, materiales, inventario, mascotas,
+ *  progreso del mapa) NO se toca, es compartido con los demás héroes. El equipo que tenía puesto
+ *  vuelve al inventario compartido antes de borrarlo, para no perderlo (mismo criterio que
+ *  equipItem() ya usa al reemplazar un objeto puesto por otro). */
 async function deleteCharacterSlot(classKey){
   if(!AppStorage) return;
-  try{ await AppStorage.delete('player_'+classKey, false); }catch(e){ /* ya no existía */ }
-  // limpia también la clave vieja de "un solo personaje" (de antes de este sistema) — si no,
-  // la próxima vez que se cargue con todos los slots vacíos, la migración automática lo revive.
-  try{ await AppStorage.delete('player', false); }catch(e){ /* tampoco existía */ }
+  try{
+    const accountData = await loadAccount();
+    if(accountData){
+      const eq = (accountData.equippedByHero||{})[classKey] || {};
+      accountData.inventoryIds = accountData.inventoryIds || [];
+      accountData.inventoryDurability = accountData.inventoryDurability || [];
+      const returnToInventory = (inst)=>{
+        if(!inst || !inst.id) return;
+        accountData.inventoryIds.push(inst.id);
+        accountData.inventoryDurability.push(inst.durability || null);
+      };
+      ["weapon","offhand","armor","helmet","boots"].forEach(slot=> returnToInventory(eq[slot]));
+      (eq.accessory||[]).forEach(returnToInventory);
+      delete accountData.equippedByHero[classKey];
+      equippedByHeroCache = accountData.equippedByHero;
+      await AppStorage.set('player_account', JSON.stringify(accountData), false);
+    }
+    await AppStorage.delete('player_'+classKey, false);
+  }catch(e){ /* ya no existía */ }
 }
 function confirmDeleteCharacter(classKey, charName){
-  $("deleteCharSub").textContent = `Vas a eliminar a ${charName} (${CLASSES[classKey].name}) para siempre — perderás todo su progreso, equipo y oro. Esta acción no se puede deshacer.`;
+  $("deleteCharSub").textContent = `Vas a eliminar a tu ${CLASSES[classKey].name} para siempre — pierde su nivel, habilidades y misión activa. El equipo que tenía puesto vuelve a tu inventario compartido. Tu oro, materiales, inventario y mascotas (compartidos entre tus héroes) NO se pierden. Esta acción no se puede deshacer.`;
   $("deleteCharOverlay").classList.remove("hidden");
   $("btnConfirmDeleteChar").onclick = async ()=>{
     await deleteCharacterSlot(classKey);
     $("deleteCharOverlay").classList.add("hidden");
-    toast(`🗑️ ${charName} fue eliminado.`);
+    toast(`🗑️ Tu ${CLASSES[classKey].name} fue eliminado.`);
     initContinueScreen();
   };
   $("btnCancelDeleteChar").onclick = ()=> $("deleteCharOverlay").classList.add("hidden");
@@ -4897,26 +4988,44 @@ function pickMonsterTemplate(){
   return usePool[Math.floor(Math.random()*usePool.length)];
 }
 
+/** Reintenta una posición candidata (generada por `pickFn`) hasta que quede a `minSpacingM` de
+ *  cualquier monstruo YA activo en el mapa, o se agoten los intentos — pedido explícito: que los
+ *  enemigos no aparezcan amontonados/superpuestos entre sí. Antes cada función de spawn solo
+ *  evitaba pisarse con los OTROS monstruos de su propio lote (p.ej. zigzagSpawnPositions contra sí
+ *  misma), pero no contra los que ya estaban puestos de una tanda anterior — por eso se seguían
+ *  viendo amontonados: un monstruo nuevo podía caer justo encima de uno que ya llevaba un rato ahí.
+ *  `extraTaken` (opcional) son posiciones adicionales a evitar además de `monsters` — lo usa
+ *  zigzagSpawnPositions para tampoco pisar a otros del MISMO lote que se está armando ahora mismo
+ *  (esos todavía no están en `monsters`, recién se agregan al final de spawnMonsters). */
+function pickPositionAwayFromMonsters(pickFn, minSpacingM, maxAttempts, extraTaken){
+  let pos;
+  for(let attempts=0; attempts<(maxAttempts||6); attempts++){
+    pos = pickFn();
+    const tooClose = monsters.some(m=> distMeters(m,pos) < minSpacingM)
+      || (extraTaken && extraTaken.some(p=> distMeters(p,pos) < minSpacingM));
+    if(!tooClose) return pos;
+  }
+  return pos; // se agotaron los intentos — mejor quedarse con el último que loopear para siempre
+}
 /** Reparte posiciones en zigzag a los lados de por dónde sueles caminar (se usa tu último rumbo
  *  real como una aproximación de "por dónde va la calle", ya que no tenemos la geometría exacta
  *  de las vías) — así los enemigos no aparecen amontonados en cualquier lado, sino como si
- *  estuvieran repartidos a lado y lado de un camino, con una separación mínima entre ellos. */
+ *  estuvieran repartidos a lado y lado de un camino, con una separación mínima entre ellos (y de
+ *  cualquier otro monstruo que ya esté puesto en el mapa, ver pickPositionAwayFromMonsters). */
 function zigzagSpawnPositions(count, baseDistM){
   const roadRad = (lastMovementWorldBearing||0) * Math.PI/180;
   const perpRad = roadRad + Math.PI/2;
   const positions = [];
   const MIN_SPACING_M = 30;
   for(let i=0;i<count;i++){
-    let pos, attempts = 0;
-    do {
+    const pos = pickPositionAwayFromMonsters(()=>{
       const along = baseDistM + i*40 + Math.random()*15; // cada vez un poco más lejos por el "camino"
       const side = (i%2===0) ? 1 : -1; // zigzag: alterna izquierda/derecha
       const perpDist = (16 + Math.random()*14) * side;
       const dLatAlong = (along*Math.cos(roadRad))/111320, dLngAlong = (along*Math.sin(roadRad))/(111320*Math.cos(playerLatLng.lat*Math.PI/180));
       const dLatPerp = (perpDist*Math.cos(perpRad))/111320, dLngPerp = (perpDist*Math.sin(perpRad))/(111320*Math.cos(playerLatLng.lat*Math.PI/180));
-      pos = {lat: playerLatLng.lat+dLatAlong+dLatPerp, lng: playerLatLng.lng+dLngAlong+dLngPerp};
-      attempts++;
-    } while(positions.some(p=> distMeters(p,pos) < MIN_SPACING_M) && attempts < 6);
+      return {lat: playerLatLng.lat+dLatAlong+dLatPerp, lng: playerLatLng.lng+dLngAlong+dLngPerp};
+    }, MIN_SPACING_M, 6, positions);
     positions.push(pos);
   }
   return positions;
@@ -4940,7 +5049,10 @@ function spawnPack(){
   if(player.level < 7) return; // las manadas son muy duras antes del nivel 7
   const night = isNightTime();
   const dangerZone = currentDangerZone();
-  const center = randOffset(35 + Math.random()*110);
+  // La manada entera se agrupa cerca de este centro (±~20m, ver el forEach de abajo), así que el
+  // centro necesita más margen que un monstruo suelto (45m, no 30m) para no terminar superpuesta
+  // con otro monstruo/manada ya puesta en el mapa.
+  const center = pickPositionAwayFromMonsters(()=> randOffset(35 + Math.random()*110), 45, 8);
   const size = night ? (3 + Math.floor(Math.random()*2)) : (2 + Math.floor(Math.random()*2)); // 3-4 de noche, 2-3 de día
   const tpl = pickMonsterTemplate();
   const level = dangerZone ? rollDangerZoneChallenge(tpl).level : Math.max(1, player.level + Math.floor(Math.random()*3) - 1);
@@ -4998,7 +5110,7 @@ function maybeSpawnLoboNocturno(){
   if(!isMidnightHour()) return;
   if(monsters.some(m=>m.tpl.name==="Lobo Nocturno")) return; // ya hay uno activo
   if(Math.random() > 0.04) return; // muy rara vez, incluso a esa hora
-  const pos = randOffset(60 + Math.random()*160);
+  const pos = pickPositionAwayFromMonsters(()=> randOffset(60 + Math.random()*160), 30, 6);
   const m = makeMonster(LOBO_NOCTURNO_TEMPLATE, 50, pos, {special:true});
   monsters.push(m);
   toast("🌙 Algo aúlla en la oscuridad... un Lobo Nocturno ronda cerca.", 4500);
@@ -5060,10 +5172,13 @@ function maybeSpawnDungeonAuraEnemy(){
     // del radio — un abanico de 110° centrado en esa dirección para que no sea una línea recta
     // predecible, con un pequeño resguardo por si el abanico apuntara fuera del radio de niebla.
     const bearingToPortal = bearingBetween(playerLatLng, portal);
-    const bearing = bearingToPortal + (Math.random()*2-1)*55;
-    const spawnDist = 35 + Math.random()*70;
-    let pos = pointAtBearing(playerLatLng, spawnDist, bearing);
-    if(distMeters(pos, portal) > auraRadius) pos = randOffsetFrom(portal, Math.random()*auraRadius);
+    const pos = pickPositionAwayFromMonsters(()=>{
+      const bearing = bearingToPortal + (Math.random()*2-1)*55;
+      const spawnDist = 35 + Math.random()*70;
+      let p = pointAtBearing(playerLatLng, spawnDist, bearing);
+      if(distMeters(p, portal) > auraRadius) p = randOffsetFrom(portal, Math.random()*auraRadius);
+      return p;
+    }, 30, 6);
     const level = Math.max(1, player.level + Math.floor(Math.random()*3) - 1);
     const baseTpl = pool[Math.floor(Math.random()*pool.length)];
     const tpl = {...baseTpl, mapSprite: DUNGEON_AURA_ENEMY_MAP_SPRITES[baseTpl.spriteKey]};
@@ -5145,10 +5260,13 @@ function maybeSpawnShadowWolf(){
   });
 }
 
-/** El inventario tiene un límite de espacios — se puede ampliar de a UNO. Los primeros 4 espacios
- *  extra se compran con oro (cada vez un poco más caro); de ahí en adelante, con cristales. */
-const BASE_INVENTORY_SLOTS = 30;
-function inventoryMaxSlots(){ return BASE_INVENTORY_SLOTS + (player.extraInventorySlots||0); }
+/** El inventario tiene un límite de espacios que sube por NIVELES fijos — pedido explícito:
+ *  40→60→80→100→120→200 (ver INVENTORY_CAPACITY_TIERS, src/game/config/inventoryCapacity.js), no
+ *  de a un espacio suelto como antes. player.inventoryCapacityTier es el índice dentro de esa tabla. */
+function inventoryMaxSlots(){
+  const tier = Math.min(player.inventoryCapacityTier||0, INVENTORY_CAPACITY_TIERS.length-1);
+  return INVENTORY_CAPACITY_TIERS[tier];
+}
 /** El límite es por TIPO ÚNICO de objeto (igual que se muestra en pantalla, "X/34"), no por copia
  *  apilada — si ya tienes ese mismo objeto (mismo id), siempre se puede apilar una copia más sin
  *  importar cuántas tengas ya. Pasa el id del objeto que quieres agregar para chequear esto bien;
@@ -5172,15 +5290,17 @@ function pushItemSafe(item, silent){
   if(dot) dot.classList.add("show");
   return true;
 }
-/** ¿Cuánto cuesta el PRÓXIMO espacio que compres, y en qué moneda? Sube bastante cada vez que
- *  compras uno, para que se sienta una decisión real y no algo casi gratis. */
+/** ¿Cuánto cuesta y en qué moneda subir al SIGUIENTE nivel de capacidad? null si ya está al
+ *  máximo (INVENTORY_CAPACITY_TIERS.length-1). Sube bastante entre niveles (y de moneda,
+ *  oro→cristales en los últimos) para que cada ampliación se sienta una decisión real. */
 function nextSlotPurchaseInfo(){
-  const bought = player.extraInventorySlots||0;
-  if(bought < 4) return {currency:"gold", cost: Math.round(150 * Math.pow(1.8, bought))}; // 150, 270, 486, 875
-  return {currency:"crystal", cost:5};
+  const tier = player.inventoryCapacityTier||0;
+  if(tier >= INVENTORY_TIER_COST.length-1) return null;
+  return INVENTORY_TIER_COST[tier+1];
 }
 function buyNextInventorySlot(){
   const info = nextSlotPurchaseInfo();
+  if(!info){ toast("🎒 Ya tienes la capacidad máxima de inventario."); return; }
   if(info.currency==="gold"){
     if((player.gold||0) < info.cost){ toast(`🪙 Te faltan oro (necesitas ${info.cost}).`); return; }
     player.gold -= info.cost;
@@ -5188,51 +5308,42 @@ function buyNextInventorySlot(){
     if((player.crystals||0) < info.cost){ toast(`💎 Te faltan cristales (necesitas ${info.cost}).`); return; }
     player.crystals -= info.cost;
   }
-  player.extraInventorySlots = (player.extraInventorySlots||0) + 1;
+  player.inventoryCapacityTier = (player.inventoryCapacityTier||0) + 1;
   refreshHud();
   saveGame();
-  toast(`🎒 +1 espacio de inventario (ahora ${inventoryMaxSlots()} en total).`);
-}
-/** Cuánto costaría comprar N espacios de golpe (simula la misma escalada de precio que
- *  nextSlotPurchaseInfo, uno por uno) — se usa cuando varias recompensas de golpe no caben. */
-function inventorySlotsPurchaseCostForN(n){
-  let bought = player.extraInventorySlots||0;
-  let gold = 0, crystals = 0;
-  for(let i=0;i<n;i++){
-    if(bought < 4) gold += Math.round(150 * Math.pow(1.8, bought));
-    else crystals += 5;
-    bought++;
-  }
-  return {gold, crystals};
+  toast(`🎒 Inventario ampliado a ${inventoryMaxSlots()} espacios.`);
 }
 /** Cuando una recompensa de combate no cupo en el inventario, en vez de perderla directo se le
- *  ofrece al jugador comprar los espacios que faltan para conservarla — si dice que no (o no le
- *  alcanza), se pierde como siempre. Devuelve true si se conservaron todos. */
+ *  ofrece al jugador subir de nivel de capacidad para conservarla — si dice que no (o no le
+ *  alcanza, o ya está al máximo), se pierde como siempre. Devuelve true si se conservaron todos. */
 function offerToBuySpaceForOverflow(overflowItems, onResolved){
   if(!overflowItems.length){ if(onResolved) onResolved(); return; }
-  const need = overflowItems.length;
-  const cost = inventorySlotsPurchaseCostForN(need);
-  const parts = [];
-  if(cost.gold) parts.push(`🪙${cost.gold}`);
-  if(cost.crystals) parts.push(`💎${cost.crystals}`);
   const itemNames = overflowItems.map(it=>`${it.emoji} ${it.name}`).join(", ");
+  const info = nextSlotPurchaseInfo();
+  if(!info){
+    toast(`🎒 Ya tienes la capacidad máxima de inventario — perdiste: ${itemNames}`, 4200);
+    if(onResolved) onResolved();
+    return;
+  }
+  const costTxt = info.currency==="gold" ? `🪙${info.cost}` : `💎${info.cost}`;
+  const nextTierSize = INVENTORY_CAPACITY_TIERS[Math.min((player.inventoryCapacityTier||0)+1, INVENTORY_CAPACITY_TIERS.length-1)];
   showConfirm(
-    `Tu inventario está lleno — no hay espacio para: ${itemNames}.<br><br>¿Comprar ${need} espacio${need>1?"s":""} por ${parts.join(" + ")} para conservarlos?`,
+    `Tu inventario está lleno — no hay espacio para: ${itemNames}.<br><br>¿Ampliar tu inventario a ${nextTierSize} espacios por ${costTxt} para conservarlos?`,
     ()=>{
-      if((player.gold||0) < cost.gold || (player.crystals||0) < cost.crystals){
-        toast(`No te alcanza para comprar ese espacio — perdiste: ${itemNames}`, 4200);
+      const canAfford = info.currency==="gold" ? (player.gold||0)>=info.cost : (player.crystals||0)>=info.cost;
+      if(!canAfford){
+        toast(`No te alcanza para ampliar el inventario — perdiste: ${itemNames}`, 4200);
         if(onResolved) onResolved();
         return;
       }
-      player.gold -= cost.gold;
-      player.crystals = (player.crystals||0) - cost.crystals;
-      player.extraInventorySlots = (player.extraInventorySlots||0) + need;
-      overflowItems.forEach(it=> pushItemSafe(it)); // ahora sí caben todos
+      if(info.currency==="gold") player.gold -= info.cost; else player.crystals -= info.cost;
+      player.inventoryCapacityTier = (player.inventoryCapacityTier||0) + 1;
+      overflowItems.forEach(it=> pushItemSafe(it)); // un nivel de capacidad salta bastante — ahora sí caben todos
       refreshHud();
-      toast(`🎒 +${need} espacio${need>1?"s":""} — ¡conservaste: ${itemNames}!`, 4400);
+      toast(`🎒 Inventario ampliado a ${inventoryMaxSlots()} espacios — ¡conservaste: ${itemNames}!`, 4400);
       if(onResolved) onResolved();
     },
-    {icon:"🎒", title:"Inventario lleno", confirmLabel:"Comprar espacio",
+    {icon:"🎒", title:"Inventario lleno", confirmLabel:"Ampliar inventario",
       onCancel: ()=>{ toast(`🎒 Inventario lleno — perdiste: ${itemNames}`, 4200); if(onResolved) onResolved(); }}
   );
 }
@@ -7700,6 +7811,7 @@ function refreshHud(){
   titleEl.classList.toggle("hidden", !player.activeTitle);
   const auraClass = activeDungeonAuraClass();
   $("hudIcon").className = "p-icon" + (player.activeFrameClass ? " "+player.activeFrameClass : "") + (auraClass ? " "+auraClass : "");
+  $("hudIconEmoji").textContent = player.emoji;
   updateMeMarkerAura();
 }
 function pct(v,max){ return Math.max(0, Math.min(100, (v/max)*100)); }
@@ -7784,7 +7896,7 @@ function maxAccessorySlots(level, classKey){ return Math.min(classKey==="mago"?6
 /* ============================================================
    4. INVENTARIO Y EQUIPO
    ============================================================ */
-$("btnInv").onclick = ()=>{ closeFabMenu(); renderInventoryTabs(); renderInventory(); $("invOverlay").classList.remove("hidden"); $("invNotifDot").classList.remove("show"); };
+$("btnInv").onclick = ()=>{ closeFabMenu(); renderInventoryTabs(); renderInventoryClassTabs(); renderInventory(); $("invOverlay").classList.remove("hidden"); $("invNotifDot").classList.remove("show"); };
 $("btnCloseInv").onclick = ()=> $("invOverlay").classList.add("hidden");
 
 /* ---------- Ficha de personaje (tocando tu ícono en el HUD) ---------- */
@@ -8041,14 +8153,17 @@ function comparisonLine(item){
   return `<div class="stat-preview" style="color:var(--dim);">≈ Similar a tu ${cmp.equipped.name} equipado</div>`;
 }
 
+/** Pedido explícito: Equipo / Consumibles / Materiales / Especiales (antes: Todos/Mejoras/
+ *  Consumibles/Equipamiento/Otros). "Materiales" es especial — wood/stone/iron/crystals no son
+ *  objetos de player.inventory (son campos numéricos del jugador), así que su `test` no filtra
+ *  nada de verdad; renderInventory() la maneja aparte, ver renderMaterialsTab más abajo. */
 const INV_CATEGORIES = [
-  {key:"all",       label:"Todos",         test:()=>true},
-  {key:"upgrade",   label:"Mejoras",       test:it=> it.type==="stat"},
-  {key:"consumable",label:"Consumibles",   test:it=> it.type==="heal"||it.type==="mana"||it.type==="pet_item"},
-  {key:"equip",     label:"Equipamiento",  test:it=> it.type==="equip"},
-  {key:"other",     label:"Otros",         test:it=> !["stat","heal","mana","pet_item","equip"].includes(it.type)},
+  {key:"equip",      label:"Equipo",       test:it=> it.type==="equip"},
+  {key:"consumable", label:"Consumibles",  test:it=> it.type==="heal"||it.type==="mana"||it.type==="pet_item"||it.type==="stat"},
+  {key:"material",   label:"Materiales",   test:()=>false},
+  {key:"special",    label:"Especiales",   test:it=> !["equip","heal","mana","pet_item","stat"].includes(it.type)},
 ];
-let invActiveCategory = "all";
+let invActiveCategory = "equip";
 
 function renderInventoryTabs(){
   const wrap = $("invTabs");
@@ -8059,6 +8174,71 @@ function renderInventoryTabs(){
     btn.textContent = cat.label;
     btn.onclick = ()=>{ invActiveCategory = cat.key; renderInventoryTabs(); renderInventory(); };
     wrap.appendChild(btn);
+  });
+}
+
+/** Filtro rápido por clase — pedido explícito. Solo los objetos de equipo tienen `classKey`; en
+ *  cualquier otra pestaña (consumibles/especiales) este filtro no oculta nada (esos objetos son
+ *  universales), así que es seguro dejarlo siempre visible sin casos especiales por pestaña. */
+const INV_CLASS_FILTERS = [
+  {key:"all", label:"Todos"},
+  {key:"guerrero", label:"Guerrero"},
+  {key:"arquero", label:"Arquero"},
+  {key:"mago", label:"Mago"},
+  {key:"berserker", label:"Berserk"},
+];
+let invActiveClassFilter = "all";
+function renderInventoryClassTabs(){
+  const wrap = $("invClassTabs");
+  if(!wrap) return;
+  wrap.innerHTML = "";
+  INV_CLASS_FILTERS.forEach(cf=>{
+    const btn = document.createElement("button");
+    btn.className = "inv-cat-tab" + (cf.key===invActiveClassFilter ? " active" : "");
+    btn.textContent = cf.label;
+    btn.onclick = ()=>{ invActiveClassFilter = cf.key; renderInventoryClassTabs(); renderInventory(); };
+    wrap.appendChild(btn);
+  });
+}
+/** Pastilla de color + emoji de clase (🟥🟩🟦🟪 — pedido explícito) para la esquina de la
+ *  tarjeta de un objeto de equipo. Vacío para objetos universales (sin classKey). */
+function classBadgeHtml(item){
+  if(!item.classKey) return "";
+  const badge = CLASS_BADGE[item.classKey];
+  if(!badge) return "";
+  const className = (CLASSES[item.classKey]||{}).name || item.classKey;
+  return `<div class="icv-class-badge" title="${className}">${badge.dot}</div>`;
+}
+/** "Solo Arquero/Mago/Berserk" — pedido explícito, se muestra en objetos de OTRA clase distinta a
+ *  la del héroe activo (nunca en los tuyos ni en los universales). */
+function otherClassTagHtml(item){
+  if(!item.classKey || item.classKey===player.classKey) return "";
+  const className = (CLASSES[item.classKey]||{}).name || item.classKey;
+  return `<div class="icv-other-class">Solo ${className}</div>`;
+}
+/** Los 4 materiales que hoy existen de verdad en el juego (wood/stone/iron/crystals — campos
+ *  numéricos de player, no objetos de inventario). El pedido original mencionaba Cuero/Gemas como
+ *  ejemplo, pero ningún sistema del juego los produce o consume todavía — no se inventan acá,
+ *  solo se muestran los que sí tienen una fuente real (recolección/tienda). */
+const INV_MATERIALS = [
+  {key:"wood", label:"Madera", emoji:"🪵"},
+  {key:"stone", label:"Piedra", emoji:"🪨"},
+  {key:"iron", label:"Hierro", emoji:"🔩"},
+  {key:"crystals", label:"Cristales", emoji:"💎"},
+];
+/** Pestaña "Materiales" — tarjetas SINTÉTICAS leídas directo de player.wood/stone/iron/crystals,
+ *  no de player.inventory (esos campos numéricos siguen siendo la fuente de verdad para
+ *  recolección/construcción/tienda — no se tocan). Apiladas por naturaleza, no ocupan espacio del
+ *  inventario y nunca lo llenan. */
+function renderMaterialsTab(grid){
+  INV_MATERIALS.forEach(m=>{
+    const qty = player[m.key]||0;
+    const card = document.createElement("div");
+    card.className = "inv-card-v2";
+    card.innerHTML = `<div class="icv-icon">${m.emoji}</div>
+      <div class="icv-name">${m.label}</div>
+      <div class="icv-qty">x${qty}</div>`;
+    grid.appendChild(card);
   });
 }
 
@@ -8106,8 +8286,20 @@ function renderInventory(){
     seen.add(it.id);
     uniqueItems.push(it);
   });
+  $("invCount").textContent = `${uniqueItems.length}/${inventoryMaxSlots()}`;
+
+  // Materiales es una pestaña sintética (no filtra player.inventory) — se resuelve aparte y
+  // corta acá; no aplica capacidad/búsqueda/orden ni la tarjeta de "ampliar inventario".
+  if(invActiveCategory === "material"){
+    renderMaterialsTab(grid);
+    return;
+  }
+
   const cat = INV_CATEGORIES.find(c=>c.key===invActiveCategory) || INV_CATEGORIES[0];
   let filtered = uniqueItems.filter(cat.test);
+  if(invActiveClassFilter !== "all"){
+    filtered = filtered.filter(it=> !it.classKey || it.classKey===invActiveClassFilter);
+  }
   if(invSearchQuery.trim()){
     const q = invSearchQuery.trim().toLowerCase();
     filtered = filtered.filter(it=> it.name.toLowerCase().includes(q));
@@ -8118,50 +8310,72 @@ function renderInventory(){
   else if(invSortMode==="qty") filtered = filtered.slice().sort((a,b)=> countOf(b)-countOf(a));
   else filtered = filtered.slice().sort((a,b)=> rarityRank(b)-rarityRank(a));
 
-  $("invCount").textContent = `${uniqueItems.length}/${inventoryMaxSlots()}`;
+  // Equipamiento inteligente — pedido explícito: en la pestaña Equipo con el filtro de clase en
+  // "Todos", tus propias armas (+ universales) van primero; el resto queda agrupado debajo de un
+  // separador "Otras clases" (con su indicador "Solo X" en cada tarjeta, ver otherClassTagHtml) —
+  // así el inventario compartido entre los 4 héroes no se siente desordenado. Si ya hay un filtro
+  // de clase explícito, no hace falta reagrupar (el jugador ya pidió ver solo esa clase).
+  let myClassItems = filtered, otherClassItems = [];
+  if(invActiveCategory==="equip" && invActiveClassFilter==="all"){
+    myClassItems = filtered.filter(it=> !it.classKey || it.classKey===player.classKey);
+    otherClassItems = filtered.filter(it=> it.classKey && it.classKey!==player.classKey);
+  }
 
   if(filtered.length===0){
     grid.innerHTML = `<div class="empty-note" style="grid-column:1/-1;">${uniqueItems.length===0 ? "Aún no tienes objetos. ¡Gana combates para conseguir botín!" : "No se encontró nada con esos filtros."}</div>`;
   } else {
-    filtered.forEach(it=>{
-    const count = countOf(it);
-    const meta = equipItemMeta(it);
-    const card = document.createElement("div");
-    card.className = "inv-card-v2 " + meta.rc + (invSelectMode ? " selectable" : "") + (invSelectedIds.has(it.id) ? " selected" : "");
-    if(meta.styleAttr) card.style.cssText += meta.styleAttr;
-    const isEquippedSomewhere = it.type==="equip" && isItemCurrentlyEquipped(it);
-    const statLine = primaryStatLine(it);
-    card.innerHTML = `${meta.sparkles}
-      ${isEquippedSomewhere ? `<div class="icv-equipped-ribbon">EQUIPADO</div>` : ""}
-      ${invFavorites.has(it.id) ? `<div class="icv-fav">★</div>` : ""}
-      ${invLocked.has(it.id) ? `<div class="icv-lock">🔒</div>` : ""}
-      <div class="icv-icon">${iconFor(it)}</div>
-      <div class="icv-name">${it.name}</div>
-      ${statLine ? `<div class="icv-stat">${statLine}</div>` : ""}
-      ${it.reqLevel ? `<div class="icv-lvl">Nv. requerido ${it.reqLevel}</div>` : ""}
-      ${count>1 ? `<div class="icv-qty">x${count}</div>` : ""}`;
-    card.onclick = ()=>{
-      if(invSelectMode){
-        if(invSelectedIds.has(it.id)) invSelectedIds.delete(it.id); else invSelectedIds.add(it.id);
-        renderInventory();
-        return;
-      }
-      openInventoryDetail(it, count);
+    const buildCard = (it)=>{
+      const count = countOf(it);
+      const meta = equipItemMeta(it);
+      const card = document.createElement("div");
+      card.className = "inv-card-v2 " + meta.rc + (invSelectMode ? " selectable" : "") + (invSelectedIds.has(it.id) ? " selected" : "");
+      if(meta.styleAttr) card.style.cssText += meta.styleAttr;
+      const isEquippedSomewhere = it.type==="equip" && isItemCurrentlyEquipped(it);
+      const statLine = primaryStatLine(it);
+      card.innerHTML = `${meta.sparkles}
+        ${classBadgeHtml(it)}
+        ${isEquippedSomewhere ? `<div class="icv-equipped-ribbon">EQUIPADO</div>` : ""}
+        ${invFavorites.has(it.id) ? `<div class="icv-fav">★</div>` : ""}
+        ${invLocked.has(it.id) ? `<div class="icv-lock">🔒</div>` : ""}
+        <div class="icv-icon">${iconFor(it)}</div>
+        <div class="icv-name">${it.name}</div>
+        ${statLine ? `<div class="icv-stat">${statLine}</div>` : ""}
+        ${otherClassTagHtml(it)}
+        ${it.reqLevel ? `<div class="icv-lvl">Nv. requerido ${it.reqLevel}</div>` : ""}
+        ${count>1 ? `<div class="icv-qty">x${count}</div>` : ""}`;
+      card.onclick = ()=>{
+        if(invSelectMode){
+          if(invSelectedIds.has(it.id)) invSelectedIds.delete(it.id); else invSelectedIds.add(it.id);
+          renderInventory();
+          return;
+        }
+        openInventoryDetail(it, count);
+      };
+      return card;
     };
-    grid.appendChild(card);
-    });
+    myClassItems.forEach(it=> grid.appendChild(buildCard(it)));
+    if(otherClassItems.length){
+      const sep = document.createElement("div");
+      sep.className = "inv-section-sep";
+      sep.textContent = "Otras clases";
+      grid.appendChild(sep);
+      otherClassItems.forEach(it=> grid.appendChild(buildCard(it)));
+    }
   }
 
-  // Tarjeta "+" para comprar el próximo espacio — siempre al final, en cualquier categoría,
-  // incluso si el inventario todavía está vacío.
+  // Tarjeta "+" para ampliar el inventario — siempre al final, en cualquier categoría, incluso si
+  // el inventario todavía está vacío. Se oculta sola al llegar al nivel máximo de capacidad
+  // (nextSlotPurchaseInfo devuelve null ahí).
   if(!invSelectMode){
-    const buyCard = document.createElement("div");
     const info = nextSlotPurchaseInfo();
-    buyCard.className = "inv-card-v2 inv-buy-slot-card";
-    buyCard.innerHTML = `<div class="icv-icon">➕</div><div class="icv-name">Espacio extra</div>
-      <div class="icv-stat">${info.currency==="gold"?"🪙":"💎"} ${info.cost}</div>`;
-    buyCard.onclick = ()=>{ buyNextInventorySlot(); renderInventory(); };
-    grid.appendChild(buyCard);
+    if(info){
+      const buyCard = document.createElement("div");
+      buyCard.className = "inv-card-v2 inv-buy-slot-card";
+      buyCard.innerHTML = `<div class="icv-icon">➕</div><div class="icv-name">Ampliar inventario</div>
+        <div class="icv-stat">${info.currency==="gold"?"🪙":"💎"} ${info.cost}</div>`;
+      buyCard.onclick = ()=>{ buyNextInventorySlot(); renderInventory(); };
+      grid.appendChild(buyCard);
+    }
   }
 }
 /** ¿Este objeto (o uno igual a él) ya está puesto en algún hueco de equipo ahora mismo? */
@@ -8360,6 +8574,7 @@ $("btnClosePetItemPick").onclick = ()=> $("petItemPickOverlay").classList.add("h
 function openBattleInventory(){
   inBattleItemMode = true;
   renderInventoryTabs();
+  renderInventoryClassTabs();
   renderInventory();
   $("invOverlay").classList.remove("hidden");
 }
@@ -9362,12 +9577,20 @@ function repositionPackStageMembers(){
   // muy separada"). pickPackClusterAnchor los agrupa bien juntos, en zigzag, cada uno un poco más
   // atrás que el anterior — ver esa función en battlePerspective.js.
   const packBaseAnchor = scene.soloEnemyAnchor || pickGroundAnchor(scene, 0);
+  // Pedido explícito: cuando la manada se descompleta (uno cae en combate), los sobrevivientes se
+  // ven un poco más juntos entre sí — en vez de dejar el hueco vacío del que cayó. El índice que
+  // abre el abanico (pickPackClusterAnchor) pasa a ser el RANGO entre los vivos (0,1,2...) en vez
+  // de la posición original en el arreglo; el cuerpo caído se queda clavado en SU posición
+  // original (no se re-rankea) para que no "salte" de lugar al morir, solo se desvanece ahí mismo.
+  let aliveRank = 0;
   Array.from(wrap.children).forEach((el, idx)=>{
     const m = battleState.mons[idx];
     if(!m) return;
     if(!packStageShadowEls[idx]){ packStageShadowEls[idx] = createPerspectiveShadow(); stageEl.appendChild(packStageShadowEls[idx]); }
     const flying = !!(m.tpl && m.tpl.flying);
-    const groundPoint = pickPackClusterAnchor(packBaseAnchor, idx, scene);
+    const clusterIdx = m.curHp>0 ? aliveRank : idx;
+    if(m.curHp>0) aliveRank++;
+    const groundPoint = pickPackClusterAnchor(packBaseAnchor, clusterIdx, scene);
     const anchor = flying ? pickFlyingAnchor(groundPoint) : groundPoint;
     const shadow = flying ? {x:anchor.shadowX, y:anchor.shadowY} : anchor;
     positionEntityOnStage(el, packStageShadowEls[idx], {
@@ -9471,6 +9694,7 @@ function startBattle(mon, opts){
   refreshBattleStagePerspective("solo", !!(mon.tpl && mon.tpl.flying));
   playBattleEntranceFx();
   playCharacterSlideInFx(); // el retraso hasta que se revele la escena vive en el CSS (animation-delay), no acá
+  maybeShowBattleTutorial();
 }
 
 function updateBattleBars(){
@@ -9706,6 +9930,7 @@ function renderMoveGrid(){
   }
 
   const itemBtn = document.createElement("button");
+  itemBtn.id = "btnBattleUseItem"; // ancla del tutorial de batalla (ver maybeShowBattleTutorial) — este botón se recrea en cada render, así que el id se re-agrega acá cada vez.
   itemBtn.className = "flee-btn";
   itemBtn.style.borderColor = "var(--accent)";
   itemBtn.style.color = "var(--accent)";
@@ -9752,6 +9977,92 @@ function renderMoveGrid(){
     }
   });
 }
+
+/** ============================================================
+ *  TUTORIAL DE BATALLA — pedido explícito: aparece solo la primera vez, señalando los botones
+ *  REALES del combate (no una maqueta aparte) uno por uno, con una tarjeta explicando cada uno.
+ *  El flag "ya lo vi" (player.seenBattleTutorial) es de CUENTA, no de héroe — una vez visto, no
+ *  vuelve a salir con ningún otro héroe (ver freshAccountData/saveGame/rebuildPlayer).
+ *  ============================================================ */
+const BATTLE_TUTORIAL_STEPS = [
+  { selector:".combatant.player", title:"Tu vida y maná",
+    text:"Esta es tu barra de ❤️ Vida y 🔵 Maná. Si tu vida llega a 0, pierdes el combate — vigílala de cerca." },
+  { selector:"#movegrid .move-btn", title:"Elige un movimiento",
+    text:"Toca un movimiento para atacar o usar una habilidad. Cada uno gasta una cantidad distinta de maná." },
+  { selector:"#btnBattleUseItem", title:"Usar un objeto",
+    text:"Acá puedes usar una poción u otro objeto — ojo: hacerlo gasta tu turno, así que úsalo con cuidado." },
+  { selector:"#btnFleeCorner", title:"Huir del combate",
+    text:"Si el combate se pone muy difícil, puedes huir desde este botón." },
+];
+let battleTutorialStepIdx = 0;
+/** Se llama al final de startBattle()/startPackBattle() — no hace nada si ya se vio antes. El
+ *  setTimeout deja que la animación de entrada del combate (playBattleEntranceFx/
+ *  playCharacterSlideInFx) termine de acomodar todo antes de medir posiciones reales. */
+function maybeShowBattleTutorial(){
+  if(!player || player.seenBattleTutorial) return;
+  setTimeout(()=>{
+    if(!player || player.seenBattleTutorial) return; // pudo cerrarse el combate mientras esperaba
+    battleTutorialStepIdx = 0;
+    $("battleTutorialOverlay").classList.remove("hidden");
+    showBattleTutorialStep();
+  }, 550);
+}
+function showBattleTutorialStep(){
+  const step = BATTLE_TUTORIAL_STEPS[battleTutorialStepIdx];
+  const spotlight = $("battleTutorialSpotlight");
+  const card = $("battleTutorialCard");
+  if(!step){ closeBattleTutorial(); return; }
+  const target = document.querySelector(step.selector);
+  if(target){
+    const r = target.getBoundingClientRect();
+    const pad = 8;
+    spotlight.style.left = (r.left-pad)+"px";
+    spotlight.style.top = (r.top-pad)+"px";
+    spotlight.style.width = (r.width+pad*2)+"px";
+    spotlight.style.height = (r.height+pad*2)+"px";
+    spotlight.classList.remove("hidden");
+    // La tarjeta va arriba o abajo del elemento resaltado, lo que tenga más espacio libre en pantalla.
+    const spaceBelow = window.innerHeight - r.bottom;
+    const spaceAbove = r.top;
+    card.style.left = Math.max(10, Math.min(window.innerWidth-10-card.offsetWidth, r.left)) + "px";
+    if(spaceBelow >= spaceAbove){
+      card.style.top = (r.bottom + pad + 12) + "px";
+      card.style.bottom = "auto";
+    } else {
+      card.style.bottom = (window.innerHeight - r.top + pad + 12) + "px";
+      card.style.top = "auto";
+    }
+  } else {
+    // Si el botón todavía no existe en el DOM en este paso, se deja un "agujero" de tamaño 0 en el
+    // centro (el box-shadow del spotlight igual oscurece toda la pantalla parejo) y la tarjeta
+    // centrada, en vez de romper el tutorial por no encontrar dónde apuntar.
+    spotlight.style.left = "50%"; spotlight.style.top = "50%";
+    spotlight.style.width = "0px"; spotlight.style.height = "0px";
+    spotlight.classList.remove("hidden");
+    card.style.left = "50%"; card.style.top = "50%"; card.style.bottom = "auto";
+    card.style.transform = "translate(-50%,-50%)";
+  }
+  if(target) card.style.transform = "none";
+  $("battleTutorialTitle").textContent = step.title;
+  $("battleTutorialText").textContent = step.text;
+  $("battleTutorialProgress").textContent = `${battleTutorialStepIdx+1}/${BATTLE_TUTORIAL_STEPS.length}`;
+  $("btnBattleTutorialNext").textContent = (battleTutorialStepIdx === BATTLE_TUTORIAL_STEPS.length-1) ? "¡Entendido!" : "Siguiente";
+}
+function closeBattleTutorial(){
+  $("battleTutorialOverlay").classList.add("hidden");
+  if(player && !player.seenBattleTutorial){
+    player.seenBattleTutorial = true;
+    saveGame();
+  }
+}
+$("btnBattleTutorialNext").onclick = ()=>{
+  battleTutorialStepIdx++;
+  showBattleTutorialStep();
+};
+$("btnBattleTutorialSkip").onclick = closeBattleTutorial;
+window.addEventListener("resize", ()=>{
+  if(!$("battleTutorialOverlay").classList.contains("hidden")) showBattleTutorialStep();
+});
 
 function fleeBattle(){
   clearTurnTimer();
@@ -12608,6 +12919,7 @@ function startPackBattle(packMons, opts){
   refreshBattleStagePerspective("pack");
   playBattleEntranceFx();
   playCharacterSlideInFx(); // el retraso hasta que se revele la escena vive en el CSS (animation-delay), no acá
+  maybeShowBattleTutorial();
 }
 
 function currentPackTarget(){ return battleState.mons[battleState.selectedTarget]; }
@@ -12629,7 +12941,13 @@ function renderPackStage(){
   // pickPackClusterAnchor los abre en abanico usando la calle libre (en vez de amontonarlos en un
   // cuadradito chico), ya no hace falta achicarlos tanto para que "entren" — pedido explícito:
   // "si son solo dos o tres no los hagas pequeños" (y con 4-5 tampoco hace falta exagerar).
-  const size = count<=2 ? 72 : count===3 ? 62 : count===4 ? 52 : 42;
+  // Pedido explícito adicional: si la manada se va achicando (uno cae en combate), los que quedan
+  // se ven un poco más grandes — el tamaño se calcula sobre cuántos siguen VIVOS, no sobre el total
+  // original de la manada (que nunca baja: los caídos se quedan en el arreglo, solo marcados
+  // .dead). "||count" es un resguardo para el instante en que ya no queda ninguno vivo (la
+  // batalla ya está terminando ahí, no importa mucho el tamaño).
+  const aliveCount = battleState.mons.filter(m=>m.curHp>0).length || count;
+  const size = aliveCount<=2 ? 72 : aliveCount===3 ? 62 : aliveCount===4 ? 52 : 42;
   battleState.mons.forEach((m, idx)=>{
     const dead = m.curHp <= 0;
     const justDied = dead && !m._deadRendered;
@@ -14803,7 +15121,8 @@ function rotatingItemToEquip(tpl, tagPrefix, isWeeklyOffer){
   const rarityValue = {common:70, uncommon:140, rare:260, epic:420, legendary:650}[tpl.rarity] || 200;
   const item = {
     id: tagPrefix+"_"+tpl.id, name: tpl.name, emoji: tpl.emoji, type:"equip", slot:"weapon",
-    classKey: tpl.classKey, rarity: tpl.rarity, bonuses: tpl.bonuses, proc: tpl.proc||null,
+    classKey: tpl.classKey, requiredClass: CLASS_ID_MAP[tpl.classKey]||null,
+    rarity: tpl.rarity, bonuses: tpl.bonuses, proc: tpl.proc||null,
     value: rarityValue, reqLevel: 1, isWeeklyOffer: !!isWeeklyOffer,
     desc: tpl.desc + (tpl.proc ? ` · ${PROC_LABELS[tpl.proc.type]} (${Math.round(tpl.proc.chance*100)}%)` : "") + " · rotativo"
   };
@@ -14849,7 +15168,8 @@ function getEliteWeaponOffer(){
   const item = {
     id: "elite_weapon_"+player.classKey+"_"+tier,
     name: `${base.name} Superior${tier>0?" +"+tier:""}`,
-    emoji: base.emoji, type:"equip", slot:"weapon", classKey: player.classKey, rarity:"legendary",
+    emoji: base.emoji, type:"equip", slot:"weapon", classKey: player.classKey,
+    requiredClass: CLASS_ID_MAP[player.classKey]||null, rarity:"legendary",
     isEliteWeapon:true, eliteTier: tier,
     bonuses: {atk: targetAtk, spd: Math.floor(tier/2)},
     value: goldCost,
