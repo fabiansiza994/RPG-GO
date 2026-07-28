@@ -62,7 +62,15 @@
       }
       this._el = el;
       this._latlng = latlng;
-      this._marker = new maplibregl.Marker({element: el, anchor:'center', offset:this._anchorOffset, draggable: !!opts.draggable})
+      // pitchAlignment/rotationAlignment:'map' (opt-in, ej. el círculo mágico bajo el jugador —
+      // ver createMeMagicCircle en main.js) hace que MapLibre incline y rote el propio elemento
+      // HTML con la cámara, como una calcomanía apoyada en el suelo, en vez de quedar siempre de
+      // frente a la pantalla (comportamiento normal de marker, el que sigue usando todo lo demás:
+      // retrato del jugador, monstruos, NPCs, etc.).
+      const markerOpts = {element: el, anchor:'center', offset:this._anchorOffset, draggable: !!opts.draggable};
+      if(opts.pitchAlignment) markerOpts.pitchAlignment = opts.pitchAlignment;
+      if(opts.rotationAlignment) markerOpts.rotationAlignment = opts.rotationAlignment;
+      this._marker = new maplibregl.Marker(markerOpts)
         .setLngLat(toLngLat(latlng));
       if(opts.draggable){
         this._marker.on('dragend', ()=>{

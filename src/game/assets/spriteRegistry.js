@@ -330,6 +330,16 @@ export const ARQUERO_BATTLE_SPRITES = {
   arrow: `/assets/sprites/arquero-battle/flecha.png?v=${ARQUERO_SPRITE_V}`,
 };
 
+/** Círculo mágico rúnico bajo los pies del jugador en el mapa — uno distinto por clase, elegido
+ *  según player.classKey (ver createMeMagicCircle en main.js). Cada PNG es un círculo cuadrado
+ *  visto de arriba con fondo transparente; la inclinación/rotación con la cámara la produce
+ *  MapLibre (pitchAlignment/rotationAlignment:'map' en el marcador), no el propio recurso. */
+export const CLASS_MAGIC_CIRCLE_SPRITES = {
+  guerrero: "/new_elements/circle_guerrero.png",
+  mago: "/new_elements/circle_mago.png",
+  arquero: "/new_elements/circle_arquero.png",
+  berserker: "/new_elements/circle_berserk.png",
+};
 /** Arte encargado a medida para la pantalla "Bienvenido de nuevo" (selección de personaje).
  *  Cada tarjeta de clase es una imagen COMPLETA con el marco ornamentado, ícono de clase, botón
  *  de continuar y cajas vacías ya dibujadas — el HTML solo superpone texto en las coordenadas

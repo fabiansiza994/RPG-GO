@@ -1140,6 +1140,40 @@
     top:50%;left:50%; transform:translate(-50%,-50%); animation:pulse 1.8s ease-out infinite; pointer-events:none;}
   @keyframes pulse{0%{transform:translate(-50%,-50%) scale(.08); opacity:.95;} 100%{transform:translate(-50%,-50%) scale(1); opacity:0;}}
 
+  /* Círculo mágico rúnico bajo los pies del jugador — a diferencia del pulse-ring de arriba (que
+     vive DENTRO del marcador del jugador y se inclina con una rotateX falsa), este es su PROPIO
+     marcador de MapLibre con pitchAlignment/rotationAlignment:'map' (ver createMeMagicCircle en
+     main.js): la inclinación/rotación real las produce la cámara del mapa, no CSS. Por eso esta
+     capa no necesita transform-style/rotateX propios — solo gira sobre sí misma (el aro de runas)
+     y pulsa brillo/opacidad; MapLibre ya se encarga de "acostarla" sobre el terreno.
+     Tamaño en pantalla: --magic-circle-px (ver updateMagicCircleScale en main.js) — representa el
+     rango real de alcance del jugador (ENGAGE_RANGE_M), así que es bastante más grande que el
+     propio personaje, y crece/encoge con el zoom igual que el terreno de abajo. */
+  /* position:absolute + top/left:50% + translate(-50%,-50%) en vez de relative: el tamaño de este
+     div CAMBIA con el zoom (--magic-circle-px), y su padre (el propio marker de MapLibre, tamaño
+     fijo = el ícono base) es quien de verdad determina el punto de anclaje geográfico — así el
+     círculo crece/encoge siempre SIMÉTRICO alrededor de ese punto (perfectamente centrado en el
+     jugador) en vez de desbordarse solo hacia abajo/derecha cuando --magic-circle-px supera el
+     tamaño del ícono base. */
+  .magic-circle-wrap{position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:var(--magic-circle-px, 280px); height:var(--magic-circle-px, 280px); pointer-events:none;}
+  .magic-circle-outer{position:absolute; top:50%; left:50%; border-radius:50%; will-change:transform, opacity;
+    width:100%; height:100%;
+    transform:translate(-50%,-50%);
+    animation: magicCircleSpin 46s linear infinite, magicCircleGlowOuter 3.6s ease-in-out infinite;
+  }
+  @keyframes magicCircleSpin{
+    from{transform:translate(-50%,-50%) rotate(0deg);}
+    to{transform:translate(-50%,-50%) rotate(360deg);}
+  }
+  @keyframes magicCircleGlowOuter{
+    0%,100%{opacity:.6; filter:brightness(.9);}
+    50%{opacity:.95; filter:brightness(1.3);}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .magic-circle-outer{animation:none;}
+  }
+
   /* otro jugador real (multijugador por proximidad) */
   .op-marker{display:flex; flex-direction:column; align-items:center; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
   .op-emoji{font-size:26px; line-height:1;}
@@ -1967,10 +2001,28 @@
   .sprite.hitshake{animation:breathe 3.4s ease-in-out infinite, shake .55s;}
   .sprite.attackp{animation:breathe 3.4s ease-in-out infinite, lungeR .5s;}
   .sprite.attacke{animation:breathe 3.4s ease-in-out infinite, lungeL .5s;}
-  #spriteEnemy.hitshake{animation:breatheFlipped 3.4s ease-in-out infinite, shake .55s;}
+  /* Pedido explícito: al recibir un golpe, el enemigo ya no solo "tiembla" en el lugar (shake) —
+     retrocede (se aleja del jugador, que está a la izquierda) por un instante y vuelve solo a su
+     posición normal. translateX positivo = derecha = alejándose, mismo sentido que ya usa lungeL
+     (-18px, hacia el jugador) para el ataque, solo que invertido.
+     OJO: el desplazamiento usa calc(14px + 12%) en vez de un píxel fijo — %  en translateX() se
+     mide sobre el ANCHO PROPIO del elemento animado. Los enemigos con emoji genérico (.sprite,
+     font-size:64px) y los que tienen arte propio (#spriteEnemy img[data-lobo/demonio/dragon/...],
+     hasta 240px de ancho — ver más arriba) NO miden lo mismo; con un valor fijo en px, el
+     retroceso se veía perfecto en los emoji chicos pero casi imperceptible en las ilustraciones
+     grandes (26px es ~40% del ancho de un emoji, pero solo ~11% del ancho de un Lobo Umbrío/
+     Demonio Menor). El 12% + una base de 14px lo mantiene visible en ambos casos sin que las
+     ilustraciones grandes salgan volando del escenario (.stage tiene overflow:hidden). */
+  #spriteEnemy.hitshake{animation:breatheFlipped 3.4s ease-in-out infinite, enemyRecoil 1s ease-out;}
   #spriteEnemy.attacke{animation:breatheFlipped 3.4s ease-in-out infinite, lungeL .5s;}
   @keyframes breathe{0%,100%{transform:scale(1);}50%{transform:scale(1.022);}}
   @keyframes breatheFlipped{0%,100%{transform:scaleX(-1) scale(1);}50%{transform:scaleX(-1) scale(1.022);}}
+  @keyframes enemyRecoil{
+    0%{transform:translateX(0);}
+    18%{transform:translateX(calc(14px + 12%));}
+    62%{transform:translateX(calc(14px + 12%));}
+    100%{transform:translateX(0);}
+  }
   .sprite{position:relative;}
   /* Sacudida larga del enemigo para Terremoto (Guerrero) — pedido explícito: ~2s de temblor antes
      de que se calcule/revele el daño (ver triggerGuerreroEarthquakeShake en main.js). #spriteEnemy
@@ -2308,7 +2360,7 @@
   .pack-stage-mon .psm-emoji{animation:breatheFlipped 3.2s ease-in-out infinite;}
   .pack-stage-mon .psm-emoji.attackp{animation:breatheFlipped 3.2s ease-in-out infinite, lungeR .5s;}
   .pack-stage-mon .psm-emoji.attacke{animation:breatheFlipped 3.2s ease-in-out infinite, lungeL .5s;}
-  .pack-stage-mon .psm-emoji.hitshake{animation:breatheFlipped 3.2s ease-in-out infinite, shake .55s;}
+  .pack-stage-mon .psm-emoji.hitshake{animation:breatheFlipped 3.2s ease-in-out infinite, enemyRecoil 1s ease-out;}
   .pack-stage-mon{position:relative;}
 
   /* Aviso de "va a atacar": un "!" aparece un instante arriba del miembro de la manada que le

@@ -122,6 +122,7 @@ import {
   CLASS_PORTRAITS,
   CLASS_WALK_SPRITES,
   CLASS_BATTLE_SPRITES,
+  CLASS_MAGIC_CIRCLE_SPRITES,
   ARMOR_ICON_PATH,
   ESPADA_LUNAR_ICON_PATH,
   DUNGEON_PORTAL_SPRITES,
@@ -2544,7 +2545,7 @@ let selectedClass = null;
 let selectedGender = "m"; // 'm' | 'f' — solo cambia la apariencia, nunca las estadísticas
 let takenClasses = new Set(); // clases que ya tienen personaje creado (uno de cada tipo permitido)
 let playerLatLng = null; // {lat,lng}
-let map, meMarker, meRing;
+let map, meMarker, meRing, meMagicCircle;
 let monsters = []; // {id, marker, lat, lng, level, tpl, hp, maxHp, atk, def, spd, moves}
 let activeQuest = null; // {template, zone, itemObtained, targetSpawned, targetMonId, npcMarker, routeLine, destMarker}
 let gpsMode = false; // arranca en modo simulación; el GPS solo se activa con un toque explícito del usuario
@@ -3870,6 +3871,7 @@ function teardownMapIfExists(){
   map = null;
   meMarker = null;
   meRing = null;
+  meMagicCircle = null;
   // El remove() de arriba ya destruyó el canvas/WebGL/DOM del mapa viejo entero — cualquier
   // marcador o capa que este juego seguía referenciando por su cuenta (torres, fogatas, zonas
   // peligrosas, monstruos activos, etc.) ahora apunta a algo que ya no existe. Antes esto nunca
@@ -3922,6 +3924,39 @@ const GATHER_CANCEL_STRIKES = 3;
 const MAP_ENTRY_ZOOM = DEFAULT_ZOOM - 4;
 const MAP_ENTRY_ZOOM_ANIM_MS = 1600;
 
+/** Tamaño NOMINAL (de anclaje) del marcador del círculo mágico — no es su tamaño visual real (ese
+ *  lo controla --magic-circle-px vía updateMagicCircleScale, más abajo, y puede ser mucho más
+ *  grande). Solo hace falta un valor fijo acá para que MapLibre calcule el punto de anclaje del
+ *  marcador (su centro); .magic-circle-wrap se centra sobre ESE punto sin importar cuánto crezca
+ *  (ver position:absolute + translate(-50%,-50%) en main.css), así que este número es irrelevante
+ *  para qué tan grande o centrado se ve el círculo en pantalla. */
+const MAGIC_CIRCLE_ANCHOR_PX = 48;
+/** Crea el círculo mágico rúnico del jugador como su PROPIO marcador (independiente de meMarker),
+ *  anclado exactamente a la misma coordenada real que el personaje. Va como marcador aparte (no
+ *  como un div más dentro de meIcon) porque necesita pitchAlignment/rotationAlignment:'map' —
+ *  eso es lo que hace que MapLibre lo incline/rote de verdad con la cámara (como una calcomanía
+ *  apoyada en el suelo) en vez de quedar siempre de frente a la pantalla como cualquier otro
+ *  marcador HTML del juego (retrato del jugador incluido). zIndexOffset negativo para que el
+ *  personaje (zIndexOffset:1000 en meMarker) siempre quede dibujado por encima. Pedido explícito:
+ *  representa el rango real de alcance del jugador (ENGAGE_RANGE_M) — su tamaño en pantalla lo
+ *  calcula updateMagicCircleScale, no este tamaño nominal. */
+function createMeMagicCircle(latlng){
+  const circleSrc = CLASS_MAGIC_CIRCLE_SPRITES[player.classKey];
+  if(!circleSrc) return null; // clase sin círculo dedicado todavía — sin marcador, nada que romper
+  const icon = L.divIcon({
+    className: '',
+    html: `<div class="magic-circle-wrap" data-class="${player.classKey}">
+      <img class="magic-circle-outer" src="${circleSrc}" alt="">
+    </div>`,
+    iconSize: [MAGIC_CIRCLE_ANCHOR_PX, MAGIC_CIRCLE_ANCHOR_PX],
+    iconAnchor: [MAGIC_CIRCLE_ANCHOR_PX/2, MAGIC_CIRCLE_ANCHOR_PX/2],
+  });
+  return L.marker([latlng.lat, latlng.lng], {
+    icon, interactive:false, zIndexOffset:-500,
+    pitchAlignment:'map', rotationAlignment:'map',
+  }).addTo(map);
+}
+
 function initMap(savedPos){
   const start = savedPos || playerLatLng || {lat:4.710989, lng:-74.072090}; // fallback: Bogotá
   const detectedCity = detectCityAndLoadWorldData(start.lat, start.lng);
@@ -3962,12 +3997,19 @@ function initMap(savedPos){
     ? `<img src="${initialSrc}" class="me-portrait" alt="">`
     : `<div class="me-marker">${player.emoji}</div>`;
   const lampClass = isNightTime() ? "street-lamp lit" : "street-lamp";
+  // Pedido explícito: ya no se dibuja el aro celeste de alcance (pulse-ring) alrededor del propio
+  // jugador — el círculo mágico rúnico (createMeMagicCircle) es ahora el único elemento debajo del
+  // personaje. El aro seguía existiendo con la misma inclinación falsa (rotateX vía CSS) que se
+  // reemplazó por el círculo con pitchAlignment/rotationAlignment reales; dejarlos juntos se veía
+  // redundante y "de más". El resto de los usos de ring-tilt-wrap (fogatas, santuarios, monstruos)
+  // no se tocan, son anillos de alcance distintos y siguen igual.
   const meIcon = L.divIcon({className:'', html:`<div class="me-marker-wrap" style="position:relative; display:flex; align-items:center; justify-content:center; width:110px; height:60px;">
       <div class="me-marker-dark-flame"></div>
       <div class="${lampClass}" style="position:absolute; left:2px; top:8px;">🏮</div>
       <div class="${lampClass}" style="position:absolute; right:2px; top:8px;">🏮</div>
-      <div class="ring-tilt-wrap"><div class="pulse-ring"></div></div>${meInner}</div>`, iconSize:[120,70], iconAnchor:[60,52]});
+      ${meInner}</div>`, iconSize:[120,70], iconAnchor:[60,52]});
   meMarker = L.marker([start.lat,start.lng], {icon:meIcon, zIndexOffset:1000}).addTo(map);
+  meMagicCircle = createMeMagicCircle(start);
   playerLatLng = start;
 
   // Cada elemento decorativo del mapa se dibuja en su propio try/catch — un error en cualquiera de
@@ -4419,6 +4461,7 @@ function movePlayerTo(lat,lng, follow=false){
   updatePlayerFacing(prev, {lat,lng});
   playerLatLng = {lat,lng};
   meMarker.setLatLng([lat,lng]);
+  if(meMagicCircle) meMagicCircle.setLatLng([lat,lng]);
   if(follow) map.panTo([lat,lng], {animate:true});
   if(prev && gpsMode){
     const segment = distMeters(prev, playerLatLng);
@@ -4666,6 +4709,22 @@ function updateEngageRingRadius(){
   const radiusPx = (ENGAGE_RANGE_M / metersPerPixel) * ENGAGE_RING_VISUAL_SCALE;
   document.documentElement.style.setProperty("--engage-range-px", Math.round(radiusPx)+"px");
 }
+/** El círculo mágico (createMeMagicCircle) es un marcador HTML normal, que por su cuenta NUNCA
+ *  cambia de tamaño en pantalla al hacer zoom (a diferencia de las capas reales del mapa, que sí
+ *  se ven más grandes/chicas). Pedido explícito: representa el rango real de alcance del jugador
+ *  (ENGAGE_RANGE_M=100m, el mismo que antes dibujaba el aro celeste ya quitado) — mismo cálculo
+ *  que updateEngageRingRadius de arriba (metros → píxeles según zoom/latitud, con el mismo factor
+ *  ENGAGE_RING_VISUAL_SCALE ya afinado para que no tape media pantalla), así que crece/encoge con
+ *  el zoom exactamente como el terreno real de abajo, y su diámetro SIGNIFICA algo (hasta dónde
+ *  llega el jugador), no un tamaño arbitrario. */
+function updateMagicCircleScale(){
+  if(!map || !map.getZoom || !playerLatLng) return;
+  const zoom = map.getZoom();
+  const metersPerPixel = 156543.03392 * Math.cos(playerLatLng.lat*Math.PI/180) / Math.pow(2, zoom);
+  const diameterPx = (ENGAGE_RANGE_M / metersPerPixel) * ENGAGE_RING_VISUAL_SCALE * 2;
+  const px = Math.max(40, Math.min(420, diameterPx));
+  document.documentElement.style.setProperty("--magic-circle-px", px.toFixed(1)+"px");
+}
 function updateCameraOrientedEffects(){
   const beam = $("mapLightBeam");
   const pitch = map && map.getPitch ? map.getPitch() : 0;
@@ -4679,6 +4738,7 @@ function updateCameraOrientedEffects(){
   recomputeScreenFacing();
   updateEnemyZoomScale();
   updateEngageRingRadius();
+  updateMagicCircleScale();
 }
 function updateDayNightBadge(){
   const badge = $("dayNightBadge");
@@ -14741,12 +14801,19 @@ function seededPick(seed, count, pool){
 /** Convierte una plantilla del catálogo rotativo en un objeto de equipo comprable, con precio según rareza. */
 function rotatingItemToEquip(tpl, tagPrefix, isWeeklyOffer){
   const rarityValue = {common:70, uncommon:140, rare:260, epic:420, legendary:650}[tpl.rarity] || 200;
-  return {
+  const item = {
     id: tagPrefix+"_"+tpl.id, name: tpl.name, emoji: tpl.emoji, type:"equip", slot:"weapon",
     classKey: tpl.classKey, rarity: tpl.rarity, bonuses: tpl.bonuses, proc: tpl.proc||null,
     value: rarityValue, reqLevel: 1, isWeeklyOffer: !!isWeeklyOffer,
     desc: tpl.desc + (tpl.proc ? ` · ${PROC_LABELS[tpl.proc.type]} (${Math.round(tpl.proc.chance*100)}%)` : "") + " · rotativo"
   };
+  // BUG arreglado: igual que el botín de jefe (generateBossLootItem/generateParkWeaponItem), este
+  // objeto no vive en ninguna tabla fija — saveGame() solo guarda su `id` (inventoryIds/
+  // equipmentIds), así que sin registrarlo acá, findItemById() no lo encontraba al recargar la
+  // partida (rebuildPlayerFromSave → freshCopy → findItemById) y el arma comprada/equipada de la
+  // Oferta Semanal (o del mercader ambulante) desaparecía como si nunca se hubiera comprado.
+  bossLootRegistry[item.id] = item;
+  return item;
 }
 /** La Oferta Semanal: 4 armas de la clase del jugador, iguales para todos esta semana, distintas la que viene. */
 function getWeeklyShopOffers(){
@@ -14779,7 +14846,7 @@ function getEliteWeaponOffer(){
     Math.round(10 + player.level*2.4 + tier*7)          // y además escala con tu nivel y tus compras previas
   );
   const goldCost = Math.round((450 + player.level*40) * Math.pow(1.5, tier));
-  return {
+  const item = {
     id: "elite_weapon_"+player.classKey+"_"+tier,
     name: `${base.name} Superior${tier>0?" +"+tier:""}`,
     emoji: base.emoji, type:"equip", slot:"weapon", classKey: player.classKey, rarity:"legendary",
@@ -14788,6 +14855,11 @@ function getEliteWeaponOffer(){
     value: goldCost,
     desc: `Encargo especial del herrero — siempre más fuerte que tu arma actual. Sube de precio y de poder cada vez que compras una.`
   };
+  // Mismo arreglo que rotatingItemToEquip — tampoco vive en una tabla fija, hace falta registrarlo
+  // para que findItemById() la encuentre al recargar la partida (si no, comprarla/equiparla se
+  // sentía como si no hubiera pasado nada apenas se reabría el juego).
+  bossLootRegistry[item.id] = item;
+  return item;
 }
 /** Cuánto material (madera/piedra/hierro) hace falta además del oro, para un objeto con costo `goldCost`. */
 function eliteWeaponMatCost(goldCost){
