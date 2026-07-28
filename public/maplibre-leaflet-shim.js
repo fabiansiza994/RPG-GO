@@ -52,14 +52,17 @@
       }
       if(opts.interactive === false) el.style.pointerEvents = 'none';
       el.style.cursor = opts.interactive === false ? 'default' : 'pointer';
-      // MapLibre YA ordena los marcadores automáticamente según su posición en pantalla (el que
-      // está más "adelante"/abajo tapa al que está más atrás/arriba) — eso da la sensación de
-      // profundidad correcta al inclinar la cámara. Pero cuando el juego pide explícitamente
-      // que algo se quede siempre encima (como el propio jugador, con zIndexOffset alto), se
-      // respeta esa prioridad por encima del orden automático.
-      if(opts.zIndexOffset){
-        el.style.zIndex = String(1000 + opts.zIndexOffset);
-      }
+      // OJO: a diferencia de lo que decía antes este comentario, MapLibre GL JS NO ordena los
+      // marcadores automáticamente por posición en pantalla — sin ayuda, todos quedan apilados
+      // por orden de inserción en el DOM, sin importar cuál esté visualmente "más adelante" bajo
+      // la cámara inclinada (ver map.setPitch). Eso hacía que, sobre todo alejando el zoom,
+      // monstruos de más atrás (incluido su contenedor de nivel) taparan a los de más adelante.
+      // El z-index real se calcula y se mantiene actualizado en _updateZIndex() (más abajo): un
+      // "piso" por categoría (zIndexOffset, para que el jugador/base/portal siempre puedan quedar
+      // por encima de decoración de fondo pase lo que pase) más la posición Y en pantalla dentro
+      // de ese piso, así que DENTRO de una misma categoría (ej. monstruos comunes) manda quién
+      // está más "adelante" en la vista inclinada, no el orden en que se crearon.
+      this._zTier = 1000 + (opts.zIndexOffset||0);
       this._el = el;
       this._latlng = latlng;
       // pitchAlignment/rotationAlignment:'map' (opt-in, ej. el círculo mágico bajo el jugador —
@@ -76,13 +79,28 @@
         this._marker.on('dragend', ()=>{
           const ll = this._marker.getLngLat();
           this._latlng = {lat: ll.lat, lng: ll.lng};
+          this._updateZIndex();
           (this._dragHandlers||[]).forEach(fn=> fn(this._latlng));
         });
       }
     }
+    /** Recalcula el z-index real de ESTE marcador: el "piso" de su categoría (_zTier, ver
+     *  constructor) más su posición Y actual en pantalla — así, dentro de una misma categoría, el
+     *  que está más abajo/adelante en la vista inclinada gana y tapa al que está más arriba/atrás.
+     *  Se llama cada vez que la cámara se mueve (MapShim, evento 'move' — cubre pan/zoom/rotate/
+     *  pitch, incluso a mitad de una animación) o que ESTE marcador cambia de posición. */
+    _updateZIndex(){
+      if(!this._map) return;
+      let y = 0;
+      try{ y = this._map._maplibre.project(toLngLat(this._latlng)).y; }catch(e){ /* mapa/estilo aún no listo */ }
+      this._el.style.zIndex = String(Math.round(this._zTier*100000 + Math.max(0, Math.min(99999, y))));
+    }
     addTo(map){
       this._marker.addTo(map._maplibre);
+      this._map = map;
       map._registerLayerLike(this);
+      map._registerMarker(this);
+      this._updateZIndex();
       return this;
     }
     on(evt, fn){
@@ -97,6 +115,7 @@
     setLatLng(latlng){
       this._latlng = latlng;
       this._marker.setLngLat(toLngLat(latlng));
+      this._updateZIndex();
       return this;
     }
     // Siempre normalizado a {lat,lng}: el juego guarda la posición como array [lat,lng] al crear
@@ -107,11 +126,10 @@
     }
     getElement(){ return this._marker.getElement(); }
     setDraggable(val){ this._marker.setDraggable(!!val); return this; }
-    // Cambia el z-index (apilado visual Y de qué capa "gana" los clics) DESPUÉS de creado el
-    // marcador — la fórmula es la misma que usa el constructor (1000 + offset) para que se pueda
-    // comparar contra otros marcadores existentes sin recordar la conversión en cada lugar que
-    // lo usa.
-    setZIndexOffset(offset){ this._el.style.zIndex = String(1000 + offset); return this; }
+    // Cambia la categoría/piso de z-index DESPUÉS de creado el marcador (ej. builder mode subiendo
+    // temporalmente un objeto por encima del jugador) — misma fórmula que el constructor
+    // (_zTier = 1000 + offset), recalculando ya mismo su z-index real con _updateZIndex().
+    setZIndexOffset(offset){ this._zTier = 1000 + offset; this._updateZIndex(); return this; }
     setClickHandler(fn){
       if(this._clickHandler) this._el.removeEventListener('click', this._clickHandler);
       this._clickHandler = (domEvt)=>{ domEvt.stopPropagation(); fn({latlng: this._latlng, originalEvent: domEvt}); };
@@ -123,6 +141,7 @@
       this._marker.on('dragend', ()=>{
         const ll = this._marker.getLngLat();
         this._latlng = {lat: ll.lat, lng: ll.lng};
+        this._updateZIndex();
         fn(this._latlng);
       });
       return this;
@@ -137,7 +156,10 @@
       }
       return this;
     }
-    remove(){ this._marker.remove(); }
+    remove(){
+      if(this._map) this._map._unregisterMarker(this);
+      this._marker.remove();
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -440,6 +462,7 @@
       });
       this._tileLayerId = null;
       this._layers = new Set();
+      this._markers = new Set();
       this._onHandlers = {};
       this._styleReady = false;
       this._readyQueue = [];
@@ -482,10 +505,23 @@
         (this._onHandlers['pitch']||[]).forEach(fn=>fn());
       });
       this._maplibre.on('move', ()=>{
+        // 'move' cubre CUALQUIER cambio de cámara (pan/zoom/rotate/pitch, incluso a mitad de una
+        // animación de flyTo/easeTo) — es el gancho correcto para mantener el z-index de
+        // profundidad de los marcadores al día en todo momento, no solo al final del gesto.
+        this._updateAllMarkerZIndices();
         (this._onHandlers['move']||[]).forEach(fn=>fn());
       });
     }
     _registerLayerLike(obj){ this._layers.add(obj); }
+    _registerMarker(m){ this._markers.add(m); }
+    _unregisterMarker(m){ this._markers.delete(m); }
+    /** Recalcula el z-index de TODOS los marcadores activos según su posición Y en pantalla ahora
+     *  mismo — ver MarkerShim._updateZIndex(). Así los que quedan más "adelante" bajo la cámara
+     *  inclinada (map.setPitch) siempre tapan a los que quedan más "atrás", en vez de apilarse por
+     *  simple orden de creación. */
+    _updateAllMarkerZIndices(){
+      this._markers.forEach(m=> m._updateZIndex());
+    }
     setView(latlng, zoom){
       this._maplibre.jumpTo({center: toLngLat(latlng), zoom});
       return this;

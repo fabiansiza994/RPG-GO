@@ -105,6 +105,7 @@
     <span id="dayNightBadge">☀️ Día</span>
     <span id="weatherBadge"></span>
   </div>
+  <div class="hud-materials-bar" id="hudMaterialsBar"></div>
   <div class="gps-banner" id="gpsBanner">
     <div class="gtxt" id="gpsBannerText">📍 El GPS requiere <b>HTTPS</b> y permisos de ubicación. Toca <b>Activar</b> para usar tu posición real.</div>
     <button id="btnActivateGps">Activar</button>
@@ -124,7 +125,6 @@
 <div class="shadow-wolf-dialogue" id="shadowWolfDialoguePopup">
   <span class="swd-icon" id="shadowWolfDialogueIcon">🐺</span><span class="swd-text" id="shadowWolfDialogueText"></span>
 </div>
-<div id="slideNoticeWrap"></div>
 
 <!-- TORRE DE CONTROL -->
 <div class="overlay hidden" id="towerOverlay">
@@ -191,7 +191,7 @@
         <div class="wheel-slice-content wheel-slice-content-1">🛡️<span>Grupo</span></div>
         <div class="wheel-slice-content wheel-slice-content-2">🧬<span>Atributos</span></div>
         <div class="wheel-slice-content wheel-slice-content-3">🏠<span>Bases</span></div>
-        <div class="wheel-slice-content wheel-slice-content-4">🔨<span>Constructor</span></div>
+        <div class="wheel-slice-content wheel-slice-content-4">🔨<span>Forja</span></div>
         <div class="wheel-slice-content wheel-slice-content-5">🛡️<span>Equipo</span></div>
         <div class="wheel-slice-content wheel-slice-content-6">🐾<span>Mascotas</span></div>
         <div class="wheel-slice-content wheel-slice-content-7">🚪<span>Menú principal</span></div>
@@ -1032,25 +1032,37 @@
         <h1 class="title">🎒 Inventario</h1>
         <p class="sub">Gestiona tu equipo y objetos.</p>
       </div>
-      <div class="inv-count-v2" id="invCount">0/50</div>
+      <div class="inv-count-block">
+        <div class="inv-count-row">
+          <span class="inv-count-v2" id="invCount">0/40</span>
+          <button class="inv-expand-btn hidden" id="btnInvExpand" title="Ampliar inventario">+ Expandir</button>
+        </div>
+        <div class="inv-count-bar-track"><div class="inv-count-bar-fill" id="invCountBarFill"></div></div>
+      </div>
     </div>
-    <div class="inv-resource-bar" id="invResourceBar"></div>
     <div class="inv-cat-tabs" id="invTabs"></div>
-    <div class="inv-cat-tabs inv-class-tabs" id="invClassTabs"></div>
-    <div class="inv-search-row">
+    <div class="inv-cat-tabs inv-class-tabs hidden" id="invClassTabs"></div>
+    <div class="inv-toolbar-row">
+      <button class="ghostbtn inv-filter-btn" id="btnInvFilters">🔧 Filtros</button>
+      <div class="inv-mass-actions hidden" id="invMassActions">
+        <button class="ghostbtn inv-mass-btn" id="btnInvCancelSelect">✖️ Cancelar</button>
+        <button class="ghostbtn inv-mass-btn" id="btnInvSellSelected">💰 Vender selección</button>
+      </div>
+    </div>
+    <div class="inv-filters-panel hidden" id="invFiltersPanel">
       <input id="invSearchInput" class="inv-search-input" placeholder="🔍 Buscar objeto..." />
-      <select id="invSortSelect" class="inv-sort-select">
-        <option value="default">Ordenar: Rareza</option>
-        <option value="level">Ordenar: Nivel</option>
-        <option value="power">Ordenar: Poder</option>
-        <option value="qty">Ordenar: Cantidad</option>
-      </select>
+      <div class="inv-filter-label">Ordenar por</div>
+      <div class="inv-sort-chip-row" id="invSortChipRow">
+        <button class="inv-sort-chip active" data-sort="default">Rareza</button>
+        <button class="inv-sort-chip" data-sort="level">Nivel</button>
+        <button class="inv-sort-chip" data-sort="name">Nombre</button>
+      </div>
+      <label class="inv-filter-toggle-row">
+        <input type="checkbox" id="invOnlyEquippedToggle" />
+        <span>Mostrar solo equipados</span>
+      </label>
     </div>
     <div class="inv-grid-v2" id="invList"></div>
-    <div class="inv-mass-actions" id="invMassActions">
-      <button class="ghostbtn inv-mass-btn" id="btnInvSelectMode">☑️ Seleccionar</button>
-      <button class="ghostbtn inv-mass-btn hidden" id="btnInvSellSelected">💰 Vender selección</button>
-    </div>
     <button class="ghostbtn" id="btnCloseInv">Cerrar</button>
   </div>
 </div>
@@ -1157,7 +1169,11 @@
 <div class="overlay hidden" id="forgeOverlay">
   <div class="sheet">
     <h1 class="title">🔨 Forja</h1>
-    <p class="sub">Repara tu equipo gastado con oro y materiales. Nunca se rompe del todo — solo rinde menos por debajo del 10% de durabilidad.</p>
+    <p class="sub" id="forgeSubText">Repara tu equipo gastado con oro y materiales. Nunca se rompe del todo — solo rinde menos por debajo del 10% de durabilidad.</p>
+    <div class="inv-cat-tabs" id="forgeTabs">
+      <button class="inv-cat-tab active" id="btnForgeTabRepair">Reparar</button>
+      <button class="inv-cat-tab" id="btnForgeTabCraft">Fabricar</button>
+    </div>
     <div id="forgeList"></div>
     <div id="forgeTotalRow" class="hidden"></div>
     <button class="primarybtn" id="btnRepairAll" style="margin-top:8px;">🔨 Reparar Todo</button>

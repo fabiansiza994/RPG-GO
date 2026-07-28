@@ -1,15 +1,42 @@
+// Pedido explícito: "aumenta un poco el % de evasión de los enemigos" — antes solo el Ladrón y el
+// Lobo Sombrío (retos especiales) podían esquivar; los monstruos comunes tenían evasionChance
+// nula, así que el jugador nunca fallaba un golpe fuera de esos dos casos. Valores modestos, más
+// altos en los ágiles/voladores (Cuervo, Lobo, Araña) y casi nulos en los pesados (Golem).
 export const MONSTER_TEMPLATES = [
-  {name:"Slime Salvaje", emoji:"🟢", tier:1, hpM:1.0, atkM:0.8, defM:0.8},
-  {name:"Rata Mutante", emoji:"🐀", tier:1, hpM:0.85, atkM:0.95, defM:0.7},
-  {name:"Cuervo Corrupto", emoji:"🐦‍⬛", tier:1, hpM:0.8, atkM:1.0, defM:0.7, flying:true},
-  {name:"Espectro", emoji:"👻", tier:2, hpM:1.05, atkM:1.1, defM:0.9, debuffOnHit:{stat:"atk", amount:0.15, chance:0.3}},
-  {name:"Trasgo", emoji:"👺", tier:2, hpM:1.15, atkM:1.0, defM:1.0},
-  {name:"Golem de Roca", emoji:"🗿", tier:3, hpM:1.5, atkM:0.9, defM:1.6, debuffOnHit:{stat:"def", amount:0.15, chance:0.3}},
-  {name:"Lobo Umbrío", emoji:"🐺", tier:2, hpM:1.0, atkM:1.2, defM:0.85, aggressive:true},
-  {name:"Araña Gigante", emoji:"🕷️", tier:2, hpM:0.95, atkM:1.15, defM:0.85, aggressive:true, debuffOnHit:{stat:"def", amount:0.2, chance:0.35}},
-  {name:"Dragón Menor", emoji:"🐉", tier:4, hpM:1.8, atkM:1.5, defM:1.2, flying:true},
-  {name:"Demonio Menor", emoji:"👹", tier:3, hpM:1.3, atkM:1.3, defM:1.0, aggressive:true, debuffOnHit:{stat:"atk", amount:0.2, chance:0.3}},
+  {name:"Slime Salvaje", emoji:"🟢", tier:1, hpM:1.0, atkM:0.8, defM:0.8, evasionChance:0.04},
+  {name:"Rata Mutante", emoji:"🐀", tier:1, hpM:0.85, atkM:0.95, defM:0.7, evasionChance:0.08},
+  {name:"Cuervo Corrupto", emoji:"🐦‍⬛", tier:1, hpM:0.8, atkM:1.0, defM:0.7, flying:true, evasionChance:0.10},
+  {name:"Espectro", emoji:"👻", tier:2, hpM:1.05, atkM:1.1, defM:0.9, evasionChance:0.09, debuffOnHit:{stat:"atk", amount:0.15, chance:0.3}},
+  {name:"Trasgo", emoji:"👺", tier:2, hpM:1.15, atkM:1.0, defM:1.0, evasionChance:0.06},
+  {name:"Golem de Roca", emoji:"🗿", tier:3, hpM:1.5, atkM:0.9, defM:1.6, evasionChance:0.02, debuffOnHit:{stat:"def", amount:0.15, chance:0.3}},
+  {name:"Lobo Umbrío", emoji:"🐺", tier:2, hpM:1.0, atkM:1.2, defM:0.85, aggressive:true, evasionChance:0.08},
+  {name:"Araña Gigante", emoji:"🕷️", tier:2, hpM:0.95, atkM:1.15, defM:0.85, aggressive:true, evasionChance:0.08, debuffOnHit:{stat:"def", amount:0.2, chance:0.35}},
+  {name:"Dragón Menor", emoji:"🐉", tier:4, hpM:1.8, atkM:1.5, defM:1.2, flying:true, evasionChance:0.07},
+  {name:"Demonio Menor", emoji:"👹", tier:3, hpM:1.3, atkM:1.3, defM:1.0, aggressive:true, evasionChance:0.06, debuffOnHit:{stat:"atk", amount:0.2, chance:0.3}},
 ];
+
+/** Habilidad de manada — pedido explícito: "si es una manada de lobos que alguno use una habilidad
+ *  como Aullido que aumente el ataque, o si son cuervos que aumente la velocidad", para que las
+ *  peleas contra manadas no sean solo golpes repetidos. Una por tipo de monstruo, usada como mucho
+ *  UNA vez por combate (ver battleState.packBuffUsed en packEnemyTurn, main.js) — sube el ATQ o la
+ *  DEF de TODA la manada viva, permanente por el resto de ese combate (mismo criterio que ya usan
+ *  debuffOnHit/mv.stat==="def" para debilitar al jugador: sin temporizador, dura toda la pelea).
+ *  `mechStat` es la estadística que de verdad se modifica (solo "atk" o "def" existen como daño/
+ *  resistencia reales en el motor de manada); `visualKind` es solo para el aro de color + ícono
+ *  (ver .enemy-buff-aura-atk/-def/-spd en main.css) — así "velocidad" se ve y se siente distinto
+ *  aunque, mecánicamente, en este motor sin turnos por iniciativa, tira del mismo bono de ATQ. */
+export const PACK_BUFF_ABILITIES = {
+  "Slime Salvaje":   {name:"División Viscosa",   mechStat:"def", visualKind:"def", amount:0.22, verb:"se divide y endurece su gelatina"},
+  "Rata Mutante":    {name:"Chillido de Alarma",  mechStat:"atk", visualKind:"atk", amount:0.20, verb:"chilla y pone alerta a la plaga"},
+  "Cuervo Corrupto": {name:"Graznido de Viento",  mechStat:"atk", visualKind:"spd", amount:0.20, verb:"grazna y acelera a toda la bandada"},
+  "Espectro":        {name:"Lamento",             mechStat:"atk", visualKind:"atk", amount:0.20, verb:"lanza un lamento que hiela la sangre"},
+  "Trasgo":          {name:"Grito de Guerra",     mechStat:"atk", visualKind:"atk", amount:0.20, verb:"grita y enardece a los suyos"},
+  "Golem de Roca":   {name:"Piel de Piedra",      mechStat:"def", visualKind:"def", amount:0.25, verb:"endurece la piel rocosa de la manada"},
+  "Lobo Umbrío":     {name:"Aullido",             mechStat:"atk", visualKind:"atk", amount:0.25, verb:"aúlla y envalentona a la manada"},
+  "Araña Gigante":   {name:"Tejido Reforzado",    mechStat:"def", visualKind:"def", amount:0.22, verb:"teje hilos que refuerzan a sus crías"},
+  "Dragón Menor":    {name:"Rugido",              mechStat:"atk", visualKind:"atk", amount:0.25, verb:"ruge y aterroriza el aire"},
+  "Demonio Menor":   {name:"Pacto Infernal",      mechStat:"atk", visualKind:"atk", amount:0.22, verb:"invoca poder infernal para los suyos"},
+};
 
 // NOTA: este export no se usa — main.js define su PROPIA constante local THIEF_TEMPLATE (mismo
 // nombre) con toda la lógica de batalla del Ladrón Errante; ver ahí para evasionChance/diálogos/etc.

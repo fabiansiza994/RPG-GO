@@ -118,12 +118,3 @@ export const ULTIMATE_TIER_HP_COST = [0.40, 0.25, 0];
  *  toca) al valor en inglés que pide el campo `requiredClass` de los objetos del inventario.
  *  Es un alias de solo lectura para mostrar/filtrar — la verdad interna sigue siendo classKey. */
 export const CLASS_ID_MAP = { guerrero:"warrior", arquero:"archer", mago:"mage", berserker:"berserker" };
-
-/** Distintivo visual de clase (pastilla de color + emoji) para las tarjetas de objetos del
- *  inventario — pedido explícito: 🟥 Guerrero, 🟩 Arquero, 🟦 Mago, 🟪 Berserk. */
-export const CLASS_BADGE = {
-  guerrero:  { color:"#e5484d", dot:"🟥" },
-  arquero:   { color:"#3fb950", dot:"🟩" },
-  mago:      { color:"#4098e8", dot:"🟦" },
-  berserker: { color:"#9d3fff", dot:"🟪" },
-};

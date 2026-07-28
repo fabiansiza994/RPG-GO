@@ -543,18 +543,19 @@
     animation:shadowWolfBadgeBlink 1s ease infinite;}
   @keyframes shadowWolfBadgeBlink{0%{opacity:1;} 50%{opacity:.45;} 100%{opacity:1;}}
 
-  #slideNoticeWrap{position:absolute; left:0; right:0; bottom:88px; z-index:200; display:flex;
-    justify-content:center; pointer-events:none; overflow:hidden;}
-  #slideNoticeWrap .snc{background:linear-gradient(90deg, var(--panel2), var(--panel)); border:2px solid var(--gold);
-    border-radius:10px; padding:9px 18px; font-weight:700; font-size:12.5px; color:var(--text);
-    box-shadow:0 8px 20px rgba(0,0,0,.22); white-space:nowrap; transform:translateX(-130vw); opacity:0; position:absolute;}
-  #slideNoticeWrap .snc.show{animation:slideAcross 3.6s ease forwards;}
-  @keyframes slideAcross{
-    0%{transform:translateX(-130vw); opacity:0;}
-    12%{transform:translateX(0); opacity:1;}
-    80%{transform:translateX(0); opacity:1;}
-    100%{transform:translateX(130vw); opacity:0;}
-  }
+  /* Pedido explícito (ver public/new_elements/battle.png, flecha de referencia): la barra fija de
+     materiales recolectados (madera/piedra/hierro) va debajo de la barra contextual del HUD
+     (#hudContextBar — clima/hora o "enemigo cerca", eso no se toca), sin caja/fondo propio, solo
+     ícono+número flotando sobre el mapa — ver renderMapMaterialsBar() en main.js. Los emojis que
+     salen al recolectar (spawnResourceGatherFloat) vuelan hasta el número de SU material y ahí
+     suman el total en vivo. */
+  .hud-materials-bar{display:flex; gap:14px; padding:2px 4px 0;}
+  .map-mat-chip{display:flex; align-items:center; gap:4px; font-weight:800; font-size:12.5px;
+    color:var(--text); text-shadow:0 1px 2px rgba(0,0,0,.85), 0 0 6px rgba(0,0,0,.5);}
+  .map-mat-chip .mmc-icon{font-size:14px;}
+  .map-mat-chip .mmc-qty{min-width:1em;}
+  @keyframes mapMatChipBump{0%{transform:scale(1);} 40%{transform:scale(1.28); color:var(--gold,#e8c468);} 100%{transform:scale(1);}}
+  .map-mat-chip.bump{animation:mapMatChipBump .28s ease;}
 
   /* ---------- Menú de opciones (FAB inferior derecho) ---------- */
   /* ---------- Botones flotantes fijos (Tienda, Inventario, Coliseo) al lado izquierdo ---------- */
@@ -714,6 +715,12 @@
     transform:translate(-50%,-50%); border:2px solid #ff3b3b; box-shadow:0 0 12px rgba(255,59,59,.65);
     animation:dangerZonePulse 1.1s ease-in-out infinite;}
   @keyframes dangerZonePulse{0%,100%{transform:translate(-50%,-50%) scale(1); opacity:.85;} 50%{transform:translate(-50%,-50%) scale(1.12); opacity:1;}}
+  /* Objetivo de misión activa ("derrota N Ratas"): anillo dorado extra para que ese monstruo
+     resalte del resto — ver isQuestTargetTpl/refreshQuestTargetHighlights en main.js. */
+  .quest-target-ring{width:50px; height:50px; border-radius:50%; position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%); border:2px solid var(--gold, #e8c468); box-shadow:0 0 12px rgba(232,196,104,.75);
+    animation:questTargetPulse 1.4s ease-in-out infinite;}
+  @keyframes questTargetPulse{0%,100%{transform:translate(-50%,-50%) scale(1); opacity:.8;} 50%{transform:translate(-50%,-50%) scale(1.18); opacity:1;}}
 
   /* ---------- Jefe de zona: aura por dificultad + cuenta regresiva ---------- */
   .boss-aura{width:54px;height:54px;border-radius:50%; position:absolute; top:50%;left:50%;
@@ -1020,6 +1027,12 @@
   .durability-label{font-size:9.5px; color:var(--dim); margin-top:3px; font-weight:700;}
   .durability-damaged-icon{color:var(--danger); font-weight:800;}
 
+  /* ---------- Herrero (pestaña "Fabricar" de la Forja) — receta con "tengo/necesito" por material ---------- */
+  .forge-mats-row{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; width:100%;}
+  .forge-mat-chip{font-size:9.5px; font-weight:700; color:var(--dim); background:rgba(255,255,255,.04);
+    border:1px solid var(--line); border-radius:8px; padding:3px 7px;}
+  .forge-mat-chip.short{color:var(--danger); border-color:var(--danger);}
+
   /* ---------- Base personal en el mapa: emoji de casa con el nombre del dueño arriba ---------- */
   .base-marker-simple{position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end;}
   .bms-label{font-size:9px; font-weight:800; color:#fff; background:rgba(0,0,0,.6); border-radius:6px;
@@ -1173,6 +1186,10 @@
   @media (prefers-reduced-motion: reduce){
     .magic-circle-outer{animation:none;}
   }
+  /* Ahorro de recursos: pausada mientras hay una batalla en pantalla (ver el MutationObserver sobre
+     #battleWrap en initMap, main.js) — el círculo queda tapado por el overlay de combate, pero sin
+     esto seguiría girando/pulsando de fondo todo el combate igual. */
+  .magic-circle-outer.mc-paused{animation-play-state:paused;}
 
   /* otro jugador real (multijugador por proximidad) */
   .op-marker{display:flex; flex-direction:column; align-items:center; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
@@ -1254,12 +1271,19 @@
   .inv-sheet-v2{max-width:460px; background:radial-gradient(ellipse at 50% -10%, rgba(74,163,224,.10), transparent 55%),
     linear-gradient(180deg,#141a29,#0c111c);}
   .inv-header-v2{display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px;}
+  /* Pedido explícito: el contador ya no es solo un número — una barrita que se va llenando (se
+     pone dorada cerca del tope) + el botón de ampliar al lado, sin ocupar un hueco de la grilla. */
+  .inv-count-block{min-width:132px;}
+  .inv-count-row{display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-bottom:4px;}
   .inv-count-v2{font-size:11px; color:var(--dim); background:rgba(255,255,255,.05); border:1px solid var(--line);
-    padding:6px 10px; border-radius:10px; white-space:nowrap; margin-top:2px; text-align:right; line-height:1.6;}
-
-  .inv-resource-bar{display:flex; gap:8px; margin-bottom:12px;}
-  .inv-res-chip{flex:1; display:flex; align-items:center; justify-content:center; gap:5px; background:rgba(255,255,255,.04);
-    border:1px solid var(--line); border-radius:10px; padding:6px 4px; font-size:12px; font-weight:800; color:var(--text);}
+    padding:5px 9px; border-radius:10px; white-space:nowrap; line-height:1.4;}
+  .inv-count-bar-track{width:100%; height:6px; border-radius:4px; background:rgba(255,255,255,.06);
+    border:1px solid var(--line); overflow:hidden;}
+  .inv-count-bar-fill{height:100%; width:0%; border-radius:4px; background:var(--accent,#5ee1c9);
+    transition:width .4s ease, background .3s ease;}
+  .inv-count-bar-fill.almost-full{background:var(--gold,#e8c468);}
+  .inv-expand-btn{font-size:9.5px; font-weight:800; color:var(--accent); background:rgba(94,225,201,.12);
+    border:1px solid var(--accent); border-radius:8px; padding:4px 7px; white-space:nowrap;}
 
   .inv-cat-tabs{display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; margin-bottom:10px; scrollbar-width:none;}
   .inv-cat-tabs::-webkit-scrollbar{display:none;}
@@ -1267,16 +1291,27 @@
     padding:7px 14px; font-size:12px; font-weight:700; color:var(--dim); white-space:nowrap; transition:all .2s ease;}
   .inv-cat-tab.active{background:linear-gradient(180deg, rgba(94,225,201,.28), rgba(94,225,201,.14)); color:var(--accent);
     border-color:var(--accent); box-shadow:0 0 10px rgba(94,225,201,.35);}
-  /* Fila de filtro por clase (Todos/Guerrero/Arquero/Mago/Berserk) — mismas pastillas que las
-     pestañas de categoría, un poco más pegada arriba para leerse como su propia fila secundaria. */
+  /* Fila de filtro por clase (Todos/Guerrero/Arquero/Mago/Berserk) — pedido explícito: solo
+     aparece con la pestaña Equipo activa (ver renderInventoryTabs en main.js), mismas pastillas
+     que las pestañas de categoría, un poco más pegada arriba para leerse como fila secundaria. */
   .inv-class-tabs{margin-top:-4px;}
 
-  .inv-search-row{display:flex; gap:8px; margin-bottom:12px;}
-  .inv-search-input{flex:1; background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:10px;
+  /* Pedido explícito: buscador/orden escondidos detrás de un botón "Filtros" — con 40 espacios
+     nadie escribe para buscar, no hace falta que ocupen su propia fila siempre visible. */
+  .inv-toolbar-row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;}
+  .inv-filter-btn{font-size:12px; padding:8px 14px;}
+  .inv-filters-panel{display:flex; flex-direction:column; gap:8px; background:rgba(255,255,255,.03);
+    border:1px solid var(--line); border-radius:12px; padding:10px; margin-bottom:12px;}
+  .inv-search-input{background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:10px;
     padding:8px 10px; font-size:12.5px; color:var(--text);}
   .inv-search-input::placeholder{color:var(--dim);}
-  .inv-sort-select{background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:10px;
-    padding:8px 6px; font-size:11px; color:var(--text); max-width:118px;}
+  .inv-filter-label{font-size:10px; font-weight:800; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; margin-top:2px;}
+  .inv-sort-chip-row{display:flex; gap:6px;}
+  .inv-sort-chip{flex:1; background:rgba(255,255,255,.04); border:1px solid var(--line); border-radius:10px;
+    padding:7px 4px; font-size:11px; font-weight:700; color:var(--dim);}
+  .inv-sort-chip.active{background:linear-gradient(180deg, rgba(94,225,201,.28), rgba(94,225,201,.14));
+    color:var(--accent); border-color:var(--accent);}
+  .inv-filter-toggle-row{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text); padding:2px 2px 0;}
 
   .inv-grid-v2{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:12px; max-height:62vh; overflow-y:auto; padding:3px;}
 
@@ -1299,9 +1334,11 @@
   .inv-card-v2 .icv-qty{position:absolute; bottom:5px; right:7px; font-size:11px; font-weight:900; color:var(--text);
     background:rgba(0,0,0,.55); border-radius:6px; padding:0 5px;}
   .inv-card-v2 .icv-check{position:absolute; top:5px; right:7px; font-size:11px; color:#4fd67a;}
-  /* Distintivo de clase (🟥🟩🟦🟪) — pedido explícito, esquina inferior izquierda para no chocar
-     con favorito/bloqueo (arriba) ni con la cantidad apilada (abajo a la derecha). */
-  .inv-card-v2 .icv-class-badge{position:absolute; bottom:5px; left:7px; font-size:11px; z-index:2;}
+  /* Distintivo de clase — pedido explícito: escudo (Guerrero)/arco (Arquero)/bola de cristal
+     (Mago)/hacha (Berserker) en vez de la pastilla de color, esquina inferior izquierda para no
+     chocar con favorito/bloqueo (arriba) ni con la cantidad apilada (abajo a la derecha). */
+  .inv-card-v2 .icv-class-badge{position:absolute; bottom:4px; left:6px; font-size:14px; z-index:2;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.7));}
   .inv-card-v2 .icv-other-class{font-size:8px; color:var(--dim); margin-top:2px; font-style:italic;}
   /* Separador "Otras clases" del equipamiento inteligente — pedido explícito: tus armas primero,
      el resto de clases agrupado debajo de este título. */
@@ -1909,11 +1946,27 @@
   .floating-dmg-heal{color:#4fd67a;}
   .floating-dmg-crit{color:#ffb347; font-size:29px;
     text-shadow:0 2px 0 rgba(0,0,0,.65), 0 0 14px rgba(255,140,20,.65);}
+  .floating-dmg-miss{color:#d7dce3; font-style:italic;
+    text-shadow:0 2px 0 rgba(0,0,0,.65), 0 0 10px rgba(215,220,227,.75);}
   @keyframes floatingDmgRise{
     0%{transform:translate(-50%,-50%) scale(.65); opacity:0;}
     14%{transform:translate(-50%,-50%) scale(1.15); opacity:1;}
     28%{transform:translate(-50%,-50%) scale(1);}
     100%{transform:translate(calc(-50% + var(--fdn-drift, 0px)), -170%) scale(1); opacity:0;}
+  }
+
+  /* Recolección de recursos — creados por spawnResourceGatherFloat() en main.js: varios emojis
+     pequeños salen del HUD de recolección y vuelan uno por uno hasta el chip de SU material en la
+     barra fija de materiales (.map-mat-chip, ver .hud-materials-bar más arriba), sumando el total
+     ahí en vivo (--rfp-dx/--rfp-dy son el destino exacto en píxeles de cada partícula, calculado
+     y puesto inline en JS). */
+  .resource-float-wrap{position:fixed; inset:0; pointer-events:none; z-index:210;}
+  .resource-float-particle{position:fixed; transform:translate(-50%,-50%); pointer-events:none;
+    font-size:19px; animation:resourceFloatRise .85s cubic-bezier(.3,.65,.3,1) forwards;}
+  @keyframes resourceFloatRise{
+    0%{transform:translate(-50%,-50%) scale(.6); opacity:0;}
+    20%{transform:translate(-50%,-50%) scale(1.05); opacity:1;}
+    100%{transform:translate(calc(-50% + var(--rfp-dx, 0px)), calc(-50% + var(--rfp-dy, -140px))) scale(.5); opacity:0;}
   }
 
   #oppPetStageSlot{position:relative; z-index:20;
@@ -2120,6 +2173,30 @@
     82%{ opacity:1; transform:translate(-50%,-6px) scale(1); }
     100%{ opacity:0; transform:translate(-50%,-16px) scale(.85); }
   }
+  /* Habilidad de manada (Aullido, etc. — ver PACK_BUFF_ABILITIES en enemies.js y
+     triggerPackBuffAbility en main.js): mismo lenguaje visual que el aura de Grito de Guerra/Muro
+     de Acero del Guerrero de arriba, pero por CLASE en vez de atado a #spritePlayer, para poder
+     ponerlo en cualquier enemigo (#packStageMon0..3 en manada) — reutiliza las mismas animaciones
+     guerreroAuraGlow/guerreroAuraIcon. "spd" (velocidad) usa un color/ícono propio aunque, en este
+     motor sin turnos por iniciativa, tire del mismo bono de ATQ que "atk" — es solo para que se
+     sienta y se vea distinto, como pidió el jugador. */
+  .enemy-buff-aura-atk, .enemy-buff-aura-def, .enemy-buff-aura-spd{ overflow:visible; }
+  .enemy-buff-aura-atk::before, .enemy-buff-aura-def::before, .enemy-buff-aura-spd::before{
+    content:""; position:absolute; left:50%; top:50%; width:150%; height:150%;
+    transform:translate(-50%,-50%); border-radius:50%; pointer-events:none; z-index:0;
+    animation:guerreroAuraGlow 2s ease-in-out;
+  }
+  .enemy-buff-aura-atk::before{ background:radial-gradient(circle, rgba(255,64,64,.5) 0%, rgba(255,64,64,.18) 55%, rgba(255,64,64,0) 78%); }
+  .enemy-buff-aura-def::before{ background:radial-gradient(circle, rgba(64,150,255,.5) 0%, rgba(64,150,255,.18) 55%, rgba(64,150,255,0) 78%); }
+  .enemy-buff-aura-spd::before{ background:radial-gradient(circle, rgba(94,225,201,.5) 0%, rgba(94,225,201,.18) 55%, rgba(94,225,201,0) 78%); }
+  .enemy-buff-aura-atk::after, .enemy-buff-aura-def::after, .enemy-buff-aura-spd::after{
+    content:"⚔️"; position:absolute; left:50%; top:2%; transform:translate(-50%,0);
+    font-size:24px; z-index:2; pointer-events:none;
+    filter:drop-shadow(0 0 6px rgba(0,0,0,.65));
+    animation:guerreroAuraIcon 2s ease-in-out;
+  }
+  .enemy-buff-aura-def::after{ content:"🛡️"; }
+  .enemy-buff-aura-spd::after{ content:"💨"; }
   /* La entrada deslizante de los personajes al iniciar la batalla (solo Guerrero, por ahora) se
      arma en JS con la Web Animations API (ver playCharacterSlideInFx en main.js) en vez de una
      clase CSS — con clases, el truco de "sacar y volver a poner" para reiniciar la animación

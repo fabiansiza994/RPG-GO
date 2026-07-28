@@ -13,9 +13,9 @@ import {
   ULTIMATE_TIER3_LEVEL,
   ULTIMATE_TIER_HP_COST,
   CLASS_ID_MAP,
-  CLASS_BADGE,
 } from "./game/config/classes.js";
 import { INVENTORY_CAPACITY_TIERS, INVENTORY_TIER_COST } from "./game/config/inventoryCapacity.js";
+import { CRAFT_MATERIALS, BLACKSMITH_RECIPES } from "./game/config/blacksmith.js";
 import { CITY_REGISTRY, DEFAULT_CITY_KEY, SHRINE_TYPES, POI_TYPES, getCityPOIs } from "./game/config/world.js";
 import {
   DYNAMIC_ENTITY_STATE, DYNAMIC_ENTITY_TYPES, buildCandidateLocations, pickValidCandidateLocation,
@@ -54,6 +54,7 @@ import {
   VAGABUNDO_COST,
   LOBO_NOCTURNO_TEMPLATE,
   LOBO_SOMBRIO_TEMPLATE,
+  PACK_BUFF_ABILITIES,
 } from "./game/config/enemies.js";
 import {
   ITEM_TABLE,
@@ -255,8 +256,34 @@ function getCurrentZone(){
   });
   return best;
 }
+/** Última zona (por `key`) en la que se hizo la poda de abajo — `null` hasta el primer chequeo
+ *  real, así el primer ingreso a una zona (arranque de partida) nunca poda nada de golpe. */
+let lastPrunedZoneKey = null;
+/** Al cruzar de una zona de la ciudad a otra, los monstruos del mundo abierto que ya NO
+ *  pertenecen al pool de la zona nueva (ver monsterNames en world.js) se van dispersando pronto
+ *  en vez de convivir 5-7 min con los recién aparecidos — así no se mezclan tipos de dos regiones
+ *  distintas caminando unas cuadras. Nunca toca NPCs especiales/jefes/emboscadas de recolección
+ *  (esos no llevan `envSpawn`, ver spawnMonsters/spawnPack). */
+function pruneOutOfZoneMonsters(zone){
+  const allowed = zone.monsterNames;
+  let pruned = 0;
+  const now = Date.now();
+  monsters.forEach(m=>{
+    if(!m.envSpawn || m.isBoss || allowed.includes(m.tpl.name)) return;
+    const fadeMs = 20000 + Math.random()*10000; // 20-30s más, no un corte seco
+    if((m.spawnedAt + m.lifespanMs) - now > fadeMs){
+      m.lifespanMs = (now - m.spawnedAt) + fadeMs;
+      pruned++;
+    }
+  });
+  if(pruned > 0) toast(`🗺️ Te alejaste de esa región — sus enemigos se van dispersando.`, 2800);
+}
 function checkZoneDiscovery(){
   const zone = getCurrentZone();
+  if(zone && zone.key !== lastPrunedZoneKey){
+    if(lastPrunedZoneKey !== null) pruneOutOfZoneMonsters(zone);
+    lastPrunedZoneKey = zone.key;
+  }
   if(!zone || !player) return;
   if(!player.visitedZones) player.visitedZones = [];
   if(!player.visitedZones.includes(zone.key)){
@@ -591,7 +618,12 @@ let currentCityName = "";
  *  dispositivo (por ciudad) y se aplican por encima de los datos normales del juego cada vez
  *  que cargan. No afecta a otros jugadores ni a otras cuentas. */
 const BUILDER_MODE_USER = "Hacker994";
-function isBuilderUser(){ return !!(player && player.name === BUILDER_MODE_USER); }
+/** Interruptor general — pedido explícito: apagar el Modo Constructor por ahora, para nadie (ni
+ *  siquiera Hacker994) hasta que se vuelva a habilitar a propósito. Un solo `true` acá lo
+ *  reactiva sin tocar nada más del sistema (setupBuilderModeUI, saveMapEdits, etc. ya dependen
+ *  de isBuilderUser()). */
+const BUILDER_MODE_ENABLED = false;
+function isBuilderUser(){ return BUILDER_MODE_ENABLED && !!(player && player.name === BUILDER_MODE_USER); }
 /** `dangerZones`: dict de zonas peligrosas trazadas a mano — clave `${cityKey}:${zoneKey}`, valor
  *  `{points:[{lat,lng},...]}` (el trazo tal cual, en el mismo orden en que se tocó el mapa). Mismo
  *  criterio que moved/deleted/added: se guarda y viaja por PubNub, nunca expira sola. Ver
@@ -1562,6 +1594,68 @@ function repairAllItems(){
   saveGame();
   toast(`🔨 ¡Reparaste todo tu equipo! (🪙${totalGold})`, 3400);
   renderForge();
+}
+/* ============================================================
+   HERRERO — fabricar armas exclusivas con materiales (ver BLACKSMITH_RECIPES/CRAFT_MATERIALS en
+   game/config/blacksmith.js). Vive dentro de la Forja de siempre (pestaña "Fabricar", ver
+   renderForge más abajo) — mismo NPC/pantalla que ya repara equipo, no uno nuevo.
+   ============================================================ */
+/** Cuánto tiene el jugador de un material de receta — mezcla sin distinción recursos del mundo
+ *  (wood/stone/iron/crystals, campos planos de player) y materiales de combate (player.craftMats,
+ *  ver CRAFT_MATERIALS): si el key es de un material de combate conocido, lee de ahí; si no, del
+ *  campo plano de siempre. */
+function resolveMaterialQty(matKey){
+  if(CRAFT_MATERIALS.some(m=>m.key===matKey)) return (player.craftMats && player.craftMats[matKey]) || 0;
+  return player[matKey] || 0;
+}
+function spendMaterial(matKey, amount){
+  if(CRAFT_MATERIALS.some(m=>m.key===matKey)){
+    if(!player.craftMats) player.craftMats = {};
+    player.craftMats[matKey] = Math.max(0, (player.craftMats[matKey]||0) - amount);
+  } else {
+    player[matKey] = Math.max(0, (player[matKey]||0) - amount);
+  }
+}
+function canAffordRecipe(recipe){
+  return recipe.materials.every(m=> resolveMaterialQty(m.key) >= m.amount);
+}
+/** Fabrica una receta del Herrero: cobra los materiales, entrega el arma (exactamente igual que
+ *  cualquier otro objeto de equipo — findItemById ya sabe resolver BLACKSMITH_RECIPES por id) y
+ *  guarda. No hace nada "a medias": si falta un solo material, o el arma no es de tu clase, o no
+ *  hay espacio en el inventario, avisa y no cobra nada. */
+function craftWeapon(recipeId){
+  const recipe = BLACKSMITH_RECIPES.find(r=>r.id===recipeId);
+  if(!recipe) return;
+  if(recipe.classKey && recipe.classKey !== player.classKey){
+    toast(`${recipe.name} es exclusiva de ${(CLASSES[recipe.classKey]||{}).name || recipe.classKey}.`);
+    return;
+  }
+  if(!canAffordRecipe(recipe)){ toast("🔨 Te faltan materiales para forjar esto.", 3200); return; }
+  if(!hasInventorySpace(recipe.id)){ toast("🎒 Tu inventario está lleno — libera espacio antes de forjar.", 3600); return; }
+  recipe.materials.forEach(m=> spendMaterial(m.key, m.amount));
+  const { materials, ...itemTemplate } = recipe; // `materials` es el costo de la receta, no parte del objeto final
+  pushItemSafe({...itemTemplate});
+  refreshHud();
+  saveGame();
+  renderForge();
+  toast(`🔨 ¡Forjaste ${recipe.emoji} ${recipe.name}!`, 3800);
+}
+/** Botín de materiales de fabricación al ganar un combate — aparte del oro/ítems de siempre, si el
+ *  monstruo derrotado tiene un material temático asociado (ver CRAFT_MATERIALS), hay chance de que
+ *  también lo suelte. Nunca se pierde por falta de espacio (vive en player.craftMats, no en
+ *  player.inventory) — se llama desde winBattle/packWinBattle, una vez por monstruo derrotado.
+ *  Devuelve los mensajes ("🦷 +2 Colmillo de Lobo") para sumarlos al resto del botín del combate. */
+function rollCraftMaterialDrops(monsterName){
+  if(!player.craftMats) player.craftMats = {};
+  const msgs = [];
+  CRAFT_MATERIALS.filter(m=>m.monsterName===monsterName).forEach(m=>{
+    if(Math.random() < m.dropChance){
+      const amt = m.min + Math.floor(Math.random()*(m.max-m.min+1));
+      player.craftMats[m.key] = (player.craftMats[m.key]||0) + amt;
+      msgs.push(`${m.emoji} +${amt} ${m.label}`);
+    }
+  });
+  return msgs;
 }
 /** Barra de durabilidad reutilizable — se usa en el detalle del inventario, el panel de equipo
  *  y la Forja, siempre con el mismo lenguaje visual. */
@@ -2597,6 +2691,24 @@ let groupBattle = null;        // batalla de grupo activa (ver sección dedicada
 
 const $ = (id)=>document.getElementById(id);
 
+/** Ahorro de recursos: mientras hay una batalla en pantalla (#battleWrap sin la clase "hidden" —
+ *  el mismo overlay que usan TODOS los tipos de combate: solo, manada, PvP, grupal, torre, guardián
+ *  de parque), el mapa de fondo queda tapado pero sus timers periódicos (spawns, recolección de
+ *  oro, timers de jefe, etc.) seguían corriendo igual sin que nadie los viera. `runIfNotInBattle`
+ *  envuelve esos callbacks en initMap() para que se salteen mientras dure el combate, y retomen
+ *  solo cuando vuelve a estar visible el mapa. Mismo patrón que ya usaba regenPlayerHp/
+ *  maybeSpawnShadowWolf/maybeScheduleRandomEvent por su cuenta (battleState||pvp||groupBattle), más
+ *  el fallback de #battleWrap ya probado en senorOscuroMapCurseInterval — cubre PvP/grupal aunque
+ *  battleState quede en null. El autoguardado (saveGame) queda afuera a propósito: no se pausa,
+ *  por seguridad de datos. */
+function isBattleUiVisible(){
+  return !!(battleState || pvp || groupBattle || ($("battleWrap") && !$("battleWrap").classList.contains("hidden")));
+}
+function runIfNotInBattle(fn){
+  if(isBattleUiVisible()) return;
+  fn();
+}
+
 /* ============================================================
    CAPA DE ALMACENAMIENTO — funciona dentro y fuera de Claude
    ------------------------------------------------------------
@@ -2895,16 +3007,6 @@ function openBuyQuantityModal(item, unitGoldCost, unitMatCost, onConfirm){
   };
 }
 
-/** Aviso tipo "anuncio": entra deslizándose desde la izquierda y sale por la derecha (para alertas de enemigos). */
-function slideNotice(msg, ms=3600){
-  const wrap = $("slideNoticeWrap");
-  const card = document.createElement("div");
-  card.className = "snc";
-  card.textContent = msg;
-  wrap.appendChild(card);
-  requestAnimationFrame(()=> card.classList.add("show"));
-  setTimeout(()=> card.remove(), ms);
-}
 
 /* ============================================================
    1. PANTALLA DE SELECCIÓN DE CLASE
@@ -3103,6 +3205,7 @@ async function saveGame(){
       activeDungeonRun: player.activeDungeonRun || null,
       dungeonPortalCooldowns: player.dungeonPortalCooldowns || {},
       wood: player.wood||0, stone: player.stone||0, iron: player.iron||0,
+      craftMats: player.craftMats || {},
       pickaxe: player.pickaxe || null,
       seenBattleTutorial: player.seenBattleTutorial || false,
       inventoryIds: player.inventory.map(it=>it.id),
@@ -3163,7 +3266,8 @@ function buildEquippedByHeroForSave(){
 
 function findItemById(id){
   return ITEM_TABLE.find(it=>it.id===id) || EQUIP_TABLE.find(it=>it.id===id) || EXCLUSIVE_TABLE.find(it=>it.id===id)
-    || BOOK_TABLE.find(it=>it.id===id) || BOSS_BOOK_TABLE.find(it=>it.id===id) || bossLootRegistry[id];
+    || BOOK_TABLE.find(it=>it.id===id) || BOSS_BOOK_TABLE.find(it=>it.id===id) || BLACKSMITH_RECIPES.find(it=>it.id===id)
+    || bossLootRegistry[id];
 }
 
 /** Reconstruye el set de equipo COMPLETO (objetos, no ids) de un héroe a partir de
@@ -3219,7 +3323,7 @@ function freshAccountData(name){
     parkWeaponsObtained: [], parkGuardianState: {}, visitedZones: [], pets: [],
     everGotCaptureCard: false, redeemedCodes: [], coliseumStats: null, ownedTowers: null,
     dungeonProgress: {}, activeDungeonRun: null, dungeonPortalCooldowns: {},
-    wood: 0, stone: 0, iron: 0, pickaxe: null,
+    wood: 0, stone: 0, iron: 0, craftMats: {}, pickaxe: null,
     inventoryIds: [], inventoryDurability: [], bossLootRegistry: {}, equippedByHero: {},
     seenBattleTutorial: false,
     lastPos: null, savedAt: Date.now(),
@@ -3299,6 +3403,7 @@ function rebuildPlayer(accountData, heroData){
     activeTitle: heroData.activeTitle || null,
     activeFrameClass: heroData.activeFrameClass || null,
     wood: accountData.wood||0, stone: accountData.stone||0, iron: accountData.iron||0,
+    craftMats: accountData.craftMats || {},
     pickaxe: accountData.pickaxe || null,
     seenBattleTutorial: accountData.seenBattleTutorial || false,
     maxHp: heroData.maxHp, hp: heroData.hp, maxMp: heroData.maxMp, mp: heroData.mp,
@@ -3328,18 +3433,6 @@ function rebuildPlayer(accountData, heroData){
 function heroPowerScore(h){
   return Math.round((h.atk||0)*3 + (h.matk||0)*3 + (h.def||0)*3 + (h.spd||0)*2 + (h.maxHp||0)*0.5 + (h.maxMp||0)*0.5);
 }
-/** Nombre+ícono cortos del arma/armadura puesta de un héroe, para el resumen de su tarjeta —
- *  no arma el equipo completo (no hace falta aplicar mejora/durabilidad solo para mostrar nombre). */
-function heroEquipSummary(classKey){
-  const eq = equippedByHeroCache[classKey] || {};
-  const weapon = eq.weapon && eq.weapon.id ? findItemById(eq.weapon.id) : null;
-  const armor = eq.armor && eq.armor.id ? findItemById(eq.armor.id) : null;
-  const parts = [];
-  if(weapon) parts.push(`${weapon.emoji||"⚔️"} ${weapon.name}`);
-  if(armor) parts.push(`${armor.emoji||"🛡️"} ${armor.name}`);
-  return parts.length ? parts.join(" · ") : "";
-}
-
 async function initContinueScreen(){
   const accountData = await loadAccount();
   $("btnBackToCharList").classList.add("hidden");
@@ -3383,7 +3476,6 @@ async function initContinueScreen(){
           <span class="stat-chip">💥 ${Math.round(data.atk)}</span>
           <span class="stat-chip">🛡️ ${Math.round(data.def)}</span>
         </div>
-        <div class="cc-art-equip-summary">${heroEquipSummary(key)}</div>
         <button class="cc-art-btn btn-continue-char" data-classkey="${key}">Seleccionar</button>
         <button class="cc-art-trash btn-delete-char" data-classkey="${key}" title="Eliminar personaje" aria-label="Eliminar personaje"></button>
       </div>`;
@@ -4000,14 +4092,21 @@ const DEFAULT_ZOOM = 18.50;
  *  alrededor del jugador se dibuja exactamente a este radio real, para que sea consistente con
  *  lo que en verdad se puede alcanzar (antes el aro era solo decorativo y no coincidía). */
 const ENGAGE_RANGE_M = 100;
+/** Recolectar madera/piedra/hierro usa un radio más chico que ENGAGE_RANGE_M: debe coincidir con
+ *  el círculo mágico dibujado bajo el jugador (updateMagicCircleScale, ENGAGE_RANGE_M *
+ *  ENGAGE_RING_VISUAL_SCALE ≈ 60m de radio), que es el único indicador visual de "proximidad" que
+ *  el jugador ve en pantalla. Si se usara ENGAGE_RANGE_M acá, se podrían talar árboles/rocas que
+ *  se ven claramente fuera de ese círculo. Valor fijo (no referencia ENGAGE_RING_VISUAL_SCALE,
+ *  definida más abajo en el archivo) para evitar problemas de orden de inicialización. */
+const RESOURCE_GATHER_RANGE_M = 60;
 /** El GPS real hace jitter (saltos momentáneos de precisión, típicos en celular) y `playerLatLng`
  *  se aplica siempre crudo, sin suavizar (ver onGpsSuccess/movePlayerTo) — por eso la recolección
  *  activa NUNCA debe cancelarse por una sola lectura fuera de rango: necesita un margen extra sobre
- *  ENGAGE_RANGE_M (para absorber el error típico de precisión) Y confirmarlo en varias lecturas de
- *  posición reales seguidas (no relecturas del mismo dato viejo) antes de cancelar. Mismo criterio
- *  que el colchón de histéresis ya usado en visibility.js (Mapa Vivo, Capa 5) para no "parpadear"
- *  justo en el borde. Ver checkActiveGatherProximity(), llamado desde movePlayerTo. */
-const GATHER_CANCEL_RANGE_M = ENGAGE_RANGE_M + 25;
+ *  RESOURCE_GATHER_RANGE_M (para absorber el error típico de precisión) Y confirmarlo en varias
+ *  lecturas de posición reales seguidas (no relecturas del mismo dato viejo) antes de cancelar.
+ *  Mismo criterio que el colchón de histéresis ya usado en visibility.js (Mapa Vivo, Capa 5) para
+ *  no "parpadear" justo en el borde. Ver checkActiveGatherProximity(), llamado desde movePlayerTo. */
+const GATHER_CANCEL_RANGE_M = RESOURCE_GATHER_RANGE_M + 25;
 const GATHER_CANCEL_STRIKES = 3;
 // Pedido explícito: ya no se recuerda el zoom entre sesiones — cada vez que se entra al juego (personaje
 // nuevo, continuar, o cambiar de personaje) arranca con una vista más alejada y se anima con un
@@ -4103,6 +4202,23 @@ function initMap(savedPos){
   meMagicCircle = createMeMagicCircle(start);
   playerLatLng = start;
 
+  // Pausa la animación infinita del círculo mágico (magicCircleSpin/magicCircleGlowOuter, ver
+  // main.css) mientras hay una batalla en pantalla — el mapa queda tapado por #battleWrap pero
+  // el navegador no frena solo por eso una animación CSS infinita. Un único MutationObserver sobre
+  // #battleWrap (el mismo overlay que usan TODOS los tipos de combate: solo, manada, PvP, grupal,
+  // torre, guardián de parque — ver isBattleUiVisible más abajo) cubre automáticamente cualquier
+  // combate presente o futuro, sin tener que enganchar cada uno de los ~16 sitios donde termina
+  // una batalla (dispersos, sin una función de cleanup compartida).
+  const battleWrapElForCircle = $("battleWrap");
+  if(battleWrapElForCircle){
+    new MutationObserver(()=>{
+      const inBattle = !battleWrapElForCircle.classList.contains("hidden");
+      const circleEl = meMagicCircle && meMagicCircle.getElement && meMagicCircle.getElement()
+        && meMagicCircle.getElement().querySelector(".magic-circle-outer");
+      if(circleEl) circleEl.classList.toggle("mc-paused", inBattle);
+    }).observe(battleWrapElForCircle, {attributes:true, attributeFilter:["class"]});
+  }
+
   // Cada elemento decorativo del mapa se dibuja en su propio try/catch — un error en cualquiera de
   // ellos queda aislado (se avisa en la consola para poder diagnosticarlo) y nunca puede volver a
   // dejar al personaje sin aparecer ni cortar el resto de la inicialización del mapa.
@@ -4126,7 +4242,7 @@ function initMap(savedPos){
   updateCurrentRegion();
   toast(`📍 Estás en ${detectedCity.name}`, 3500);
   fetchWeatherForLocation(start.lat, start.lng);
-  setInterval(()=> fetchWeatherForLocation(playerLatLng.lat, playerLatLng.lng), 20*60000);
+  setInterval(()=> runIfNotInBattle(()=> fetchWeatherForLocation(playerLatLng.lat, playerLatLng.lng)), 20*60000);
   refreshWorldGeoDataAroundPlayer(); // Mapa Vivo, Capa 6 — primera consulta real a OpenStreetMap alrededor del punto de partida
 
   // Modo simulación: tocar el mapa mueve al jugador (útil sin GPS / en interiores)
@@ -4144,8 +4260,8 @@ function initMap(savedPos){
   updateCameraOrientedEffects();
 
   spawnMonsters(isNightTime() ? 5 : 3);
-  setInterval(()=> maybeAutoSpawn(), 14000); // pedido explícito: bajar un poco la tasa de aparición — antes 8000 (que a su vez venía de un valor TEMP de testing, 25000 originalmente)
-  setInterval(()=> regenPlayerHp(), 8000);
+  setInterval(()=> runIfNotInBattle(maybeAutoSpawn), 14000); // pedido explícito: bajar un poco la tasa de aparición — antes 8000 (que a su vez venía de un valor TEMP de testing, 25000 originalmente)
+  setInterval(()=> regenPlayerHp(), 8000); // regenPlayerHp ya chequea battleState/pvp/groupBattle por su cuenta
   updateDayNightBadge();
   // El tinte "de verdad" (sin transición, para que ya esté listo desde el primer frame) se aplica
   // en el callback de whenTilesLoaded más arriba — acá el elemento .map-tiles-bright todavía no
@@ -4155,36 +4271,36 @@ function initMap(savedPos){
   updateMapTimeOfDay();
   updateAmbientEffects();
   updateDungeonAuraAmbience();
-  setInterval(()=>{ updateDayNightBadge(); updateMapTimeOfDay(); updateAmbientEffects(); updateDungeonAuraAmbience(); }, 60000);
+  setInterval(()=> runIfNotInBattle(()=>{ updateDayNightBadge(); updateMapTimeOfDay(); updateAmbientEffects(); updateDungeonAuraAmbience(); }), 60000);
   collectTowerGold();
   collectBuildingGold();
-  setInterval(collectTowerGold, 5*60000); // revisa el oro acumulado de tus torres cada 5 minutos
-  setInterval(collectBuildingGold, 5*60000); // igual para el oro del Edificio
+  setInterval(()=> runIfNotInBattle(collectTowerGold), 5*60000); // revisa el oro acumulado de tus torres cada 5 minutos
+  setInterval(()=> runIfNotInBattle(collectBuildingGold), 5*60000); // igual para el oro del Edificio
   checkConstructionTimers();
-  setInterval(checkConstructionTimers, 30000); // revisa cada 30s si tu base/Edificio ya terminaron de construirse
-  setInterval(()=> saveGame(), 15000); // autoguardado periódico
-  setInterval(()=> maybeSpawnThief(), 90000);
-  setInterval(()=> maybeSpawnChest(), 45000);
-  setInterval(()=> updateContextBar(), 8000);
+  setInterval(()=> runIfNotInBattle(checkConstructionTimers), 30000); // revisa cada 30s si tu base/Edificio ya terminaron de construirse
+  setInterval(()=> saveGame(), 15000); // autoguardado periódico — a propósito NO se pausa en combate, por seguridad de datos
+  setInterval(()=> runIfNotInBattle(maybeSpawnThief), 90000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnChest), 45000);
+  setInterval(()=> runIfNotInBattle(updateContextBar), 8000);
   updateContextBar();
-  setInterval(()=> updateChestLifespans(), 20000);
+  setInterval(()=> runIfNotInBattle(updateChestLifespans), 20000);
   maybeSpawnChest(); // uno de una vez al empezar, para no tener que esperar el primer intervalo
-  setInterval(()=> maybeSpawnResourceNode(), 35000);
-  setInterval(()=> updateResourceNodeLifespans(), 20000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnResourceNode), 35000);
+  setInterval(()=> runIfNotInBattle(updateResourceNodeLifespans), 20000);
   maybeSpawnResourceNode(); maybeSpawnResourceNode(); // un par de una vez al empezar
-  setInterval(()=> maybeSpawnLoboNocturno(), 60000);
-  setInterval(()=> maybeSpawnDungeonAuraEnemy(), 30000);
-  setInterval(()=> maybeSpawnShadowWolf(), 45000);
-  setInterval(()=> maybeScheduleWanderingMerchant(), 120000);
-  setInterval(()=> pruneExpiredDynamicEntities(), 30000);
-  setInterval(()=> maybeScheduleRandomEvent(), 50000);
-  setInterval(()=> pruneExpiredWorldEvents(), 30000);
-  setInterval(()=> maybeSpawnVagabundo(), 300000);
-  setInterval(()=> maybeSpawnQuestNpc(), 240000);
-  setInterval(()=> maybeSpawnTutorialQuestNpc(), 90000);
-  setInterval(()=> maybeSpawnBoss(), 240000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnLoboNocturno), 60000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnDungeonAuraEnemy), 30000);
+  setInterval(()=> maybeSpawnShadowWolf(), 45000); // maybeSpawnShadowWolf ya chequea battleState/pvp/groupBattle por su cuenta
+  setInterval(()=> runIfNotInBattle(maybeScheduleWanderingMerchant), 120000);
+  setInterval(()=> runIfNotInBattle(pruneExpiredDynamicEntities), 30000);
+  setInterval(()=> maybeScheduleRandomEvent(), 50000); // maybeScheduleRandomEvent ya chequea battleState/pvp/groupBattle por su cuenta
+  setInterval(()=> runIfNotInBattle(pruneExpiredWorldEvents), 30000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnVagabundo), 300000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnQuestNpc), 240000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnTutorialQuestNpc), 90000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnBoss), 240000);
   setTimeout(()=> maybeSpawnBoss(), 60000);
-  setInterval(()=> updateBossTimers(), 1000);
+  setInterval(()=> runIfNotInBattle(updateBossTimers), 1000);
   setTimeout(()=> maybeSpawnThief(), 45000);
   initMultiplayer();
 
@@ -5038,10 +5154,14 @@ function spawnMonsters(n){
     // dentro de una Zona Peligrosa el nivel se sortea por Combat Power real (siempre a la altura
     // del jugador o por encima), no por el nivel plano de siempre — ver rollDangerZoneChallenge.
     const level = dangerZone ? rollDangerZoneChallenge(tpl).level : Math.max(1, player.level + Math.floor(Math.random()*3) - 1);
-    const m = makeMonster(tpl, level, positions[i], dangerZone ? {dangerZone:true} : null);
+    const m = makeMonster(tpl, level, positions[i], {dangerZone: !!dangerZone, envSpawn:true});
     monsters.push(m);
   }
-  slideNotice(`${dangerZone ? "☠️" : isNightTime()?"🌙":"👾"} ${n} monstruo(s) detectado(s) cerca.`);
+  // Pedido explícito: el nombre/distancia del enemigo va al toast inferior (antes vivía en el
+  // panel de anuncios lateral, #slideNoticeWrap, ya retirado).
+  const nearestD = playerLatLng ? Math.round(Math.min(...positions.map(p=> distMeters(playerLatLng, p)))) : null;
+  const distTxt = nearestD!=null ? ` a ${nearestD} m` : " cerca";
+  toast(`${dangerZone ? "☠️" : isNightTime()?"🌙":"👾"} ${n} monstruo(s) detectado(s)${distTxt}.`, 3200);
 }
 
 /** Manada de 2-3 (o 3-4 de noche) monstruos del mismo tipo, agrupados, con más recompensa (oro/XP). */
@@ -5059,9 +5179,12 @@ function spawnPack(){
   const packId = "pk"+Math.random().toString(36).slice(2,9);
   for(let i=0;i<size;i++){
     const pos = {lat: center.lat + (Math.random()*2-1)*0.00018, lng: center.lng + (Math.random()*2-1)*0.00018};
-    monsters.push(makeMonster(tpl, level, pos, {pack:true, packId, dangerZone: !!dangerZone}));
+    monsters.push(makeMonster(tpl, level, pos, {pack:true, packId, dangerZone: !!dangerZone, envSpawn:true}));
   }
-  slideNotice(`${dangerZone ? "☠️" : night?"🌙⚠️":"⚠️"} ¡Manada de ${size} ${tpl.name}(s) cerca! Tócalos para enfrentarlos juntos.`);
+  // Pedido explícito: nombre/distancia del enemigo al toast inferior, no al panel de anuncios.
+  const d = playerLatLng ? Math.round(distMeters(playerLatLng, center)) : null;
+  const distTxt = d!=null ? ` a ${d} m` : " cerca";
+  toast(`${dangerZone ? "☠️" : night?"🌙⚠️":"⚠️"} ¡Manada de ${size} ${tpl.name}(s)${distTxt}! Tócalos para enfrentarlos juntos.`, 3400);
 }
 
 /** Regeneración lenta de HP mientras no estás en combate (de ningún tipo). */
@@ -5572,7 +5695,7 @@ function tryGatherResource(nodeId){
   const node = resourceNodes.find(n=>n.id===nodeId);
   if(!node || !playerLatLng) return;
   const d = distMeters(playerLatLng, node);
-  if(d > ENGAGE_RANGE_M){ toast(`Está a ${Math.round(d)} m — acércate (≤${ENGAGE_RANGE_M} m).`); return; }
+  if(d > RESOURCE_GATHER_RANGE_M){ toast(`Está a ${Math.round(d)} m — acércate (≤${RESOURCE_GATHER_RANGE_M} m).`); return; }
   const type = RESOURCE_NODE_TYPES.find(t=>t.key===node.typeKey);
   if(maybeGatherAmbush(type)) return; // te distrajiste peleando — la recolección no arranca esta vez
   startGatherProgress(node, type);
@@ -5658,23 +5781,104 @@ function cancelGather(msg){
 
 function finishGather(node, type){
   activeGather = null;
-  $("gatherProgressWrap").classList.add("hidden");
+  const wrap = $("gatherProgressWrap");
+  const anchorRect = wrap.getBoundingClientRect(); // hay que leerlo ANTES de ocultar (display:none => rect vacío)
+  wrap.classList.add("hidden");
   const amount = Math.round(type.amountMin + Math.random()*(type.amountMax-type.amountMin));
-  player[type.kind] = (player[type.kind]||0) + amount;
+  const beforeQty = player[type.kind]||0;
+  player[type.kind] = beforeQty + amount;
   removeResourceNodeMarker(node.id);
   // el pico se gasta un uso por cada recolección — al llegar a 0 se rompe y hay que comprar otro
   let pickaxeMsg = "";
   if(player.pickaxe){
     player.pickaxe.uses -= 1;
     if(player.pickaxe.uses <= 0){
-      pickaxeMsg = " · ⛏️ ¡tu pico se rompió!";
+      pickaxeMsg = "⛏️ ¡tu pico se rompió!";
       player.pickaxe = null;
     }
   }
-  refreshHud();
+  refreshHud(); // ya llama a renderMapMaterialsBar() — el chip de este material se auto-protege (dataset.animating) mientras vuelan las partículas
   saveGame();
   renderPickaxeShopStatus();
-  toast(`${RESOURCE_ICON[type.kind]} +${amount} ${RESOURCE_LABEL[type.kind]}${pickaxeMsg}`, 2800);
+  spawnResourceGatherFloat(type, amount, beforeQty, anchorRect);
+  if(pickaxeMsg) toast(pickaxeMsg, 2800);
+}
+
+/** Barra fija de materiales recolectados (madera/piedra/hierro) — pedido explícito: va debajo de
+ *  la barra contextual del HUD (#hudContextBar), sin caja/fondo propio (ver public/new_elements/
+ *  battle.png). Se llama desde refreshHud() para quedar siempre al día; un chip en pleno vuelo de
+ *  partículas (dataset.animating, ver spawnResourceGatherFloat) se salta acá para no pisar la
+ *  cuenta en vivo. */
+function renderMapMaterialsBar(){
+  const wrap = $("hudMaterialsBar");
+  if(!wrap || !player) return;
+  ["wood","stone","iron"].forEach(kind=>{
+    let chip = wrap.querySelector(`.map-mat-chip[data-kind="${kind}"]`);
+    if(!chip){
+      chip = document.createElement("div");
+      chip.className = "map-mat-chip";
+      chip.dataset.kind = kind;
+      chip.innerHTML = `<span class="mmc-icon">${RESOURCE_ICON[kind]}</span><span class="mmc-qty">${player[kind]||0}</span>`;
+      wrap.appendChild(chip);
+      return;
+    }
+    if(chip.dataset.animating === "1") return;
+    chip.querySelector(".mmc-qty").textContent = player[kind]||0;
+  });
+}
+
+/** Pedido explícito: en vez de un solo toast "+14 madera", que salgan los 14 emojis flotando uno
+ *  por uno desde el HUD de recolección hasta el chip de ESE material en la barra fija de arriba,
+ *  sumando el total ahí en vivo (arranca en `beforeQty` y termina exacto en `beforeQty+amount`,
+ *  el mismo total real que ya quedó guardado en player[type.kind]) — mismo lenguaje visual que
+ *  spawnFloatingNumber() en batalla (main.js), pero con un destino fijo real (el chip) en vez de
+ *  solo subir en línea recta. */
+function spawnResourceGatherFloat(type, amount, beforeQty, anchorRect){
+  const kind = type.kind;
+  const icon = RESOURCE_ICON[kind];
+  renderMapMaterialsBar(); // por si es la primera vez que se recolecta este material, crea su chip
+  const chip = document.querySelector(`.map-mat-chip[data-kind="${kind}"]`);
+  const qtyEl = chip && chip.querySelector(".mmc-qty");
+  if(!anchorRect || !anchorRect.width || !chip || !qtyEl){ toast(`${icon} +${amount} ${RESOURCE_LABEL[kind]}`, 2800); return; }
+  chip.dataset.animating = "1";
+  const originX = anchorRect.left + anchorRect.width/2;
+  const originY = anchorRect.top;
+  const particleWrap = document.createElement("div");
+  particleWrap.className = "resource-float-wrap";
+  document.body.appendChild(particleWrap);
+  const particleCount = Math.max(1, Math.min(amount, 20)); // tope defensivo, hoy amountMax nunca pasa de 15
+  let landed = 0;
+  for(let i=0;i<particleCount;i++){
+    setTimeout(()=>{
+      const destRect = qtyEl.getBoundingClientRect();
+      const startX = originX + (Math.random()*56-28);
+      const startY = originY;
+      const destX = destRect.left + destRect.width/2;
+      const destY = destRect.top + destRect.height/2;
+      const p = document.createElement("div");
+      p.className = "resource-float-particle";
+      p.textContent = icon;
+      p.style.left = startX + "px";
+      p.style.top = startY + "px";
+      p.style.setProperty("--rfp-dx", (destX-startX).toFixed(1)+"px");
+      p.style.setProperty("--rfp-dy", (destY-startY).toFixed(1)+"px");
+      particleWrap.appendChild(p);
+      const settle = ()=>{
+        if(!p.parentNode) return;
+        p.remove();
+        landed++;
+        const done = landed >= particleCount;
+        qtyEl.textContent = done ? (beforeQty+amount) : (beforeQty + Math.round(amount*landed/particleCount));
+        chip.classList.remove("bump"); void chip.offsetWidth; chip.classList.add("bump");
+        if(done){
+          delete chip.dataset.animating;
+          particleWrap.remove();
+        }
+      };
+      p.addEventListener("animationend", settle);
+      setTimeout(settle, 1000); // red de seguridad si animationend no dispara
+    }, i*65 + Math.random()*35);
+  }
 }
 
 /** Santuarios: al quedarte parado un momento cerca, te dan un beneficio temporal de combate
@@ -6486,7 +6690,73 @@ $("btnCloseBasesMenu").onclick = ()=> $("basesMenuOverlay").classList.add("hidde
 
 /** Arma la lista de la Forja: una fila por cada pieza de equipo con durabilidad (puesta o en el
  *  inventario), con su barra de estado y un botón de reparar individual — más el total abajo. */
+/** Pedido explícito: el Herrero (fabricar armas con materiales) vive DENTRO de la Forja de
+ *  siempre, como una segunda pestaña — ya es el NPC/pantalla temáticamente correcto (repara con
+ *  oro+material) y ya es accesible desde el mapa (menú ☰ → 🔨), así que no hace falta un botón
+ *  nuevo ni una pantalla separada. */
+let forgeActiveTab = "repair";
 function renderForge(){
+  $("btnForgeTabRepair").classList.toggle("active", forgeActiveTab==="repair");
+  $("btnForgeTabCraft").classList.toggle("active", forgeActiveTab==="craft");
+  $("btnRepairAll").classList.toggle("hidden", forgeActiveTab!=="repair");
+  $("forgeSubText").textContent = forgeActiveTab==="repair"
+    ? "Repara tu equipo gastado con oro y materiales. Nunca se rompe del todo — solo rinde menos por debajo del 10% de durabilidad."
+    : "Fabrica armas exclusivas con materiales que sueltan ciertos monstruos al derrotarlos.";
+  if(forgeActiveTab==="craft"){
+    $("forgeTotalRow").classList.add("hidden");
+    renderForgeCraftTab();
+    return;
+  }
+  renderForgeRepairTab();
+}
+$("btnForgeTabRepair").onclick = ()=>{ forgeActiveTab = "repair"; renderForge(); };
+$("btnForgeTabCraft").onclick = ()=>{ forgeActiveTab = "craft"; renderForge(); };
+
+/** Nombre+ícono cortos de un material de receta, sea del mundo (wood/stone/iron/crystals, ver
+ *  INV_MATERIALS) o de combate (ver CRAFT_MATERIALS) — para las etiquetas de la pestaña Fabricar. */
+function materialLabelFor(key){
+  const craftMat = CRAFT_MATERIALS.find(m=>m.key===key);
+  if(craftMat) return {emoji:craftMat.emoji, label:craftMat.label};
+  const worldMat = INV_MATERIALS.find(m=>m.key===key);
+  if(worldMat) return {emoji:worldMat.emoji, label:worldMat.label};
+  return {emoji:"❔", label:key};
+}
+/** Pestaña "Fabricar" — una fila por receta (ver BLACKSMITH_RECIPES), con cada material mostrado
+ *  como "tengo/necesito" y en rojo el que falta. El botón "Forjar" se deshabilita si falta algún
+ *  material o si el arma no es de tu clase — craftWeapon() vuelve a chequear todo igual (nunca
+ *  confía solo en el estado del botón). */
+function renderForgeCraftTab(){
+  const list = $("forgeList");
+  list.innerHTML = "";
+  BLACKSMITH_RECIPES.forEach(recipe=>{
+    const afford = canAffordRecipe(recipe);
+    const wrongClass = recipe.classKey && recipe.classKey !== player.classKey;
+    const matsHtml = recipe.materials.map(m=>{
+      const have = resolveMaterialQty(m.key);
+      const short = have < m.amount;
+      const label = materialLabelFor(m.key);
+      return `<span class="forge-mat-chip${short?" short":""}">${label.emoji} ${have}/${m.amount} ${label.label}</span>`;
+    }).join("");
+    const row = document.createElement("div");
+    row.className = "inv-item";
+    row.style.flexDirection = "column";
+    row.style.alignItems = "stretch";
+    row.innerHTML = `
+      <div style="display:flex; align-items:center; gap:10px; width:100%;">
+        <div class="ie">${recipe.emoji}</div>
+        <div class="it" style="flex:1;">
+          ${recipe.name}${wrongClass?` <small style="color:var(--danger);">(Solo ${(CLASSES[recipe.classKey]||{}).name||recipe.classKey})</small>`:""}
+          <div style="font-size:10.5px; color:var(--dim); margin-top:2px;">${recipe.desc}</div>
+        </div>
+        <button data-act="craft" ${(!afford||wrongClass)?"disabled":""} style="width:auto; padding:6px 12px;">Forjar</button>
+      </div>
+      <div class="forge-mats-row">${matsHtml}</div>`;
+    row.querySelector('[data-act="craft"]').onclick = ()=> craftWeapon(recipe.id);
+    list.appendChild(row);
+  });
+}
+
+function renderForgeRepairTab(){
   const list = $("forgeList");
   const items = allDurabilityItems();
   if(!items.length){
@@ -7043,7 +7313,14 @@ function maybeSpawnTutorialQuestNpc(){
   if(activeQuest) return;
   if(monsters.some(m=>m.isQuestNpc)) return;
   if(Math.random() > 0.35) return; // más frecuente que las misiones normales, para que lo encuentre pronto
-  const template = TUTORIAL_QUEST_TEMPLATES[Math.floor(Math.random()*TUTORIAL_QUEST_TEMPLATES.length)];
+  const zone = getCurrentZone();
+  // solo se ofrece una misión de un monstruo ESPECÍFICO ("mata 4 Ratas") si ese monstruo de
+  // verdad puede aparecer en la zona donde estás parado ahora — antes se sorteaba entre las 3
+  // plantillas sin mirar la zona, y podías terminar con una misión de un monstruo que no tiene
+  // ninguna chance de aparecer cerca (ver monsterNames por zona en world.js).
+  const eligible = TUTORIAL_QUEST_TEMPLATES.filter(t=> !t.monsterName || !zone || zone.monsterNames.includes(t.monsterName));
+  const pool = eligible.length ? eligible : TUTORIAL_QUEST_TEMPLATES;
+  const template = pool[Math.floor(Math.random()*pool.length)];
   const pos = randOffset(35 + Math.random()*80); // más cerca, para que sea fácil de encontrar
   // Pedido explícito: ilustración real en vez del emoji 🧓, mismo criterio "standee" que el Vagabundo.
   const tpl = {name:template.npcName, emoji:template.npcEmoji, tier:1, hpM:1, atkM:1, defM:1,
@@ -7065,7 +7342,38 @@ function registerQuestKill(monsterTplName){
   renderQuestTracker();
   if(activeQuest.killProgress >= activeQuest.killGoal){
     toast(`📜 ¡Ya derrotaste a los enemigos que te pidieron! Entrega la misión cuando quieras.`, 3500);
+    refreshQuestTargetHighlights(); // meta cumplida: se apaga el anillo dorado de los que quedan en el mapa
   }
+}
+
+/** ¿`tplName` es el monstruo objetivo de una misión "derrota N X" activa y todavía sin completar?
+ *  Usado tanto al crear un marcador nuevo (makeMonster) como para resaltar retroactivamente los
+ *  que ya estaban puestos en el mapa (refreshQuestTargetHighlights). */
+function isQuestTargetTpl(tplName){
+  if(!activeQuest || !activeQuest.template || activeQuest.template.type !== "kill_count") return false;
+  const t = activeQuest.template;
+  if(!t.monsterName || t.monsterName !== tplName) return false;
+  return (activeQuest.killProgress||0) < activeQuest.killGoal;
+}
+
+/** Agrega/quita el anillo dorado de "objetivo de misión" en los monstruos YA puestos en el mapa —
+ *  para que no haga falta esperar un respawn nuevo cuando aceptas, completas o cancelas una
+ *  misión de matar cierto tipo de enemigo. */
+function refreshQuestTargetHighlights(){
+  monsters.forEach(m=>{
+    const el = m.marker && m.marker.getElement && m.marker.getElement();
+    const ringWrap = el && el.querySelector(".ring-tilt-wrap");
+    if(!ringWrap) return;
+    const existing = ringWrap.querySelector(".quest-target-ring");
+    const should = !m.isBoss && isQuestTargetTpl(m.tpl.name);
+    if(should && !existing){
+      const div = document.createElement("div");
+      div.className = "quest-target-ring";
+      ringWrap.appendChild(div);
+    } else if(!should && existing){
+      existing.remove();
+    }
+  });
 }
 
 /** Abre el modal del NPC de misión (con la distancia mínima de siempre). */
@@ -7116,6 +7424,7 @@ function acceptTutorialQuest(npcMon, template){
   map.removeLayer(npcMon.marker);
   monsters = monsters.filter(m=>m.id!==npcMon.id);
   renderQuestTracker();
+  refreshQuestTargetHighlights();
   const targetLabel = template.monsterName ? `${template.killGoal} ${template.monsterName}(s)` : `${template.killGoal} enemigos cualquiera`;
   toast(`📜 Misión aceptada: derrota a ${targetLabel}.`, 4200);
   saveGame();
@@ -7276,6 +7585,7 @@ function cancelQuest(){
   if(activeQuest.destMarker) map.removeLayer(activeQuest.destMarker);
   activeQuest = null;
   renderQuestTracker();
+  refreshQuestTargetHighlights();
   refreshHud();
   saveGame();
   toast(`${t.npcEmoji} ${t.npcName}: "Vale, no pasa nada. Lo haré cuando pueda."`, 4500);
@@ -7316,6 +7626,7 @@ function completeQuest(){
   if(activeQuest.destMarker) map.removeLayer(activeQuest.destMarker);
   activeQuest = null;
   renderQuestTracker();
+  refreshQuestTargetHighlights();
   refreshHud();
   checkLevelUps();
   toast(`🎉 Misión completada: +${t.rewardGold} 💰 · +${t.rewardXp} XP`, 4000);
@@ -7327,7 +7638,12 @@ function maybeSpawnVagabundo(){
   if(monsters.some(m=>m.isVagabundo)) return; // ya hay uno activo
   if(Math.random() > 0.12) return; // más raro que el comerciante
   const pos = randOffset(45 + Math.random()*140);
-  const m = makeMonster(VAGABUNDO_TEMPLATE, player.level, pos, {special:true});
+  // Ilustración real en vez del emoji 🧔 en el marcador del mapa — mismo criterio "standee" que el
+  // Veterano/Cazador (ver VAGABUNDO_SPRITES en spriteRegistry.js, ya se usaba para el retrato del
+  // modal pero no para el marcador). Copia superficial en vez de mutar VAGABUNDO_TEMPLATE directo,
+  // que es el import compartido — no hace falta tocarlo para el resto de usos.
+  const tpl = {...VAGABUNDO_TEMPLATE, mapSprite: VAGABUNDO_SPRITES.map, mapSpriteStandee: true};
+  const m = makeMonster(tpl, player.level, pos, {special:true});
   m.isVagabundo = true;
   monsters.push(m);
   toast("🧔 Un vagabundo apareció cerca... parece necesitar unas monedas.", 4200);
@@ -7414,6 +7730,9 @@ function makeMonster(tpl, level, pos, opts){
   // Zona Peligrosa: anillo rojo pulsante adicional, para que se note de lejos que ESTE enemigo
   // viene escalado por Combat Power (rollDangerZoneChallenge), no por el nivel plano de siempre.
   if(opts.dangerZone && !opts.boss) ring += `<div class="danger-zone-ring"></div>`;
+  // Objetivo de misión activa ("derrota N Ratas"): anillo dorado adicional para que resalte entre
+  // el resto de monstruos de la zona — pedido explícito, ver también refreshQuestTargetHighlights().
+  if(!opts.boss && isQuestTargetTpl(tpl.name)) ring += `<div class="quest-target-ring"></div>`;
   let timerHtml = "";
   if(opts.boss){
     const tier = bossDifficultyTier(level);
@@ -7437,7 +7756,7 @@ function makeMonster(tpl, level, pos, opts){
   const lifespanMs = opts.lifespanMsOverride || ((5 + Math.random()*2) * 60000); // 5-7 min normal, o el valor fijo del jefe
   const mon = {id, tpl, level, hp, maxHp:hp, atk, def, spd, lat:pos.lat, lng:pos.lng, marker,
     packBonus: opts.pack ? 1.5 : 1, packId: opts.packId || null, ambushed:false, isBoss: !!opts.boss,
-    spawnedAt: Date.now(), lifespanMs};
+    envSpawn: !!opts.envSpawn, spawnedAt: Date.now(), lifespanMs};
   marker.on('click', (e)=>{
     L.DomEvent.stopPropagation(e); // por si acaso, que nunca se cuele como un toque para mover al jugador
     if(mon.isMerchant) openMerchantNpc(mon);
@@ -7813,6 +8132,7 @@ function refreshHud(){
   $("hudIcon").className = "p-icon" + (player.activeFrameClass ? " "+player.activeFrameClass : "") + (auraClass ? " "+auraClass : "");
   $("hudIconEmoji").textContent = player.emoji;
   updateMeMarkerAura();
+  renderMapMaterialsBar();
 }
 function pct(v,max){ return Math.max(0, Math.min(100, (v/max)*100)); }
 function round1(v){ return Math.round(v*10)/10; }
@@ -8172,9 +8492,13 @@ function renderInventoryTabs(){
     const btn = document.createElement("button");
     btn.className = "inv-cat-tab" + (cat.key===invActiveCategory ? " active" : "");
     btn.textContent = cat.label;
-    btn.onclick = ()=>{ invActiveCategory = cat.key; renderInventoryTabs(); renderInventory(); };
+    btn.onclick = ()=>{ invActiveCategory = cat.key; renderInventoryTabs(); renderInventoryClassTabs(); renderInventory(); };
     wrap.appendChild(btn);
   });
+  // Pedido explícito: el filtro de clase (Todos/Guerrero/Arquero/Mago/Berserk) solo tiene sentido
+  // en la pestaña Equipo — en el resto de pestañas los objetos son universales, así que ahora
+  // queda oculto ahí en vez de siempre visible.
+  $("invClassTabs").classList.toggle("hidden", invActiveCategory !== "equip");
 }
 
 /** Filtro rápido por clase — pedido explícito. Solo los objetos de equipo tienen `classKey`; en
@@ -8200,14 +8524,16 @@ function renderInventoryClassTabs(){
     wrap.appendChild(btn);
   });
 }
-/** Pastilla de color + emoji de clase (🟥🟩🟦🟪 — pedido explícito) para la esquina de la
- *  tarjeta de un objeto de equipo. Vacío para objetos universales (sin classKey). */
+/** Pedido explícito: en vez de la pastilla de color (🟥🟩🟦🟪), un emoji que se entienda de un
+ *  vistazo para quién es el objeto — escudo (Guerrero), arco (Arquero), bola de cristal (Mago),
+ *  hacha (Berserker). Vacío para objetos universales (sin classKey). */
+const INV_CLASS_ICON = { guerrero:"🛡️", arquero:"🏹", mago:"🔮", berserker:"🪓" };
 function classBadgeHtml(item){
   if(!item.classKey) return "";
-  const badge = CLASS_BADGE[item.classKey];
-  if(!badge) return "";
+  const icon = INV_CLASS_ICON[item.classKey];
+  if(!icon) return "";
   const className = (CLASSES[item.classKey]||{}).name || item.classKey;
-  return `<div class="icv-class-badge" title="${className}">${badge.dot}</div>`;
+  return `<div class="icv-class-badge" title="${className}">${icon}</div>`;
 }
 /** "Solo Arquero/Mago/Berserk" — pedido explícito, se muestra en objetos de OTRA clase distinta a
  *  la del héroe activo (nunca en los tuyos ni en los universales). */
@@ -8216,23 +8542,36 @@ function otherClassTagHtml(item){
   const className = (CLASSES[item.classKey]||{}).name || item.classKey;
   return `<div class="icv-other-class">Solo ${className}</div>`;
 }
-/** Los 4 materiales que hoy existen de verdad en el juego (wood/stone/iron/crystals — campos
+/** Los 3 materiales de construcción/fabricación que existen hoy (wood/stone/iron — campos
  *  numéricos de player, no objetos de inventario). El pedido original mencionaba Cuero/Gemas como
  *  ejemplo, pero ningún sistema del juego los produce o consume todavía — no se inventan acá,
- *  solo se muestran los que sí tienen una fuente real (recolección/tienda). */
+ *  solo se muestran los que sí tienen una fuente real (recolección/tienda). Los cristales NO van
+ *  acá a propósito: son en realidad diamantes, la moneda premium del juego (revivir, ampliar la
+ *  base, tienda — ver player.crystals), no un material de fabricación, así que se muestran solo
+ *  junto al oro (statCrystals) y nunca en esta pestaña. */
 const INV_MATERIALS = [
   {key:"wood", label:"Madera", emoji:"🪵"},
   {key:"stone", label:"Piedra", emoji:"🪨"},
   {key:"iron", label:"Hierro", emoji:"🔩"},
-  {key:"crystals", label:"Cristales", emoji:"💎"},
 ];
-/** Pestaña "Materiales" — tarjetas SINTÉTICAS leídas directo de player.wood/stone/iron/crystals,
- *  no de player.inventory (esos campos numéricos siguen siendo la fuente de verdad para
- *  recolección/construcción/tienda — no se tocan). Apiladas por naturaleza, no ocupan espacio del
- *  inventario y nunca lo llenan. */
+/** Pestaña "Materiales" — tarjetas SINTÉTICAS leídas directo de player.wood/stone/iron/crystals y
+ *  player.craftMats (botín de combate para el Herrero, ver CRAFT_MATERIALS en
+ *  game/config/blacksmith.js), no de player.inventory (esos campos siguen siendo la fuente de
+ *  verdad para recolección/construcción/tienda/fabricación — no se tocan). Apiladas por
+ *  naturaleza, no ocupan espacio del inventario y nunca lo llenan. */
 function renderMaterialsTab(grid){
   INV_MATERIALS.forEach(m=>{
     const qty = player[m.key]||0;
+    const card = document.createElement("div");
+    card.className = "inv-card-v2";
+    card.innerHTML = `<div class="icv-icon">${m.emoji}</div>
+      <div class="icv-name">${m.label}</div>
+      <div class="icv-qty">x${qty}</div>`;
+    grid.appendChild(card);
+  });
+  CRAFT_MATERIALS.forEach(m=>{
+    const qty = (player.craftMats && player.craftMats[m.key]) || 0;
+    if(qty <= 0) return; // solo se muestran una vez conseguidos, para no listar 10 materiales en 0
     const card = document.createElement("div");
     card.className = "inv-card-v2";
     card.innerHTML = `<div class="icv-icon">${m.emoji}</div>
@@ -8249,8 +8588,13 @@ let invFavorites = new Set();
 let invLocked = new Set();
 let invSearchQuery = "";
 let invSortMode = "default";
+let invOnlyEquipped = false;
 let invSelectMode = false;
 let invSelectedIds = new Set();
+/** Pedido explícito: se acabó el botón "Seleccionar" — mantener el dedo/click sobre un objeto
+ *  este tiempo entra en modo selección directo con ESE objeto ya marcado (ver enterInvSelectMode,
+ *  cableado por pointerdown/pointerup en cada tarjeta dentro de renderInventory). */
+const INV_LONG_PRESS_MS = 2000;
 
 /** Estadística principal a mostrar en la tarjeta chica (la bonificación más alta del objeto). */
 function primaryStatLine(item){
@@ -8264,19 +8608,20 @@ function rarityRank(item){
   return RARITY_TIERS.findIndex(t=>t.key===item.rarity);
 }
 
-function renderResourceBar(){
-  const bar = $("invResourceBar");
-  if(!bar) return;
-  bar.innerHTML = `
-    <div class="inv-res-chip" title="${(player.gold||0).toLocaleString("es")}">🪙 ${formatGold(player.gold)}</div>
-    <div class="inv-res-chip">💎 ${player.crystals||0}</div>
-    <div class="inv-res-chip">🪵 ${player.wood||0}</div>
-    <div class="inv-res-chip">🪨 ${player.stone||0}</div>
-    <div class="inv-res-chip">🔩 ${player.iron||0}</div>`;
+/** Botón "+ Expandir" junto al contador (ver .inv-count-block en index.html) — reemplaza la
+ *  tarjeta "Ampliar inventario" que antes vivía DENTRO de la grilla y ocupaba un espacio visual;
+ *  pedido explícito: que no ocupe un hueco del inventario. Se oculta sola al llegar al tope de
+ *  capacidad (nextSlotPurchaseInfo devuelve null ahí). */
+function renderInvExpandButton(){
+  const btn = $("btnInvExpand");
+  if(!btn) return;
+  const info = nextSlotPurchaseInfo();
+  btn.classList.toggle("hidden", !info);
+  if(info) btn.textContent = `+ Expandir (${info.currency==="gold"?"🪙":"💎"} ${info.cost})`;
 }
+$("btnInvExpand").onclick = ()=>{ buyNextInventorySlot(); renderInventory(); };
 
 function renderInventory(){
-  renderResourceBar();
   const grid = $("invList");
   grid.innerHTML = "";
   const seen = new Set();
@@ -8286,10 +8631,20 @@ function renderInventory(){
     seen.add(it.id);
     uniqueItems.push(it);
   });
-  $("invCount").textContent = `${uniqueItems.length}/${inventoryMaxSlots()}`;
+  const maxSlots = inventoryMaxSlots();
+  $("invCount").textContent = `${uniqueItems.length}/${maxSlots}`;
+  // Pedido explícito: en vez de solo el número, una barrita que se va llenando — se pone dorada
+  // cerca del tope para avisar que conviene ampliar pronto.
+  const fillPct = Math.min(100, Math.round((uniqueItems.length/maxSlots)*100));
+  const fillEl = $("invCountBarFill");
+  if(fillEl){
+    fillEl.style.width = fillPct+"%";
+    fillEl.classList.toggle("almost-full", fillPct>=90);
+  }
+  renderInvExpandButton();
 
   // Materiales es una pestaña sintética (no filtra player.inventory) — se resuelve aparte y
-  // corta acá; no aplica capacidad/búsqueda/orden ni la tarjeta de "ampliar inventario".
+  // corta acá; no aplica capacidad/búsqueda/orden.
   if(invActiveCategory === "material"){
     renderMaterialsTab(grid);
     return;
@@ -8300,14 +8655,16 @@ function renderInventory(){
   if(invActiveClassFilter !== "all"){
     filtered = filtered.filter(it=> !it.classKey || it.classKey===invActiveClassFilter);
   }
+  if(invOnlyEquipped){
+    filtered = filtered.filter(it=> isItemCurrentlyEquipped(it));
+  }
   if(invSearchQuery.trim()){
     const q = invSearchQuery.trim().toLowerCase();
     filtered = filtered.filter(it=> it.name.toLowerCase().includes(q));
   }
   const countOf = it=> player.inventory.filter(x=>x.id===it.id).length;
   if(invSortMode==="level") filtered = filtered.slice().sort((a,b)=> (b.reqLevel||0)-(a.reqLevel||0));
-  else if(invSortMode==="power") filtered = filtered.slice().sort((a,b)=> itemPowerScore(b)-itemPowerScore(a));
-  else if(invSortMode==="qty") filtered = filtered.slice().sort((a,b)=> countOf(b)-countOf(a));
+  else if(invSortMode==="name") filtered = filtered.slice().sort((a,b)=> a.name.localeCompare(b.name,"es"));
   else filtered = filtered.slice().sort((a,b)=> rarityRank(b)-rarityRank(a));
 
   // Equipamiento inteligente — pedido explícito: en la pestaña Equipo con el filtro de clase en
@@ -8320,6 +8677,8 @@ function renderInventory(){
     myClassItems = filtered.filter(it=> !it.classKey || it.classKey===player.classKey);
     otherClassItems = filtered.filter(it=> it.classKey && it.classKey!==player.classKey);
   }
+
+  $("invMassActions").classList.toggle("hidden", !invSelectMode);
 
   if(filtered.length===0){
     grid.innerHTML = `<div class="empty-note" style="grid-column:1/-1;">${uniqueItems.length===0 ? "Aún no tienes objetos. ¡Gana combates para conseguir botín!" : "No se encontró nada con esos filtros."}</div>`;
@@ -8343,7 +8702,21 @@ function renderInventory(){
         ${otherClassTagHtml(it)}
         ${it.reqLevel ? `<div class="icv-lvl">Nv. requerido ${it.reqLevel}</div>` : ""}
         ${count>1 ? `<div class="icv-qty">x${count}</div>` : ""}`;
+      // Pedido explícito: sin botón "Seleccionar" — mantener presionado un objeto
+      // INV_LONG_PRESS_MS entra en modo selección con ESE objeto ya marcado (ver
+      // enterInvSelectMode). Un pointerup/cancel antes de tiempo es un tap normal de siempre.
+      let pressTimer = null, longPressFired = false;
+      const clearPressTimer = ()=> clearTimeout(pressTimer);
+      card.addEventListener("pointerdown", ()=>{
+        longPressFired = false;
+        clearPressTimer();
+        pressTimer = setTimeout(()=>{ longPressFired = true; enterInvSelectMode(it, card); }, INV_LONG_PRESS_MS);
+      });
+      card.addEventListener("pointerup", clearPressTimer);
+      card.addEventListener("pointercancel", clearPressTimer);
+      card.addEventListener("pointerleave", clearPressTimer);
       card.onclick = ()=>{
+        if(longPressFired){ longPressFired = false; return; } // ya se resolvió como mantener presionado
         if(invSelectMode){
           if(invSelectedIds.has(it.id)) invSelectedIds.delete(it.id); else invSelectedIds.add(it.id);
           renderInventory();
@@ -8362,21 +8735,20 @@ function renderInventory(){
       otherClassItems.forEach(it=> grid.appendChild(buildCard(it)));
     }
   }
-
-  // Tarjeta "+" para ampliar el inventario — siempre al final, en cualquier categoría, incluso si
-  // el inventario todavía está vacío. Se oculta sola al llegar al nivel máximo de capacidad
-  // (nextSlotPurchaseInfo devuelve null ahí).
-  if(!invSelectMode){
-    const info = nextSlotPurchaseInfo();
-    if(info){
-      const buyCard = document.createElement("div");
-      buyCard.className = "inv-card-v2 inv-buy-slot-card";
-      buyCard.innerHTML = `<div class="icv-icon">➕</div><div class="icv-name">Ampliar inventario</div>
-        <div class="icv-stat">${info.currency==="gold"?"🪙":"💎"} ${info.cost}</div>`;
-      buyCard.onclick = ()=>{ buyNextInventorySlot(); renderInventory(); };
-      grid.appendChild(buyCard);
-    }
-  }
+}
+/** Entra en modo selección SIN reconstruir la grilla (ver el pointerdown de arriba en
+ *  renderInventory) — un renderInventory() a mitad de un mantener-presionado reemplazaría la
+ *  tarjeta bajo el dedo/mouse y el click que sigue al soltar caería sobre una tarjeta nueva,
+ *  deseleccionando lo que se acababa de marcar. Solo marca ESTA tarjeta + muestra la barra de
+ *  acciones; el resto de tarjetas ya existentes reacciona sola porque su propio onclick lee
+ *  `invSelectMode` en vivo (variable del módulo, no una copia congelada al crearlas). */
+function enterInvSelectMode(it, card){
+  if(invSelectMode) return;
+  invSelectMode = true;
+  invSelectedIds.add(it.id);
+  card.classList.add("selected");
+  $("invList").querySelectorAll(".inv-card-v2").forEach(c=> c.classList.add("selectable"));
+  $("invMassActions").classList.remove("hidden");
 }
 /** ¿Este objeto (o uno igual a él) ya está puesto en algún hueco de equipo ahora mismo? */
 function isItemCurrentlyEquipped(item){
@@ -8385,13 +8757,22 @@ function isItemCurrentlyEquipped(item){
   return !!(eq && eq.id === item.id);
 }
 
+// Pedido explícito: buscador/orden/"solo equipados" escondidos detrás de un botón "Filtros" (en
+// vez de siempre visibles) — con 40 espacios nadie escribe para buscar, así que no vale la pena
+// que ocupen su propia fila permanente.
+$("btnInvFilters").onclick = ()=> $("invFiltersPanel").classList.toggle("hidden");
 $("invSearchInput").addEventListener("input", (e)=>{ invSearchQuery = e.target.value; renderInventory(); });
-$("invSortSelect").addEventListener("change", (e)=>{ invSortMode = e.target.value; renderInventory(); });
-$("btnInvSelectMode").onclick = ()=>{
-  invSelectMode = !invSelectMode;
+$("invSortChipRow").querySelectorAll(".inv-sort-chip").forEach(chip=>{
+  chip.onclick = ()=>{
+    invSortMode = chip.dataset.sort;
+    $("invSortChipRow").querySelectorAll(".inv-sort-chip").forEach(c=> c.classList.toggle("active", c===chip));
+    renderInventory();
+  };
+});
+$("invOnlyEquippedToggle").addEventListener("change", (e)=>{ invOnlyEquipped = e.target.checked; renderInventory(); });
+$("btnInvCancelSelect").onclick = ()=>{
+  invSelectMode = false;
   invSelectedIds.clear();
-  $("btnInvSelectMode").textContent = invSelectMode ? "✖️ Cancelar" : "☑️ Seleccionar";
-  $("btnInvSellSelected").classList.toggle("hidden", !invSelectMode);
   renderInventory();
 };
 $("btnInvSellSelected").onclick = ()=>{
@@ -8407,8 +8788,6 @@ $("btnInvSellSelected").onclick = ()=>{
   player.gold += totalGold;
   invSelectedIds.clear();
   invSelectMode = false;
-  $("btnInvSelectMode").textContent = "☑️ Seleccionar";
-  $("btnInvSellSelected").classList.add("hidden");
   refreshHud();
   renderInventory();
   saveGame();
@@ -9381,6 +9760,32 @@ function playCharacterSlideInFx(){
       { transform:"scaleX(-1) translateX(0)", opacity:1, offset:1 },
     ], { duration:DURATION_MS, delay:DELAY_MS, easing:EASING, fill:"both" });
   }
+  // Pedido explícito: que las barras de vida/maná no se vean ya llenas desde el primer frame,
+  // detrás del deslizamiento — que aparezcan y se llenen recién cuando personaje y enemigo terminan
+  // de llegar a su lugar, como parte de la misma secuencia de entrada.
+  playBattleBarsIntroFx(DELAY_MS + DURATION_MS);
+}
+/** Las barras (vida del jugador, maná, vida del enemigo, y defensa si está activa este combate) ya
+ *  quedaron puestas en su ancho real por updateBattleBars() antes de que #battleWrap se revele —
+ *  acá se ponen en 0% sin transición (mismo truco de forzar reflow que ya usa startGatherProgress
+ *  más abajo) y recién se restauran a su ancho real, CON la transición normal de .bar-fill (.9s,
+ *  ver main.css), cuando pasó `revealDelayMs` — pensado para que coincida con el instante en que
+ *  playCharacterSlideInFx() termina de traer a los sprites a su posición, así las barras se sienten
+ *  parte de la misma entrada en vez de aparecer de golpe, separadas del resto. Si no hay barras que
+ *  animar (p.ej. algo todavía no está en el DOM) no hace nada. */
+function playBattleBarsIntroFx(revealDelayMs){
+  const candidates = [$("bPHp"), $("bPMp"), $("bEHp")];
+  const defWrap = $("bPDefWrap");
+  if(defWrap && !defWrap.classList.contains("hidden")) candidates.push($("bPDef"));
+  const targets = candidates.filter(Boolean).map(el=>({el, width: el.style.width || "0%"}));
+  if(!targets.length) return;
+  targets.forEach(({el})=>{ el.style.transition = "none"; el.style.width = "0%"; });
+  targets.forEach(({el})=> void el.offsetWidth);
+  targets.forEach(({el})=>{ el.style.transition = ""; });
+  clearTimeout(playBattleBarsIntroFx._revealTimer);
+  playBattleBarsIntroFx._revealTimer = setTimeout(()=>{
+    targets.forEach(({el, width})=> el.style.width = width);
+  }, revealDelayMs);
 }
 
 /** ¿El jugador está ahora mismo dentro del radio de niebla oscura de algún portal de mazmorra?
@@ -10517,6 +10922,7 @@ function executePlayerAction(mv){
     battleState.thiefTauntActive = false;
     triggerThiefDodgePose();
     showBattlePopup("¡Falla!", "miss");
+    spawnFloatingNumber("spriteEnemy", "MISS", "miss");
     logBattle(`😏 ¡${mon.tpl.name} esquiva tu ataque justo como prometió!`);
     animateSprite("spritePlayer","attackp");
   } else if(mon.tpl.evasionChance && Math.random() < mon.tpl.evasionChance){
@@ -10529,6 +10935,7 @@ function executePlayerAction(mv){
       triggerShadowWolfPose("dodge", 800);
     }
     showBattlePopup("¡Esquivado!", "miss");
+    spawnFloatingNumber("spriteEnemy", "MISS", "miss");
     logBattle(`💨 ¡${mon.tpl.name} esquiva tu ataque de un salto!`);
     animateSprite("spritePlayer","attackp");
   } else {
@@ -10625,7 +11032,15 @@ function effectiveAtk(mv){
   const base = player.atk + ((mv && mv.type==="magic") ? (player.matk||0) : 0);
   const nightBonus = (isEspadaLunarEquipped() && isNightTime()) ? 1.3 : 1;
   const shrineBonus = shrineBuffMultiplier((mv && mv.type==="magic") ? "matk" : "atk");
-  return base * (battleState.playerBuffs.atk||1) * nightBonus * shrineBonus;
+  return base * (battleState.playerBuffs.atk||1) * nightBonus * shrineBonus * weaponNightDmgMult();
+}
+/** Bono de daño nocturno de un arma FABRICADA (ver nightDmgBonus en BLACKSMITH_RECIPES, ej. el
+ *  Arco Demoníaco) — mismo mecanismo que ya usaba en solitario la Espada Lunar
+ *  (isEspadaLunarEquipped, arriba), generalizado a cualquier arma para no tener que agregar un
+ *  caso especial por cada una nueva. */
+function weaponNightDmgMult(){
+  const w = player.equipment && player.equipment.weapon;
+  return (w && w.nightDmgBonus && isNightTime()) ? 1+w.nightDmgBonus : 1;
 }
 /** ¿Tiene equipada el arma legendaria del Lobo Nocturno (cualquiera de sus versiones por clase)? */
 function isEspadaLunarEquipped(){
@@ -10663,8 +11078,18 @@ function maybeExtraEnemyTurn(mon, isExtraAttack){
   }
 }
 
+/** Mitigación por ratio (retornos decrecientes), no resta plana: con la resta plana de antes
+ *  (atk*power - def*0.4), un jugador bien equipado veía a los enemigos de SU MISMO nivel quedar
+ *  en el piso de 1 de daño en cuanto su DEF pasaba ~2.5x el ATK del enemigo — el combate dejaba
+ *  de sentirse como un intercambio de golpes. Con `def/(def+K)` cada punto de DEF pesa cada vez
+ *  menos y nunca anula el ataque salvo una diferencia enorme; K=15 es el punto donde la DEF
+ *  mitiga el 50% (ajustado para que Nv.igual vs Nv.igual vuelva a doler, sin desbalancear las
+ *  peleas contra enemigos varios niveles arriba que ya se sentían bien). */
+const DAMAGE_MITIGATION_K = 15;
 function calcDamage(atk, def, power, critChance){
-  let base = atk*power - def*0.4;
+  const rawAtk = atk*power;
+  const mitigation = def / (def + DAMAGE_MITIGATION_K);
+  let base = rawAtk * (1 - mitigation);
   base = Math.max(1, base);
   const variance = 0.85 + Math.random()*0.3;
   let dmg = base*variance;
@@ -11220,8 +11645,11 @@ function resolveEnemyDirectAttack(mon, power, spdMod, outcome){
   let dmg = calcDamage(mon.atk*spdMod, effectiveDef(), power, 0.08);
   if(outcome === "blocked"){
     // El daño que le habría hecho a la vida se descuenta de la barra de defensa en su lugar —
-    // nunca se recarga ni se cura durante el combate (ver DEFENSE_BAR_PCT/startBattle).
-    battleState.defenseBar = Math.max(0, battleState.defenseBar - dmg);
+    // nunca se recarga ni se cura durante el combate (ver DEFENSE_BAR_PCT/startBattle). Pedido
+    // explícito: bloquear "quedaba muy fuerte" (la barra aguantaba demasiado) — el golpe le hace
+    // un 15% MÁS de daño a esta barra que el que le habría hecho a la vida, para que no dure tanto.
+    const barDmg = Math.round(dmg * 1.15);
+    battleState.defenseBar = Math.max(0, battleState.defenseBar - barDmg);
     const blockGesture = player.classKey === "mago" ? "la barrera mágica"
       : player.classKey === "berserker" ? "el filo de la espada"
       : player.classKey === "arquero" ? "el arco" : "el escudo";
@@ -11237,7 +11665,7 @@ function resolveEnemyDirectAttack(mon, power, spdMod, outcome){
       flashSprite("spritePlayer","purple");
       showBattlePopup("¡Bloqueado!", "blocked");
     }, BLOCK_REACT_MS);
-    logBattle(`🛡️ ¡Bloqueaste el golpe de ${mon.tpl.name} con ${blockGesture}! -${dmg} en tu barra de defensa.`);
+    logBattle(`🛡️ ¡Bloqueaste el golpe de ${mon.tpl.name} con ${blockGesture}! -${barDmg} en tu barra de defensa.`);
     if(battleState.defenseBar <= 0){
       logBattle(`⚠️ Tu barra de defensa se agotó — ya no podrás bloquear golpes fuertes en este combate.`);
     }
@@ -11517,6 +11945,7 @@ function winBattle(){
       }
     }
   }
+  rollCraftMaterialDrops(mon.tpl.name).forEach(msg=> lootMessages.push(msg));
   const lootMsg = lootMessages.length ? "¡Obtienes: " + lootMessages.join(", ") + "!" : "";
 
   let bossItemMsg = "";
@@ -12891,6 +13320,7 @@ function startPackBattle(packMons, opts){
     mons: packMons.map(m=>({ ref:m, tpl:m.tpl, level:m.level, curHp:m.hp, maxHp:m.hp, atk:m.atk, def:m.def, spd:m.spd, packBonus:m.packBonus||1.5, slow:0, stunned:false })),
     selectedTarget: 0,
     playerBuffs:{atk:1, def:1, spd:1, turnsAtk:0, turnsDef:0},
+    packBuffUsed: false, // ver triggerPackBuffAbility/packEnemyTurn — como mucho UNA vez por combate
     log:[]
   };
   updateBattleSceneBackground();
@@ -13252,6 +13682,34 @@ function executePackPlayerAction(mv){
   }, postPlayerActionDelay(mv));
 }
 
+/** Habilidad de manada (ver PACK_BUFF_ABILITIES en enemies.js): en vez de atacar, este miembro
+ *  potencia el ATQ o la DEF de TODA la manada viva — permanente por el resto de este combate,
+ *  mismo criterio sin temporizador que ya usan los debuffs que los monstruos le aplican al jugador
+ *  (mv.stat==="def" en executePackPlayerAction). Muestra el aro de color + ícono (ver
+ *  .enemy-buff-aura-atk/-def/-spd en main.css) sobre CADA miembro vivo, para que se note que la
+ *  manada entera quedó más fuerte — no solo el que la usó. */
+function triggerPackBuffAbility(caster, casterIdx, ability, aliveMembers, next){
+  battleState.packBuffUsed = true;
+  aliveMembers.forEach(mm=>{ mm[ability.mechStat] = +(mm[ability.mechStat] * (1+ability.amount)).toFixed(1); });
+  showPackAttackTelegraph(casterIdx);
+  setTimeout(()=>{
+    hidePackAttackTelegraph(casterIdx);
+    logBattle(`✨ ¡${caster.tpl.name} ${ability.verb}! ${ability.name} sube el ${ability.mechStat==="def"?"DEF":"ATQ"} de toda la manada.`);
+    aliveMembers.forEach(mm=>{
+      const el = document.getElementById("packStageMon"+battleState.mons.indexOf(mm));
+      if(!el) return;
+      const cls = "enemy-buff-aura-"+ability.visualKind;
+      el.classList.remove("enemy-buff-aura-atk","enemy-buff-aura-def","enemy-buff-aura-spd");
+      void el.offsetWidth;
+      el.classList.add(cls);
+      clearTimeout(el._packAuraTimer);
+      el._packAuraTimer = setTimeout(()=> el.classList.remove(cls), 2000);
+    });
+    updateBattleBars(); refreshHud();
+    setTimeout(next, 700);
+  }, 480);
+}
+
 /** Cada miembro vivo de la manada ataca UNO A LA VEZ (con su propia animación), para que se note quién y cuándo. */
 function packEnemyTurn(){
   const alive = battleState.mons.filter(m=>m.curHp>0);
@@ -13284,6 +13742,16 @@ function packEnemyTurn(){
       logBattle(`${m.tpl.name} está aturdido y no puede actuar.`);
       m.stunned = false;
       setTimeout(attackNext, 450);
+      return;
+    }
+    // Habilidad de manada (Aullido, etc. — ver PACK_BUFF_ABILITIES en enemies.js): con la manada
+    // completa (2+ vivos) y todavía sin usarla este combate, este miembro puede potenciar a toda
+    // la manada EN VEZ de atacar — pedido explícito, para que las peleas de manada no sean solo
+    // golpes repetidos. Como mucho una vez por combate (packBuffUsed), para no volverse la nueva
+    // mecánica "demasiado fuerte".
+    const packAbility = PACK_BUFF_ABILITIES[m.tpl.name];
+    if(packAbility && !battleState.packBuffUsed && alive.length >= 2 && Math.random() < 0.3){
+      triggerPackBuffAbility(m, idx, packAbility, alive, attackNext);
       return;
     }
     // aviso de "va a atacar": un "!" arriba de ESTE miembro de la manada un instante antes de que
@@ -13369,6 +13837,7 @@ function packWinBattle(){
         }
       }
     }
+    rollCraftMaterialDrops(m.tpl.name).forEach(msg=> lootMessages.push(msg));
   });
   player.xp += xpGain; player.gold += goldGain;
   const petXpSummary = grantPetXpIfSummoned(Math.round(xpGain*0.4));
@@ -15493,11 +15962,37 @@ function renderShopBuyList(){
 $("btnShopPrevPage").onclick = ()=>{ if(shopPage>0){ shopPage--; renderShopBuyList(); } };
 $("btnShopNextPage").onclick = ()=>{ shopPage++; renderShopBuyList(); };
 
+/** Tarjeta para vender un material de combate (Colmillo de Lobo, Telaraña de Araña, etc. — ver
+ *  CRAFT_MATERIALS en game/config/blacksmith.js). A diferencia del equipo, estos no son objetos de
+ *  player.inventory sino contadores en player.craftMats, así que no pasan por buildShopCard —
+ *  vender descuenta 1 unidad del contador y paga mat.sellValue en oro. */
+function buildMaterialSellCard(mat){
+  const qty = (player.craftMats && player.craftMats[mat.key]) || 0;
+  const card = document.createElement("div");
+  card.className = "shop-card";
+  card.innerHTML = `<div class="sc-emoji">${mat.emoji}</div>
+     <div class="sc-name">${mat.label} <b style="color:var(--accent);">x${qty}</b></div>
+     <div class="sc-desc">Material de combate para la Forja.</div>
+     <button>+💰${mat.sellValue}</button>`;
+  card.querySelector("button").onclick = ()=>{
+    showConfirm(`¿Vender 1x <b>${mat.label}</b> por 💰${mat.sellValue}?`, ()=>{
+      if(((player.craftMats && player.craftMats[mat.key]) || 0) <= 0) return;
+      player.craftMats[mat.key] -= 1;
+      player.gold += mat.sellValue;
+      refreshHud(); saveGame();
+      toast(`Vendiste ${mat.emoji} ${mat.label} por 💰${mat.sellValue}.`);
+      renderShopSellList();
+    }, {icon:"💸", title:"Confirmar venta", confirmLabel:"Vender"});
+  };
+  return card;
+}
+
 function renderShopSellList(){
   const sellList = $("shopSellList");
   sellList.innerHTML = "";
   const sellable = player.inventory.filter(it=> it.tradeable!==false);
-  if(sellable.length===0){
+  const sellableMats = CRAFT_MATERIALS.filter(m=> ((player.craftMats && player.craftMats[m.key]) || 0) > 0);
+  if(sellable.length===0 && sellableMats.length===0){
     sellList.innerHTML = `<div class="empty-note" style="grid-column:1 / -1;">No tienes objetos para vender.</div>`;
     return;
   }
@@ -15507,6 +16002,7 @@ function renderShopSellList(){
     seen.add(it.id);
     sellList.appendChild(buildShopCard(it, false));
   });
+  sellableMats.forEach(mat=> sellList.appendChild(buildMaterialSellCard(mat)));
 }
 
 $("btnCloseShop").onclick = ()=> $("shopOverlay").classList.add("hidden");
@@ -15601,7 +16097,7 @@ let myQueuedBossId = null;
 
 function handleAnnounceMessage(msg){
   if(msg.type === 'boss_defeated'){
-    slideNotice(`👑 ${msg.playerName} derrotó a ${msg.bossName}${msg.itemName ? ` y obtuvo ${msg.itemEmoji||""} ${msg.itemName}` : ""}!`, 4500);
+    toast(`👑 ${msg.playerName} derrotó a ${msg.bossName}${msg.itemName ? ` y obtuvo ${msg.itemEmoji||""} ${msg.itemName}` : ""}!`, 4500);
   } else if(msg.type === 'boss_lock'){
     if(!bossLocks[msg.bossId]) bossLocks[msg.bossId] = {queue:[]};
     bossLocks[msg.bossId].fighterId = msg.fighterId;
