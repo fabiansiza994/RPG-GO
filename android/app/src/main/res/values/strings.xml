@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RPG GO</string>
+    <string name="title_activity_main">RPG GO</string>
+    <string name="package_name">com.rpggo.app</string>
+    <string name="custom_url_scheme">com.rpggo.app</string>
+</resources>

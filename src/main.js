@@ -14,6 +14,10 @@ import {
   ULTIMATE_TIER_HP_COST,
   CLASS_ID_MAP,
 } from "./game/config/classes.js";
+import { Capacitor } from "@capacitor/core";
+import { App } from "@capacitor/app";
+import { isGpsSupported, gpsGetCurrentPosition, gpsWatchPosition, gpsClearWatch } from "./game/systems/nativeGeolocation.js";
+import { writeAndShareTextFile, pickAndReadTextFile } from "./game/systems/saveTransfer.js";
 import { INVENTORY_CAPACITY_TIERS, INVENTORY_TIER_COST } from "./game/config/inventoryCapacity.js";
 import { CRAFT_MATERIALS, BLACKSMITH_RECIPES } from "./game/config/blacksmith.js";
 import { CITY_REGISTRY, DEFAULT_CITY_KEY, SHRINE_TYPES, POI_TYPES, getCityPOIs } from "./game/config/world.js";
@@ -139,6 +143,34 @@ import {
   ARQUERO_BATTLE_SPRITES,
   CHAR_SELECT_ART,
 } from "./game/assets/spriteRegistry.js";
+
+// Registro del service worker mínimo (public/sw.js) — solo existe para que el navegador considere
+// el juego "instalable" como PWA (ver public/manifest.webmanifest), no cachea nada por su cuenta.
+// Nunca corre en un entorno sin soporte (iframes de vista previa, navegadores viejos), por eso el
+// chequeo de feature-detection en vez de asumir que existe.
+if("serviceWorker" in navigator){
+  window.addEventListener("load", ()=>{
+    navigator.serviceWorker.register("./sw.js").catch(e=> console.warn("[PWA] No se pudo registrar el service worker:", e));
+  });
+}
+
+// Esconde la splash nativa (#nativeSplashCover en index.html — HTML/CSS normal, ya visible desde
+// el primer instante gracias al script inline síncrono, ver ese archivo) pasado un tiempo fijo.
+// A propósito NO se usa SplashScreen.show() de @capacitor/splash-screen para esto: es una llamada
+// ASÍNCRONA al puente nativo — el resto de la página (selección de personaje) podía terminar de
+// pintarse ANTES de que esa llamada realmente mostrara algo, dando el bug real reportado ("splash,
+// parpadeo, selección de personaje, y recién ahí aparece el splash" — llegaba tarde, después de
+// que el juego ya se había mostrado). Con HTML/CSS puro no hay ida y vuelta al puente nativo, así
+// que no hay ninguna carrera posible: se pinta en el mismo instante que el resto de la página.
+if(Capacitor.isNativePlatform()){
+  const splashCover = document.getElementById("nativeSplashCover");
+  if(splashCover){
+    setTimeout(()=>{
+      splashCover.classList.add("hide");
+      setTimeout(()=> splashCover.remove(), 320);
+    }, 1800);
+  }
+}
 
 // El Lobo Umbrío ya tenía arte de combate propio, pero en el mapa seguía cayendo al emoji 🐺
 // genérico (MONSTER_TEMPLATES se mantiene como datos puros, sin importar spriteRegistry.js — ver
@@ -2709,6 +2741,72 @@ function runIfNotInBattle(fn){
   fn();
 }
 
+/** Botón/gesto atrás de Android (solo dentro del APK — en la web el navegador ya maneja esto solo)
+ *  — "inteligente": si hay una pantalla abierta, atrás la cierra (clickeando su botón real de
+ *  cerrar/cancelar, NUNCA reimplementando el cierre a mano — varios tienen limpieza extra además
+ *  del classList.add("hidden"), ej. btnCloseForge/btnCloseInv); si no hay nada abierto y no hay
+ *  combate, recién ahí pregunta si querés salir del juego de verdad.
+ *
+ *  Tabla construida y verificada línea por línea contra index.html (60 elementos class="overlay"),
+ *  no adivinada por convención de nombre — varias pantallas NO tienen un botón de cierre seguro
+ *  para clickear a ciegas (`null` = bloquear, no hacer nada):
+ *   - travelerAttackedOverlay: su único botón real es "Ayudar", que INICIA un combate.
+ *   - wagerOverlay: apuesta PvP a mitad de negociar, no tiene botón de cancelar en el HTML.
+ *   - coliseoBuffOverlay/dungeonBlessingOverlay: elección forzada de buff, sin cancelar.
+ *   - dungeonStairsOverlay: escena de transición animada, se cierra sola.
+ *   - resultOverlay/levelupOverlay/dungeonRoomRewardOverlay/dungeonSummaryOverlay/coliseoSummaryOverlay:
+ *     pantallas de recompensa/resumen — su botón AVANZA estado, no es un cierre neutro.
+ *   - authOverlay/classOverlay: son la puerta de entrada (login/selección de personaje), no popups.
+ *   - cancelQuestOverlay: semántica invertida — el botón "seguro" es btnKeepQuest (mantener la
+ *     misión), no un botón de "cerrar" en el sentido usual. */
+const BACK_CLOSE_MAP = [
+  ["towerOverlay","btnTowerClose"], ["playerActionOverlay","btnClosePlayerAction"],
+  ["tradePickOverlay","btnCancelTrade"], ["noticeOverlay","btnCloseNotice"],
+  ["partyOverlay","btnCloseParty"], ["friendsOverlay","btnCloseFriends"],
+  ["chatOverlay","btnCloseChat"], ["equipOverlay","btnCloseEquip"],
+  ["attrsOverlay","btnCloseAttrs"], ["shopOverlay","btnCloseShop"],
+  ["merchantOverlay","btnCloseMerchant"], ["bossInfoOverlay","btnBossCancel"],
+  ["regionsOverlay","btnCloseRegions"], ["notifPanelOverlay","btnCloseNotifPanel"],
+  ["upgradeStationOverlay","btnUpgStationClose"], ["upgradeEquipPickOverlay","btnCloseUpgradeEquipPick"],
+  ["petItemPickOverlay","btnClosePetItemPick"], ["equipSlotPickOverlay","btnCloseEquipSlotPick"],
+  ["petSummonOverlay","btnClosePetSummon"], ["healPetPickOverlay","btnCloseHealPetPick"],
+  ["petDetailOverlay","btnClosePetDetail"], ["releasePetOverlay","btnCancelReleasePet"],
+  ["petsOverlay","btnClosePets"], ["monsterCodexOverlay","btnCloseMonsterCodex"],
+  ["coliseoOverlay","btnColiseoExit"], ["coliseoBuffOverlay",null],
+  ["coliseoSummaryOverlay",null], ["dungeonBlessingOverlay",null],
+  ["dungeonRoomRewardOverlay",null], ["dungeonStairsOverlay",null],
+  ["dungeonSummaryOverlay",null], ["dungeonCodexOverlay","btnCloseDungeonCodex"],
+  ["questNpcOverlay","btnQuestDecline"], ["travelerAttackedOverlay",null],
+  ["cancelQuestOverlay","btnKeepQuest"], ["vagabundoOverlay","btnVagabundoNo"],
+  ["recallPickOverlay","btnCloseRecallPick"], ["recallReplaceOverlay","btnCloseRecallReplace"],
+  ["parkOverlay","btnParkCancel"], ["medalOverlay","btnCloseMedal"],
+  ["charSheetOverlay","btnCloseCharSheet"], ["settingsOverlay","btnCloseSettings"],
+  ["wagerOverlay",null], ["authOverlay",null], ["classOverlay",null],
+  ["deleteCharOverlay","btnCancelDeleteChar"], ["returnMenuOverlay","btnCancelReturnMenu"],
+  ["levelupOverlay",null], ["learnOverlay","btnSkipLearn"],
+  ["invOverlay","btnCloseInv"], ["invDetailOverlay","btnCloseInvDetail"],
+  ["baseRoomOverlay","btnCloseBaseRoom"], ["baseCategoryOverlay","btnCloseBaseCategory"],
+  ["baseStorageOverlay","btnCloseBaseStorage"], ["basesMenuOverlay","btnCloseBasesMenu"],
+  ["forgeOverlay","btnCloseForge"], ["resultOverlay",null],
+];
+function handleHardwareBack(){
+  if(!$("confirmModalOverlay").classList.contains("hidden")){ $("confirmModalCancel").click(); return; }
+  if(!$("buyQtyModalOverlay").classList.contains("hidden")){ $("buyQtyCancel").click(); return; }
+  if(isBattleUiVisible()) return; // el combate se sale por su propio botón de huir, no por atrás
+  for(const [id, closeBtn] of BACK_CLOSE_MAP){
+    const el = $(id);
+    if(el && !el.classList.contains("hidden")){
+      if(closeBtn) $(closeBtn).click();
+      return; // bloqueado (closeBtn null) o ya cerrado — en ambos casos no se sigue evaluando
+    }
+  }
+  // nada abierto, sin combate: estamos en el mapa base
+  showConfirm("¿Salir del juego?", ()=> App.exitApp(), {icon:"🚪", title:"Salir", confirmLabel:"Salir", cancelLabel:"Cancelar"});
+}
+if(Capacitor.isNativePlatform()){
+  App.addListener('backButton', handleHardwareBack);
+}
+
 /* ============================================================
    CAPA DE ALMACENAMIENTO — funciona dentro y fuera de Claude
    ------------------------------------------------------------
@@ -2772,6 +2870,12 @@ const LocalAppStorage = window.storage || {
 let authToken = localStorage.getItem("authToken") || null;
 let authUsername = localStorage.getItem("authUsername") || null;
 const PLAYER_SAVE_KEY_RE = /^player_([a-z]+)$/;
+/** En la web, "/api/..." resuelve solo contra el dominio de la página (mismo origen que sirve el
+ *  worker) — nunca hizo falta nada más. Dentro del APK empaquetado (Capacitor) el WebView sirve el
+ *  juego desde SU PROPIO origen local, sin servidor detrás, así que una ruta relativa nunca llega a
+ *  ningún lado: hay que apuntar explícitamente al dominio real del Worker. Vacío en web a propósito
+ *  — cero cambio de comportamiento ahí, todo el fix queda contenido a la app nativa. */
+const API_BASE_URL = Capacitor.isNativePlatform() ? "https://dark-recipe-a184.fabiansiza994.workers.dev" : "";
 
 function setAuthSession(token, username){
   authToken = token; authUsername = username;
@@ -2790,7 +2894,7 @@ function clearAuthSession(){
 async function authApiCall(path, username, password){
   let res;
   try{
-    res = await fetch(path, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({username, password}) });
+    res = await fetch(API_BASE_URL + path, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({username, password}) });
   }catch(e){
     throw new Error("Sin conexión con el servidor — probá de nuevo o jugá sin cuenta.");
   }
@@ -2803,7 +2907,7 @@ async function authApiCall(path, username, password){
  *  vencida — hay que cerrar sesión de verdad, no solo mostrar "no tenés partida guardada") del
  *  404 (esta clase todavía no tiene nada guardado — comportamiento normal). */
 async function remoteSavesFetch(path, options){
-  const res = await fetch(path, {
+  const res = await fetch(API_BASE_URL + path, {
     ...options,
     headers: { ...(options && options.headers), "Authorization": `Bearer ${authToken}` },
   });
@@ -2874,6 +2978,71 @@ async function migrateLocalSavesToRemote(){
       }catch(e2){ /* si falla la subida, el save local sigue intacto — se puede reintentar después */ }
     }
   }
+}
+
+const SAVE_TRANSFER_FORMAT_VERSION = 1;
+
+/** Junta player_account + cada player_<classKey> que exista (nube o local — AppStorage.get ya
+ *  enruta solo según haya sesión activa, igual que en cualquier otro lugar del juego) en un único
+ *  archivo descargable/compartible. Pensado para el caso "jugué de invitado en el navegador y
+ *  ahora quiero esa partida dentro de la app" — ver importSave más abajo. */
+async function exportSave(){
+  if(!AppStorage) return;
+  try{
+    const keys = {};
+    try{
+      const res = await AppStorage.get('player_account', false);
+      if(res && res.value) keys.player_account = res.value;
+    }catch(e){ /* sin cuenta guardada todavía */ }
+    for(const classKey of Object.keys(CLASSES)){
+      try{
+        const res = await AppStorage.get('player_'+classKey, false);
+        if(res && res.value) keys['player_'+classKey] = res.value;
+      }catch(e){ /* este héroe nunca se jugó */ }
+    }
+    if(Object.keys(keys).length === 0){ toast("No hay ninguna partida guardada todavía para exportar."); return; }
+    const payload = {app:"RPG GO", formatVersion: SAVE_TRANSFER_FORMAT_VERSION, exportedAt: new Date().toISOString(), keys};
+    const filename = `rpggo-save-${new Date().toISOString().slice(0,10)}.json`;
+    await writeAndShareTextFile(filename, JSON.stringify(payload, null, 2));
+    toast("Partida exportada.");
+  }catch(e){
+    console.error("[exportSave]", e);
+    toast("No se pudo exportar la partida.");
+  }
+}
+
+/** Lee un archivo generado por exportSave() y sobreescribe las claves correspondientes vía
+ *  AppStorage (respeta la sesión activa igual que el resto del juego: si hay cuenta logueada,
+ *  importa a la nube; si no, queda local). Pide confirmación antes de tocar nada, porque pisa
+ *  cualquier progreso que ya hubiera para esas mismas claves. Recarga la página al terminar para
+ *  que todo el estado en memoria se reconstruya limpio desde lo recién importado, en vez de arriesgar
+ *  variables globales desincronizadas a mitad de una partida ya en curso. */
+async function importSave(){
+  if(!AppStorage) return;
+  const text = await pickAndReadTextFile();
+  if(!text) return; // el usuario canceló el selector
+  let payload;
+  try{ payload = JSON.parse(text); }catch(e){ toast("Ese archivo no es un guardado válido de RPG GO."); return; }
+  if(!payload || payload.formatVersion !== SAVE_TRANSFER_FORMAT_VERSION || !payload.keys || typeof payload.keys !== "object"){
+    toast("Ese archivo no es un guardado válido de RPG GO.");
+    return;
+  }
+  const entries = Object.entries(payload.keys).filter(([k])=> k==="player_account" || PLAYER_SAVE_KEY_RE.test(k));
+  if(entries.length === 0){ toast("El archivo no tiene ninguna partida adentro."); return; }
+  showConfirm(
+    `Vas a importar ${entries.length} guardado(s). Esto va a <b>sobrescribir</b> tu progreso actual para esos mismos personajes. ¿Importar igual?`,
+    async ()=>{
+      try{
+        for(const [key, value] of entries) await AppStorage.set(key, value, false);
+        toast("Partida importada — reiniciando...", 2500);
+        setTimeout(()=> location.reload(), 1200);
+      }catch(e){
+        console.error("[importSave]", e);
+        toast("No se pudo importar la partida.");
+      }
+    },
+    {icon:"⚠️", title:"Importar partida", confirmLabel:"Importar", cancelLabel:"Cancelar"}
+  );
 }
 
 /* ---------- Toast ---------- */
@@ -4412,7 +4581,7 @@ async function showGpsDiagnosis(){
  */
 function validateGpsEnvironment(){
   if(!window.isSecureContext) return {ok:false, reason:"insecure_context"};
-  if(!navigator.geolocation) return {ok:false, reason:"unsupported"};
+  if(!isGpsSupported()) return {ok:false, reason:"unsupported"};
   return {ok:true};
 }
 
@@ -4462,7 +4631,7 @@ async function requestRealGps(silent){
   gpsLog("Hora del intento:", new Date().toISOString());
   gpsLog("Opciones utilizadas:", options);
 
-  navigator.geolocation.getCurrentPosition(
+  gpsGetCurrentPosition(options,
     (pos)=>{
       gpsRequestInFlight = false;
       gpsLog("Posición obtenida");
@@ -4476,17 +4645,16 @@ async function requestRealGps(silent){
       gpsRequestInFlight = false;
       gpsErrorLog(err.code, err.message);
       onGpsError(err, silent);
-    },
-    options
+    }
   );
 }
 
 /** Seguimiento continuo de posición, una vez que el primer fix fue exitoso. */
 function beginWatch(){
-  if(watchId){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if(watchId){ gpsClearWatch(watchId); watchId = null; }
   const options = {enableHighAccuracy:true, maximumAge:0, timeout:20000};
   gpsLog("Iniciando seguimiento continuo (watchPosition) con opciones:", options);
-  watchId = navigator.geolocation.watchPosition(
+  watchId = gpsWatchPosition(options,
     (pos)=>{
       gpsLog("Actualización de posición · Accuracy:", pos.coords.accuracy, "m");
       onGpsSuccess(pos);
@@ -4494,8 +4662,7 @@ function beginWatch(){
     (err)=>{
       gpsErrorLog(err.code, err.message);
       onGpsError(err, false);
-    },
-    options
+    }
   );
 }
 
@@ -4557,7 +4724,7 @@ function onGpsError(err, silent){
 /** Garantiza que el juego siga siendo jugable aunque el GPS falle o no se active nunca. */
 function enableSimulationFallback(){
   gpsMode = false;
-  if(watchId){ navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if(watchId){ gpsClearWatch(watchId); watchId = null; }
   if(map && map.disableGpsGestureMode) map.disableGpsGestureMode();
   $("btnGps").classList.remove("active");
   $("btnGps").textContent = "🗺️";
@@ -9539,6 +9706,19 @@ function openAttrsScreen(){
 }
 $("btnAttrs").onclick = openAttrsScreen;
 $("pointsBadge").onclick = openAttrsScreen;
+
+/** Botón ⚙️ flotante (fuera del anillo, arriba a la derecha — ver .fab-corner-settings en main.css,
+ *  visible solo con el menú ☰ abierto) — cuenta (login/logout) + exportar/importar partida, movidos
+ *  acá desde la ficha de personaje (pedido explícito: un botón de ajustes dedicado en vez de tener
+ *  que entrar a Atributos para encontrarlos). #csAccountRow/#csSaveTransferRow no cambiaron de id,
+ *  así que wireAccountRow()/wireSaveTransferRow() siguen funcionando igual, solo que ahora ese HTML
+ *  vive en #settingsOverlay en vez de #charSheetOverlay. */
+function openSettingsScreen(){
+  closeFabMenu();
+  $("settingsOverlay").classList.remove("hidden");
+}
+$("btnSettingsCorner").onclick = openSettingsScreen;
+$("btnCloseSettings").onclick = ()=> $("settingsOverlay").classList.add("hidden");
 $("btnCloseAttrs").onclick = ()=> $("attrsOverlay").classList.add("hidden");
 
 function renderAttrsScreen(){
@@ -9763,7 +9943,17 @@ function playCharacterSlideInFx(){
   // Pedido explícito: que las barras de vida/maná no se vean ya llenas desde el primer frame,
   // detrás del deslizamiento — que aparezcan y se llenen recién cuando personaje y enemigo terminan
   // de llegar a su lugar, como parte de la misma secuencia de entrada.
-  playBattleBarsIntroFx(DELAY_MS + DURATION_MS);
+  const barsRevealMs = DELAY_MS + DURATION_MS;
+  playBattleBarsIntroFx(barsRevealMs);
+  // Pedido explícito: los botones de ataque no deben poder tocarse hasta que TODA la presentación
+  // termine — deslizamiento + el relleno de las barras (que a su vez usa la transición normal de
+  // .bar-fill, .9s, ver main.css) — para que no se pueda golpear a mitad de la animación.
+  const grid = $("movegrid");
+  if(grid){
+    grid.classList.add("intro-locked");
+    clearTimeout(grid._introLockTimer);
+    grid._introLockTimer = setTimeout(()=> grid.classList.remove("intro-locked"), barsRevealMs + 900);
+  }
 }
 /** Las barras (vida del jugador, maná, vida del enemigo, y defensa si está activa este combate) ya
  *  quedaron puestas en su ancho real por updateBattleBars() antes de que #battleWrap se revele —
@@ -11138,8 +11328,18 @@ function animateResultProgress(summary){
   const bonusFill = $("resultCharXpBonusFill");
   if(bonusFill){ bonusFill.style.transition = "none"; bonusFill.style.left = "0%"; bonusFill.style.width = "0%"; }
   if(charFill && charText && charLvl){
+    // Un solo requestAnimationFrame no alcanza acá: #resultProgress recién se hizo visible en este
+    // mismo tick (updateResultProgressVisibility de arriba), y el navegador a veces colapsa el
+    // ancho "antes" y el "después" en un solo frame cuando el elemento no tenía todavía un layout
+    // pintado — la barra saltaba directo al final sin animarse (bug real reportado). Mismo truco de
+    // "sin transición, forzar reflow, restaurar transición" que ya usa startGatherProgress/
+    // playBattleBarsIntroFx más arriba en este archivo, para garantizar que el "antes" se pinte de
+    // verdad antes de disparar la transición hacia el "después".
+    charFill.style.transition = "none";
     charFill.style.width = pct(ch.beforeXp, ch.beforeXpNext)+"%";
-    requestAnimationFrame(()=>{ charFill.style.width = pct(ch.afterXp, ch.afterXpNext)+"%"; });
+    void charFill.offsetWidth;
+    charFill.style.transition = "";
+    charFill.style.width = pct(ch.afterXp, ch.afterXpNext)+"%";
     charText.textContent = `${ch.beforeXp} / ${ch.beforeXpNext} → ${ch.afterXp} / ${ch.afterXpNext}`;
     charLvl.textContent = `Nv.${ch.beforeLevel} → Nv.${ch.afterLevel}`;
   }
@@ -11152,8 +11352,11 @@ function animateResultProgress(summary){
     const petFill = $("resultPetXpFill");
     const petText = $("resultPetXpText");
     const petLvl = $("resultPetLevel");
+    petFill.style.transition = "none";
     petFill.style.width = pct(pet.beforeXp, pet.beforeXpNext)+"%";
-    requestAnimationFrame(()=>{ petFill.style.width = pct(pet.afterXp, pet.afterXpNext)+"%"; });
+    void petFill.offsetWidth;
+    petFill.style.transition = "";
+    petFill.style.width = pct(pet.afterXp, pet.afterXpNext)+"%";
     petText.textContent = `${pet.beforeXp} / ${pet.beforeXpNext} → ${pet.afterXp} / ${pet.afterXpNext}`;
     petLvl.textContent = `Nv.${pet.beforeLevel} → Nv.${pet.afterLevel}`;
   } else if(petRow){
@@ -15432,7 +15635,9 @@ $("btnFleeCorner").onclick = ()=>{
 
 /** Orden fijo de las 8 cuñas del menú radial (mismo orden horario de siempre, arrancando arriba).
  *  `content` es el sufijo de su .wheel-slice-content-N. Mascotas/Bases son "condicionales": solo
- *  entran en el reparto si el jugador ya las desbloqueó — ver layoutWheelMenu(). */
+ *  entran en el reparto si el jugador ya las desbloqueó — ver layoutWheelMenu(). Ajustes (⚙️) NO
+ *  es una cuña — pedido explícito: vive como botón flotante aparte, fuera del anillo (ver
+ *  #btnSettingsCorner en index.html/main.css y openSettingsScreen() más abajo). */
 const WHEEL_SLOT_ORDER = [
   {btn:"btnFriends", content:0},
   {btn:"btnParty", content:1},
@@ -17473,6 +17678,10 @@ let authGateResume = null; // qué hacer cuando #authOverlay se resuelve (login/
  *  opción de loguearse, registrarse, o "Jugar sin cuenta" (guardado 100% local a este navegador,
  *  igual que siempre). */
 function initAuthGate(){
+  // Exportar/Importar partida NO depende de AUTH_FEATURE_ENABLED (las cuentas en la nube están
+  // apagadas hoy) — sirve igual para pasar un guardado 100% local entre el navegador y la app
+  // instalada, así que se cablea siempre, antes de la rama que corta temprano de abajo.
+  wireSaveTransferRow();
   if(!AUTH_FEATURE_ENABLED){
     $("csAccountRow").classList.add("hidden");
     enterGameFlow();
@@ -17546,6 +17755,10 @@ function refreshAccountRow(){
     $("csAccountText").textContent = "Jugando sin cuenta";
     $("btnAccountAction").textContent = "Iniciar sesión";
   }
+}
+function wireSaveTransferRow(){
+  $("btnExportSave").onclick = exportSave;
+  $("btnImportSave").onclick = importSave;
 }
 function wireAccountRow(){
   refreshAccountRow();

@@ -4,10 +4,35 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Ronda — RPG de Mapa Real</title>
+<!-- PWA: instalable a pantalla completa (sin la barra de direcciones) vía "Agregar a pantalla de
+     inicio" — ver public/manifest.webmanifest. Las meta tags de abajo son el equivalente para iOS
+     Safari, que no lee el manifest para el modo standalone. -->
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#0a0c11">
+<link rel="icon" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/icon-512.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RPG GO">
 <link rel="stylesheet" href="./maplibre-gl.css"/>
 <link rel="stylesheet" href="./src/styles/main.css">
 </head>
 <body>
+
+<!-- Splash nativa (solo dentro del APK) — pintada como HTML/CSS normal, la PRIMERA cosa del body,
+     para que aparezca en el mismo instante que el resto de la página (sin ida y vuelta al puente
+     nativo de Capacitor, que es asíncrona y puede llegar tarde — ver la nota en main.js sobre por
+     qué se abandonó SplashScreen.show() para esto). El script inline de acá es a propósito
+     síncrono y mínimo: window.Capacitor ya está inyectado por el WebView antes de que corra
+     cualquier otro script, así que esto no tiene ningún parpadeo previo. En la web normal
+     (window.Capacitor no existe) esto nunca se muestra. -->
+<div id="nativeSplashCover"><img src="./new_elements/splash.png" alt=""></div>
+<script>
+  if(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()){
+    document.getElementById("nativeSplashCover").classList.add("show");
+  }
+</script>
 
 <div id="map"></div>
 <div id="mapVignette"></div>
@@ -205,6 +230,7 @@
     <div class="wheel-secondary-row"></div>
   </div>
   <button class="fab-main" id="btnFabToggle"><img id="btnFabToggleImg" src="/new_elements/btn_menu1.png" alt="Menú" draggable="false"></button>
+  <button class="fab-corner-settings" id="btnSettingsCorner" title="Ajustes">⚙️</button>
 </div>
 
 <!-- OTHER PLAYER ACTIONS -->
@@ -773,10 +799,6 @@
       <p class="sub" id="csFriendCode" style="margin-top:-8px; color:var(--accent); cursor:pointer;" title="Toca para copiar">🔑 —</p>
       <p class="sub" id="csDistance" style="margin-top:-8px;">📍 —</p>
       <div id="csMedals" style="display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:2px 0 4px;"></div>
-      <div class="cs-account-row" id="csAccountRow">
-        <span id="csAccountText">Jugando sin cuenta</span>
-        <button class="cs-account-btn" id="btnAccountAction" type="button">Iniciar sesión</button>
-      </div>
     </div>
 
     <div class="cs-hero-row">
@@ -800,6 +822,23 @@
     <div class="eyebrow" style="margin-top:8px;">Movimientos</div>
     <div class="inv-list" id="csMoveList"></div>
     <button class="ghostbtn" id="btnCloseCharSheet">Cerrar</button>
+  </div>
+</div>
+
+<!-- AJUSTES (cuenta + exportar/importar partida) -->
+<div class="overlay hidden fullscreen" id="settingsOverlay">
+  <div class="sheet" style="text-align:center;">
+    <h1 class="title">⚙️ Ajustes</h1>
+    <div class="cs-account-row" id="csAccountRow">
+      <span id="csAccountText">Jugando sin cuenta</span>
+      <button class="cs-account-btn" id="btnAccountAction" type="button">Iniciar sesión</button>
+    </div>
+    <div class="cs-account-row" id="csSaveTransferRow" title="Pasar tu partida entre el navegador y la app instalada">
+      <span>Guardado</span>
+      <button class="cs-account-btn" id="btnExportSave" type="button">⬇️ Exportar</button>
+      <button class="cs-account-btn" id="btnImportSave" type="button">⬆️ Importar</button>
+    </div>
+    <button class="ghostbtn" id="btnCloseSettings" style="margin-top:14px;">Cerrar</button>
   </div>
 </div>
 

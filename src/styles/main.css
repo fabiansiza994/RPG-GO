@@ -13,6 +13,15 @@
     --mp:#4aa3e0;
     --xp:#5ee1c9;
   }
+
+  /* Splash nativa del APK (ver #nativeSplashCover en index.html) — display:none por defecto (nunca
+     se ve en la web normal); la clase "show" la agrega un script inline síncrono apenas carga la
+     página, solo dentro de la app empaquetada. Se saca sola por JS (main.js) pasado un tiempo fijo. */
+  #nativeSplashCover{display:none; position:fixed; inset:0; z-index:99999; background:#0a0c11;
+    transition:opacity .3s ease;}
+  #nativeSplashCover.show{display:block;}
+  #nativeSplashCover.hide{opacity:0; pointer-events:none;}
+  #nativeSplashCover img{width:100%; height:100%; object-fit:cover; display:block;}
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{height:100%;margin:0;background:var(--bg);color:var(--text);
     font-family:'Segoe UI',system-ui,-apple-system,sans-serif; overflow:hidden;}
@@ -686,6 +695,17 @@
   .fab-main img{width:100%; height:100%; object-fit:contain; display:block; pointer-events:none;
     filter:drop-shadow(0 8px 16px rgba(0,0,0,.35));}
   .fab-main:active img{filter:brightness(1.18) drop-shadow(0 8px 16px rgba(0,0,0,.35));}
+
+  /* Botón de Ajustes (⚙️) — pedido explícito: FUERA del anillo radial, arriba a la derecha (mismo
+     criterio de esquina fija que .floating-close-btn/.floating-gold-badge), visible SOLO mientras
+     el menú ☰ está abierto (reacciona a #fabMenu.open igual que .wheel-overlay-content, sin JS
+     aparte para mostrar/ocultarlo). */
+  .fab-corner-settings{position:fixed; top:14px; right:14px; z-index:130; width:42px; height:42px;
+    border-radius:50%; background:var(--panel2); border:1px solid var(--gold); color:var(--gold);
+    font-size:19px; box-shadow:0 8px 20px rgba(0,0,0,.22);
+    opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease;
+    transform:translateY(-6px);}
+  #fabMenu.open .fab-corner-settings{opacity:1; pointer-events:auto; transform:translateY(0);}
   #fabMenu.open .fab-main{width:64px; height:64px;}
   #fabMenu.open .fab-main img{filter:drop-shadow(0 0 8px rgba(94,225,201,.65)) drop-shadow(0 8px 16px rgba(0,0,0,.4));}
 
@@ -2366,6 +2386,11 @@
   .turn-timer-fill{height:100%; width:100%; background:linear-gradient(90deg,var(--accent),var(--gold),var(--danger)); border-radius:4px;}
 
   #movegrid{display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:0 14px 16px;}
+  /* Pedido explícito: los botones de ataque quedan inertes mientras dura la animación de
+     presentación del combate (deslizamiento + relleno de barras, ver playCharacterSlideInFx en
+     main.js) — pointer-events:none en vez de tocar el "disabled" de cada botón individual, así no
+     se pisa el estado real de cada movimiento (afford/no afford) que ya calculó renderMoveGrid(). */
+  #movegrid.intro-locked{opacity:.5; pointer-events:none; transition:opacity .3s ease;}
   /* Botones de movimiento con look "tablilla de pergamino/marco tallado" en vez de la caja plana de
      antes — bisel inferior (se hunde al tocar, como un botón físico de verdad) + esquinas talladas
      en dorado (::before/::after) + un brillo sutil arriba a la izquierda. Nada de imágenes nuevas,
