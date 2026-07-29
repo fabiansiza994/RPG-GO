@@ -2657,4 +2657,211 @@
   .rarity-epic .sparkle.p3, .rarity-legendary .sparkle.p3{top:50%; right:16px; animation-delay:1.3s;}
   @keyframes sparkleFloat{0%{opacity:0; transform:translateY(6px) scale(.6);}30%{opacity:1;}100%{opacity:0; transform:translateY(-10px) scale(1.1);}}
 
+  /* ============================================================
+     MISIONES DIARIAS
+     ============================================================ */
+  /* Botón flotante — espejo de #floatingSideBtns (mismo z-index, misma
+     altura media) pero del lado derecho, libre de otros controles. */
+  #floatingSideBtnsRight{position:absolute; right:12px; top:45%; transform:translateY(-50%); z-index:26;
+    display:flex; flex-direction:column; gap:12px;}
+  .daily-missions-btn{
+    background:
+      radial-gradient(circle at 32% 26%, rgba(255,255,255,.14), transparent 55%),
+      linear-gradient(160deg, #4a3520 0%, #241708 62%, #150d05 100%);
+    border:2px solid var(--gold); font-size:22px;}
+  .daily-missions-btn-icon{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55));}
+  .daily-missions-badge{position:absolute; left:50%; bottom:-7px; transform:translateX(-50%);
+    background:#151a27; border:1px solid var(--gold); color:var(--gold); font-size:10px; font-weight:800;
+    padding:1px 6px; border-radius:9px; line-height:1.4; white-space:nowrap; pointer-events:none;}
+  .daily-missions-btn-glow{animation: dailyMissionsBtnPulse 1.4s ease-in-out infinite;}
+  .daily-missions-btn-done{animation:none;}
+  .daily-missions-btn-done::after{content:"✓"; position:absolute; top:-5px; right:-5px; width:17px; height:17px;
+    border-radius:50%; background:#2fae66; color:#fff; font-size:10.5px; font-weight:900; line-height:17px; text-align:center;
+    box-shadow:0 2px 6px rgba(0,0,0,.4); pointer-events:none;}
+  @keyframes dailyMissionsBtnPulse{
+    0%,100%{box-shadow:0 8px 20px rgba(0,0,0,.3), 0 0 0 3px rgba(232,196,104,.16), 0 0 14px 2px rgba(232,196,104,.5);}
+    50%{box-shadow:0 8px 20px rgba(0,0,0,.3), 0 0 0 6px rgba(232,196,104,.04), 0 0 22px 6px rgba(232,196,104,.9);}
+  }
+
+  /* Panel — casi pantalla completa, optimizado para móvil (scroll interno, nunca horizontal). */
+  .daily-missions-sheet{width:100%; max-width:560px; height:90vh; max-height:900px;
+    background:linear-gradient(180deg, #131826 0%, #0c1019 100%); border:1px solid var(--line);
+    border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.5); display:flex; flex-direction:column; overflow:hidden;}
+  .daily-missions-header{display:flex; align-items:flex-start; gap:12px; padding:18px 18px 14px;
+    border-bottom:1px solid var(--line); background:rgba(0,0,0,.18); flex-shrink:0;}
+  .daily-missions-header-icon{font-size:30px; line-height:1; filter:drop-shadow(0 2px 4px rgba(0,0,0,.5));}
+  .daily-missions-header-text{flex:1; min-width:0;}
+  .daily-missions-title{font-size:19px; font-weight:900; color:var(--gold);}
+  .daily-missions-subtitle{font-size:12.5px; color:var(--dim); margin-top:2px;}
+  .daily-missions-countdown{font-size:12.5px; color:var(--text); margin-top:6px; font-weight:700;}
+  .daily-missions-countdown span{color:var(--gold); font-variant-numeric:tabular-nums;}
+  .daily-missions-close-btn{flex-shrink:0; width:38px; height:38px; border-radius:50%; border:1px solid var(--line);
+    background:var(--panel2); color:var(--text); font-size:16px; line-height:1;}
+  .daily-missions-close-btn:active{filter:brightness(1.3);}
+
+  .daily-missions-body{flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch;
+    padding:16px 18px 24px; display:flex; flex-direction:column; gap:16px;}
+
+  .daily-missions-progress-section{display:flex; flex-direction:column; gap:8px;}
+  .daily-missions-progress-header{display:flex; justify-content:space-between; font-size:13px; font-weight:700; color:var(--text);}
+  .daily-missions-progress-track{position:relative; height:14px; border-radius:7px; background:#0c0f18;
+    border:1px solid var(--line); overflow:hidden;
+    background-image:repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 10%);}
+  .daily-missions-progress-fill{height:100%; border-radius:7px;
+    background:linear-gradient(90deg, #8a6a2a, var(--gold)); transition:width .3s ease;}
+
+  .daily-missions-reward-hero{font-size:12px; color:var(--dim); text-align:center;}
+
+  .daily-missions-list{display:flex; flex-direction:column; gap:10px;}
+
+  .daily-mission-card{display:flex; gap:12px; padding:12px; border-radius:14px;
+    background:var(--panel); border:1px solid rgba(232,196,104,.18); position:relative; overflow:hidden;}
+  .daily-mission-card--completed{border-color:var(--gold); box-shadow:0 0 0 1px rgba(232,196,104,.35), 0 0 16px rgba(232,196,104,.22);}
+  .daily-mission-card--claimed{opacity:.7; filter:saturate(.75);}
+  .daily-mission-card-icon{font-size:24px; flex-shrink:0; width:38px; height:38px; display:flex; align-items:center; justify-content:center;
+    border-radius:10px; background:rgba(255,255,255,.04);}
+  .daily-mission-card-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;}
+  .daily-mission-card-title{font-size:13.5px; font-weight:800; color:var(--text);}
+  .daily-mission-card-desc{font-size:12px; color:var(--dim);}
+  .daily-mission-progress-track{position:relative; height:8px; border-radius:4px; background:#0c0f18;
+    border:1px solid var(--line); overflow:hidden; margin-top:2px;}
+  .daily-mission-progress-fill{height:100%; border-radius:4px; background:linear-gradient(90deg,#8a6a2a, var(--gold)); transition:width .26s ease;}
+  .daily-mission-progress-label{font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums;}
+  .daily-mission-reward-line{font-size:12px; color:var(--text); font-weight:700;}
+  .daily-mission-card-action{flex-shrink:0; display:flex; align-items:center;}
+  .daily-mission-claim-btn{min-width:80px; min-height:44px; padding:0 10px; border-radius:12px; font-size:11.5px; font-weight:800;
+    border:1px solid var(--line); background:var(--panel2); color:var(--dim);}
+  .daily-mission-claim-btn--active{background:linear-gradient(160deg, var(--gold), #b8903f); color:#241a05; border-color:var(--gold);
+    box-shadow:0 4px 10px rgba(232,196,104,.35);}
+  .daily-mission-claim-btn--active:active{filter:brightness(1.1);}
+  .daily-mission-claim-btn:disabled{opacity:.6;}
+
+  .daily-mission-final-card{display:flex; gap:14px; padding:16px; border-radius:16px; align-items:center;
+    background:linear-gradient(160deg, rgba(232,196,104,.08), rgba(0,0,0,.2)); border:1px solid var(--line); margin-top:4px;}
+  .daily-mission-final-card--available{border-color:var(--gold); animation: dailyMissionsFinalGlow 2.1s ease-in-out infinite;}
+  .daily-mission-final-card--claimed{opacity:.75;}
+  .daily-mission-final-chest{font-size:34px; flex-shrink:0;}
+  .daily-mission-final-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:4px;}
+  @keyframes dailyMissionsFinalGlow{
+    0%,100%{box-shadow:0 0 0 rgba(232,196,104,0);}
+    50%{box-shadow:0 0 22px 2px rgba(232,196,104,.5);}
+  }
+
+  @media (max-width:360px){
+    .daily-mission-claim-btn{min-width:64px; font-size:10.5px; padding:0 7px;}
+    .daily-mission-card{padding:10px; gap:8px;}
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .daily-missions-btn-glow{animation:none;}
+    .daily-mission-final-card--available{animation:none;}
+    .daily-missions-progress-fill, .daily-mission-progress-fill{transition:none;}
+  }
+
+  /* ============================================================
+     CONTRATO DEL AVENTURERO
+     ------------------------------------------------------------
+     Estética de pergamino sellado + tablón de madera — deliberadamente
+     distinta a Misiones Diarias (que es madera oscura + dorado liso), para
+     que ambos botones se distingan a simple vista.
+     ============================================================ */
+  .adventurer-contract-btn{
+    background:
+      radial-gradient(circle at 35% 30%, rgba(255,255,255,.18), transparent 55%),
+      linear-gradient(160deg, #e8dcc0 0%, #cbb98c 60%, #a8946a 100%);
+    border:2px solid #6b4a2a; font-size:20px;}
+  .adventurer-contract-btn-icon{filter:drop-shadow(0 1px 1px rgba(0,0,0,.35));}
+  .adventurer-contract-badge{position:absolute; left:50%; bottom:-7px; transform:translateX(-50%);
+    background:#2a1a10; border:1px solid #c0392b; color:#f0c9a0; font-size:9.5px; font-weight:800;
+    padding:1px 6px; border-radius:9px; line-height:1.4; white-space:nowrap; pointer-events:none;}
+  .contract-btn-glow{animation: contractBtnPulse 1.4s ease-in-out infinite;}
+  @keyframes contractBtnPulse{
+    0%,100%{box-shadow:0 8px 20px rgba(0,0,0,.3), 0 0 0 3px rgba(192,57,43,.22), 0 0 14px 2px rgba(192,57,43,.5);}
+    50%{box-shadow:0 8px 20px rgba(0,0,0,.3), 0 0 0 6px rgba(192,57,43,.05), 0 0 22px 6px rgba(232,196,104,.85);}
+  }
+
+  /* Marcador de entrega en el mapa */
+  .contract-turnin-marker{font-size:30px; filter:drop-shadow(0 3px 6px rgba(0,0,0,.5)); animation: contractTurninBob 1.8s ease-in-out infinite;}
+  @keyframes contractTurninBob{0%,100%{transform:translateY(0);} 50%{transform:translateY(-6px);}}
+
+  /* Tablón — fondo de madera oscura, casi pantalla completa en móvil */
+  .contract-board{width:100%; max-width:560px; height:90vh; max-height:900px;
+    background:
+      linear-gradient(rgba(0,0,0,.28), rgba(0,0,0,.42)),
+      repeating-linear-gradient(90deg, #3b2a18 0 26px, #34240f 26px 52px);
+    border:1px solid #201409; border-radius:18px; box-shadow:0 20px 60px rgba(0,0,0,.55);
+    display:flex; flex-direction:column; overflow:hidden;}
+  .contract-board-header{display:flex; align-items:flex-start; gap:12px; padding:18px 18px 14px;
+    border-bottom:1px solid rgba(0,0,0,.4); background:rgba(0,0,0,.25); flex-shrink:0;}
+  .contract-board-header-icon{font-size:28px; line-height:1; filter:drop-shadow(0 2px 4px rgba(0,0,0,.5));}
+  .contract-board-header-text{flex:1; min-width:0;}
+  .contract-board-title{font-size:18px; font-weight:900; color:#f0c9a0;}
+  .contract-board-subtitle{font-size:12px; color:#c9b898; margin-top:2px;}
+  .contract-board-close-btn{flex-shrink:0; width:38px; height:38px; border-radius:50%; border:1px solid rgba(0,0,0,.4);
+    background:#241708; color:#f0c9a0; font-size:16px; line-height:1;}
+  .contract-board-close-btn:active{filter:brightness(1.3);}
+
+  .contract-board-body{flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch;
+    padding:16px 18px 24px; display:flex; flex-direction:column; gap:16px;}
+
+  .contract-reputation-section{display:flex; flex-direction:column; gap:6px;}
+  .contract-reputation-label{font-size:12.5px; font-weight:700; color:#f0c9a0;}
+  .contract-reputation-track{position:relative; height:10px; border-radius:5px; background:rgba(0,0,0,.4); border:1px solid rgba(0,0,0,.5); overflow:hidden;}
+  .contract-reputation-fill{height:100%; border-radius:5px; background:linear-gradient(90deg, #7a5a2a, var(--gold)); transition:width .3s ease;}
+
+  .contract-card-wrap{display:flex; flex-direction:column;}
+
+  /* La tarjeta en sí: pergamino claro (contraste a propósito con el tablón oscuro) */
+  .contract-parchment{position:relative; background:linear-gradient(175deg, #ece0c4 0%, #ddcda3 100%);
+    color:#2c2213; border-radius:10px; padding:20px 18px 16px; border:3px solid #9aa3b5;
+    box-shadow:0 10px 26px rgba(0,0,0,.4), inset 0 0 30px rgba(120,90,40,.12);}
+  .contract-rarity-uncommon{border-color:#3d9a58;}
+  .contract-rarity-rare{border-color:#3a7ab8;}
+  .contract-rarity-epic{border-color:#9a5fd6;}
+  .contract-rarity-legendary{border-color:#b8923a; box-shadow:0 10px 26px rgba(0,0,0,.4), 0 0 18px rgba(232,196,104,.35), inset 0 0 30px rgba(120,90,40,.12);}
+  .contract-seal{position:absolute; top:-14px; right:14px; width:34px; height:34px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #d9564a, #8c2318); box-shadow:0 3px 8px rgba(0,0,0,.4);
+    display:flex; align-items:center; justify-content:center; font-size:16px; border:2px solid #5c140d;}
+  .contract-client-row{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
+  .contract-client-portrait{font-size:22px;}
+  .contract-client-name{font-size:12.5px; font-weight:800; flex:1; min-width:0;}
+  .contract-rarity-badge{font-size:10.5px; font-weight:800; padding:2px 8px; border-radius:8px;
+    background:rgba(0,0,0,.1); border:1px solid rgba(0,0,0,.25);}
+  .contract-title{font-size:16.5px; font-weight:900; margin-bottom:4px;}
+  .contract-description{font-size:12.5px; line-height:1.45; color:#4a3d24; margin-bottom:10px;}
+  .contract-time-left{font-size:12px; font-weight:700; color:#4a3d24; margin-bottom:10px;}
+  .contract-time-low{color:#8c2318;}
+
+  .contract-objectives-list{display:flex; flex-direction:column; gap:6px; margin-bottom:12px;}
+  .contract-objective-line{display:flex; align-items:flex-start; gap:8px; font-size:12.5px; line-height:1.4;}
+  .contract-objective-icon{flex-shrink:0;}
+  .contract-objective-line.is-locked{opacity:.5;}
+  .contract-objective-line.is-completed{color:#2d6a3e; text-decoration:line-through; text-decoration-color:rgba(45,106,62,.4);}
+
+  .contract-reward-line{font-size:12.5px; font-weight:800; color:#4a3d24; margin-bottom:6px;}
+  .contract-reward-hero{font-size:11.5px; color:#6b5a3a; margin-bottom:10px;}
+  .contract-turnin-hint{font-size:12px; font-weight:700; color:#8c2318; margin-bottom:10px;}
+
+  .contract-action-row{display:flex; justify-content:center;}
+  .contract-action-btn{min-width:160px; min-height:44px; padding:0 16px; border-radius:12px; font-size:13px; font-weight:800;
+    border:1px solid rgba(0,0,0,.3); background:rgba(0,0,0,.08); color:#5c4a2a;}
+  .contract-action-btn--active{background:linear-gradient(160deg, #c0392b, #8c2318); color:#f5e6d0; border-color:#5c140d;
+    box-shadow:0 4px 10px rgba(140,35,24,.4);}
+  .contract-action-btn--active:active{filter:brightness(1.12);}
+  .contract-action-btn--danger{background:rgba(140,35,24,.12); color:#8c2318; border-color:rgba(140,35,24,.4);}
+
+  .contract-empty-state{text-align:center; color:#c9b898; font-size:13px; padding:40px 16px;}
+  .contract-empty-icon{font-size:38px; margin-bottom:10px;}
+
+  @media (max-width:360px){
+    .contract-action-btn{min-width:120px; font-size:12px;}
+    .contract-parchment{padding:16px 14px 14px;}
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .contract-btn-glow{animation:none;}
+    .contract-turnin-marker{animation:none;}
+    .contract-reputation-fill{transition:none;}
+  }
+
   ::-webkit-scrollbar{width:5px;} ::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px;}

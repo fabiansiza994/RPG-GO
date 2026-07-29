@@ -143,6 +143,10 @@ import {
   ARQUERO_BATTLE_SPRITES,
   CHAR_SELECT_ART,
 } from "./game/assets/spriteRegistry.js";
+import { createDailyMissionsService } from "./game/systems/dailyMissions/dailyMissionsService.js";
+import { createAdventurerContractsService } from "./game/systems/adventurerContracts/adventurerContractsService.js";
+import { REPUTATION_RANKS, CONTRACT_DURATION_MS_BY_DIFFICULTY } from "./game/config/adventurerContracts.config.js";
+import { gameEventBus } from "./game/systems/eventBus/gameEventBus.js";
 
 // Registro del service worker mínimo (public/sw.js) — solo existe para que el navegador considere
 // el juego "instalable" como PWA (ver public/manifest.webmanifest), no cachea nada por su cuenta.
@@ -320,6 +324,7 @@ function checkZoneDiscovery(){
   if(!player.visitedZones) player.visitedZones = [];
   if(!player.visitedZones.includes(zone.key)){
     player.visitedZones.push(zone.key);
+    gameEventBus.emit({ type: "REGION_ENTERED", payload: { amount: 1 }, dedupeKey: zone.key });
     toast(`🗺️ ¡Nueva región descubierta: ${zone.name}!`, 4000);
     saveGame();
   }
@@ -1593,6 +1598,7 @@ function repairItem(item){
   maybeNotifyLowDurability(item);
   refreshHud();
   saveGame();
+  gameEventBus.emit({ type: "EQUIPMENT_UPGRADED", payload: { amount: 1 } });
   toast(`🔨 ¡Reparaste ${item.name}!`, 3000);
   return true;
 }
@@ -1624,6 +1630,7 @@ function repairAllItems(){
   damaged.forEach(it=>{ it.durability = it.maxDurability; syncDamagedPenalty(it); maybeNotifyLowDurability(it); });
   refreshHud();
   saveGame();
+  gameEventBus.emit({ type: "EQUIPMENT_UPGRADED", payload: { amount: damaged.length } });
   toast(`🔨 ¡Reparaste todo tu equipo! (🪙${totalGold})`, 3400);
   renderForge();
 }
@@ -1684,6 +1691,7 @@ function rollCraftMaterialDrops(monsterName){
     if(Math.random() < m.dropChance){
       const amt = m.min + Math.floor(Math.random()*(m.max-m.min+1));
       player.craftMats[m.key] = (player.craftMats[m.key]||0) + amt;
+      gameEventBus.emit({ type: "ITEM_OBTAINED", payload: { amount: amt, materialId: m.key } });
       msgs.push(`${m.emoji} +${amt} ${m.label}`);
     }
   });
@@ -2958,6 +2966,597 @@ const AppStorage = {
   list: (prefix, shared)=> LocalAppStorage.list(prefix, shared), // solo lo usa el multijugador (shared:true) — nunca las claves player_*
 };
 
+/* ============================================================
+   MISIONES DIARIAS — instancia única del servicio (ver
+   src/game/systems/dailyMissions/). Vive en su propia clave de storage
+   (rpgGo.dailyMissions.v1, nunca player_account/player_<clase>), así que
+   nada de esto puede dañar el guardado real de la partida. `getPlayerLevel`
+   se resuelve en el momento (no al crear el servicio) porque `player` recién
+   existe después de elegir/crear un héroe. */
+const dailyMissionsService = createDailyMissionsService({
+  storage: AppStorage,
+  getPlayerLevel: ()=> (player ? player.level : 1),
+  onDailyReset: ()=>{
+    toast("🗓️ Hay nuevas misiones diarias disponibles.", 4200);
+    updateDailyMissionsButton();
+    const overlay = $("dailyMissionsOverlay");
+    if(overlay && !overlay.classList.contains("hidden")) renderDailyMissionsPanel();
+  },
+  onMissionsCompleted: (missions)=>{
+    if(missions.length === 1) toast(`✅ Misión completada: ${missions[0].title}`, 3200);
+    else if(missions.length > 1) toast(`✅ ¡${missions.length} misiones completadas de un golpe!`, 3600);
+  },
+});
+dailyMissionsService.subscribe(()=>{
+  updateDailyMissionsButton();
+  const overlay = $("dailyMissionsOverlay");
+  if(overlay && !overlay.classList.contains("hidden")) renderDailyMissionsPanel();
+});
+// Único punto que conecta Misiones Diarias al bus general de eventos — main.js emite
+// una sola vez por acción (gameEventBus.emit) y cada sistema suscrito decide qué le importa.
+gameEventBus.subscribe((event)=> dailyMissionsService.reportEvent(event));
+
+/* ============================================================
+   CONTRATO DEL AVENTURERO — instancia única del servicio (ver
+   src/game/systems/adventurerContracts/). Clave propia (rpgGo.adventurerContracts.v1),
+   nunca player_account/player_<clase>. Comparte el mismo gameEventBus que
+   Misiones Diarias — main.js emite una sola vez por acción, cada sistema
+   decide qué le importa. */
+const adventurerContractsService = createAdventurerContractsService({
+  storage: AppStorage,
+  getPlayerLevel: ()=> (player ? player.level : 1),
+  getFeaturesAvailable: ()=> ({ towers: true, dungeons: true, blacksmith: true }),
+  onNewContractAvailable: ()=>{
+    toast("📜 Nuevo contrato disponible en el Tablón del Aventurero.", 4200);
+  },
+  onObjectivesCompleted: (objectives)=>{
+    if(objectives.length === 1) toast(`✅ Objetivo completado: ${objectives[0].title}`, 3200);
+    else if(objectives.length > 1) toast(`✅ ¡${objectives.length} objetivos completados!`, 3400);
+  },
+  onSpawnRequests: (requests)=>{
+    requests.forEach(r=> spawnContractTargetMonster(r.spawnKey, r.targetTag));
+  },
+  onTurnInRequired: (contract)=>{
+    toast(`📜 Contrato listo para entregar — regresa con ${contract.turnInLabel||contract.clientName}.`, 4400);
+  },
+  onContractReadyToClaim: ()=>{
+    toast("📜 ¡Contrato completado! Ya puedes reclamar tu recompensa.", 4200);
+  },
+  onContractExpired: ()=>{
+    toast("⌛ El contrato ha vencido.", 3800);
+  },
+});
+gameEventBus.subscribe((event)=> adventurerContractsService.reportEvent(event));
+adventurerContractsService.subscribe(()=>{
+  updateContractButton();
+  syncContractTurnInMarker();
+  const overlay = $("adventurerContractOverlay");
+  if(overlay && !overlay.classList.contains("hidden")) renderContractBoard();
+});
+
+/* ============================================================
+   MISIONES DIARIAS — UI (botón flotante + panel). Todo lo que sigue solo
+   LEE el estado vía dailyMissionsService.getState()/claimMission()/
+   claimFinalReward() — nunca escribe directo a localStorage ni duplica la
+   lógica de progreso/reclamo, que vive enteramente en
+   src/game/systems/dailyMissions/.
+   ============================================================ */
+function formatDailyMissionReward(reward){
+  const parts = [];
+  if(reward.gold) parts.push(`💰 ${reward.gold} oro`);
+  if(reward.experience) parts.push(`✨ ${reward.experience} XP`);
+  if(reward.diamonds) parts.push(`💎 ${reward.diamonds} diamante${reward.diamonds>1?"s":""}`);
+  (reward.materials||[]).forEach(m=>{
+    parts.push(`${RESOURCE_ICON[m.materialId]||"📦"} ${m.quantity} ${RESOURCE_LABEL[m.materialId]||m.materialId}`);
+  });
+  return parts.join(" · ");
+}
+
+function formatDailyMissionsCountdown(ms){
+  const total = Math.max(0, Math.floor(ms/1000));
+  const h = Math.floor(total/3600), m = Math.floor((total%3600)/60), s = total%60;
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+}
+
+let dailyMissionsCountdownTimer = null;
+function startDailyMissionsCountdown(){
+  stopDailyMissionsCountdown();
+  const tick = ()=>{
+    const el = $("dailyMissionsCountdown");
+    if(el) el.textContent = formatDailyMissionsCountdown(dailyMissionsService.getMillisecondsUntilReset());
+  };
+  tick();
+  dailyMissionsCountdownTimer = setInterval(tick, 1000);
+}
+function stopDailyMissionsCountdown(){
+  if(dailyMissionsCountdownTimer){ clearInterval(dailyMissionsCountdownTimer); dailyMissionsCountdownTimer = null; }
+}
+
+/** Estados del botón flotante (ver index.html/main.css): icono normal, "X/10",
+ *  brillo dorado + punto rojo si hay algo pendiente de reclamar, y check al
+ *  reclamar el cofre final (deja de pulsar). */
+function updateDailyMissionsButton(){
+  const btn = $("btnDailyMissions");
+  if(!btn) return;
+  const state = dailyMissionsService.getState();
+  const badge = $("dailyMissionsBadge");
+  const dot = $("dailyMissionsNotifDot");
+  if(!state){
+    if(badge) badge.textContent = "";
+    if(dot) dot.classList.remove("show");
+    btn.classList.remove("daily-missions-btn-glow", "daily-missions-btn-done");
+    btn.title = "Misiones diarias"; btn.setAttribute("aria-label", "Misiones diarias");
+    return;
+  }
+  const total = state.missions.length;
+  const completedOrClaimed = state.missions.filter(m=> m.status==="COMPLETED" || m.status==="CLAIMED").length;
+  const hasPendingClaim = state.missions.some(m=> m.status==="COMPLETED");
+  const allClaimed = state.missions.every(m=> m.status==="CLAIMED");
+  const finalAvailable = state.finalRewardStatus === "AVAILABLE";
+  const finalClaimed = state.finalRewardStatus === "CLAIMED";
+
+  if(badge) badge.textContent = `${completedOrClaimed}/${total}`;
+  if(dot) dot.classList.toggle("show", (hasPendingClaim || finalAvailable) && !finalClaimed);
+  btn.classList.toggle("daily-missions-btn-glow", allClaimed && !finalClaimed);
+  btn.classList.toggle("daily-missions-btn-done", finalClaimed);
+
+  const label = `Misiones diarias: ${completedOrClaimed} de ${total} completadas`
+    + (finalClaimed ? " · recompensa final reclamada" : finalAvailable ? " · ¡cofre diario disponible!" : "");
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+}
+
+function renderDailyMissionCard(m){
+  const displayProgress = Math.min(m.progress, m.target);
+  const pct = m.target>0 ? Math.round((displayProgress/m.target)*100) : 100;
+  const claimed = m.status === "CLAIMED";
+  const completed = m.status === "COMPLETED";
+  const stateClass = claimed ? "claimed" : completed ? "completed" : "in-progress";
+  const actionHtml = claimed
+    ? `<button class="daily-mission-claim-btn" disabled>✅ Reclamada</button>`
+    : completed
+      ? `<button class="daily-mission-claim-btn daily-mission-claim-btn--active" data-claim-mission="${m.id}">Reclamar</button>`
+      : `<button class="daily-mission-claim-btn" disabled>En progreso</button>`;
+  return `
+    <div class="daily-mission-card daily-mission-card--${stateClass}">
+      <div class="daily-mission-card-icon" aria-hidden="true">${m.icon}</div>
+      <div class="daily-mission-card-body">
+        <div class="daily-mission-card-title">${escapeHtml(m.title)}</div>
+        <div class="daily-mission-card-desc">${escapeHtml(m.description)}</div>
+        <div class="daily-mission-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${m.target}" aria-valuenow="${displayProgress}" aria-label="${escapeHtml(m.title)}: ${displayProgress} de ${m.target}">
+          <div class="daily-mission-progress-fill" style="width:${pct}%;"></div>
+        </div>
+        <div class="daily-mission-progress-label">${displayProgress} / ${m.target}</div>
+        <div class="daily-mission-reward-line">${formatDailyMissionReward(m.reward)}</div>
+      </div>
+      <div class="daily-mission-card-action">${actionHtml}</div>
+    </div>`;
+}
+
+function renderDailyMissionsFinalCard(state){
+  const status = state.finalRewardStatus;
+  const chestEmoji = status==="CLAIMED" ? "📭" : status==="AVAILABLE" ? "🎁" : "🔒";
+  const actionHtml = status==="CLAIMED"
+    ? `<button class="daily-mission-claim-btn" disabled>Reclamado</button>`
+    : status==="AVAILABLE"
+      ? `<button class="daily-mission-claim-btn daily-mission-claim-btn--active" id="btnClaimDailyFinalReward">Reclamar cofre diario</button>`
+      : `<button class="daily-mission-claim-btn" disabled>Completa las 10 misiones</button>`;
+  return `
+    <div class="daily-mission-final-card daily-mission-final-card--${status.toLowerCase()}">
+      <div class="daily-mission-final-chest" aria-hidden="true">${chestEmoji}</div>
+      <div class="daily-mission-final-body">
+        <div class="daily-mission-card-title">Recompensa por completar el día</div>
+        <div class="daily-mission-card-desc">Completa y reclama las 10 misiones para abrir el cofre diario.</div>
+        <div class="daily-mission-reward-line">${formatDailyMissionReward(state.finalReward)}</div>
+      </div>
+      <div class="daily-mission-card-action">${actionHtml}</div>
+    </div>`;
+}
+
+function renderDailyMissionsPanel(){
+  const state = dailyMissionsService.getState();
+  const list = $("dailyMissionsList");
+  if(!state || !list) return;
+  const total = state.missions.length;
+  const completedOrClaimed = state.missions.filter(m=> m.status==="COMPLETED" || m.status==="CLAIMED").length;
+  const progressLabel = $("dailyMissionsProgressLabel");
+  if(progressLabel) progressLabel.textContent = `${completedOrClaimed} / ${total} completadas`;
+  const progressFill = $("dailyMissionsProgressFill");
+  if(progressFill) progressFill.style.width = (total>0 ? Math.round((completedOrClaimed/total)*100) : 0)+"%";
+
+  list.innerHTML = state.missions.map(renderDailyMissionCard).join("");
+  const finalWrap = $("dailyMissionsFinalWrap");
+  if(finalWrap) finalWrap.innerHTML = renderDailyMissionsFinalCard(state);
+
+  list.querySelectorAll("[data-claim-mission]").forEach(btn=>{
+    btn.onclick = ()=> handleClaimDailyMission(btn.dataset.claimMission);
+  });
+  const finalBtn = $("btnClaimDailyFinalReward");
+  if(finalBtn) finalBtn.onclick = handleClaimDailyFinalReward;
+
+  const rewardHeroLabel = $("dailyMissionsRewardHero");
+  if(rewardHeroLabel){
+    rewardHeroLabel.textContent = player ? `La experiencia será entregada a: ${player.className||player.classKey} Nv.${player.level}` : "";
+  }
+}
+
+/** Aplica una recompensa ya reclamada al `player` real (oro/xp/diamantes/materiales
+ *  compartidos por cuenta) — el propio dailyMissionsService ya persistió la
+ *  reclamación ANTES de devolver el reward acá, así que esto nunca puede
+ *  duplicarse aunque saveGame() fallara justo después. */
+function applyDailyMissionReward(reward){
+  if(reward.gold) player.gold = (player.gold||0) + reward.gold;
+  if(reward.experience) player.xp = (player.xp||0) + reward.experience;
+  if(reward.diamonds) player.crystals = (player.crystals||0) + reward.diamonds;
+  (reward.materials||[]).forEach(m=>{ player[m.materialId] = (player[m.materialId]||0) + m.quantity; });
+}
+
+const dailyMissionsClaimInFlight = new Set();
+let dailyMissionsFinalClaimInFlight = false;
+
+async function handleClaimDailyMission(missionId){
+  if(!player || dailyMissionsClaimInFlight.has(missionId)) return;
+  dailyMissionsClaimInFlight.add(missionId);
+  try{
+    const res = await dailyMissionsService.claimMission(missionId, player.classKey);
+    if(res.ok){
+      applyDailyMissionReward(res.reward);
+      checkLevelUps();
+      refreshHud();
+      saveGame();
+      toast(`🎉 ¡Misión reclamada! ${formatDailyMissionReward(res.reward)}`, 3400);
+    }
+  } finally {
+    dailyMissionsClaimInFlight.delete(missionId);
+    renderDailyMissionsPanel();
+  }
+}
+
+async function handleClaimDailyFinalReward(){
+  if(!player || dailyMissionsFinalClaimInFlight) return;
+  dailyMissionsFinalClaimInFlight = true;
+  try{
+    const res = await dailyMissionsService.claimFinalReward();
+    if(res.ok){
+      applyDailyMissionReward(res.reward);
+      checkLevelUps();
+      refreshHud();
+      saveGame();
+      showAlert(
+        `¡Completaste todas las misiones diarias! Recibiste:
+         <div style="display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin:12px 0 2px; font-size:16px; font-weight:800; color:var(--text);">
+           ${formatDailyMissionReward(res.reward).split(" · ").map(s=>`<span>${s}</span>`).join("")}
+         </div>`,
+        { icon:"🎁", title:"¡Cofre diario abierto!", confirmLabel:"¡Genial!" }
+      );
+    }
+  } finally {
+    dailyMissionsFinalClaimInFlight = false;
+    renderDailyMissionsPanel();
+  }
+}
+
+$("btnDailyMissions").onclick = ()=>{
+  $("dailyMissionsOverlay").classList.remove("hidden");
+  renderDailyMissionsPanel();
+  startDailyMissionsCountdown();
+};
+$("btnCloseDailyMissions").onclick = ()=>{
+  $("dailyMissionsOverlay").classList.add("hidden");
+  stopDailyMissionsCountdown();
+};
+
+/* ============================================================
+   CONTRATO DEL AVENTURERO — UI (botón flotante + Tablón). Igual que la UI de
+   Misiones Diarias: todo lo que sigue solo LEE el estado vía
+   adventurerContractsService.getState()/acceptContract()/turnInContract()/
+   claimReward()/abandonContract() — nunca escribe directo a localStorage ni
+   duplica reglas de progreso/reclamo (esas viven enteramente en
+   src/game/systems/adventurerContracts/).
+   ============================================================ */
+const CONTRACT_RARITY_LABEL = { COMMON:"Común", UNCOMMON:"Poco común", RARE:"Raro", EPIC:"Épico", LEGENDARY:"Legendario" };
+const CONTRACT_DIFFICULTY_LABEL = { EASY:"Fácil", NORMAL:"Normal", HARD:"Difícil", ELITE:"Élite" };
+const WORLD_RESOURCE_KEYS = ["wood", "stone", "iron"];
+
+/** Enemigos "marcados" que el contrato genera cerca del jugador cuando un objetivo
+ *  SEQUENTIAL tipo DEFEAT_SPECIFIC_ENEMY se activa (ver spawnOnActivate en las
+ *  plantillas) — reusa plantillas de enemigo YA existentes (MONSTER_TEMPLATES),
+ *  solo bufadas y renombradas, en vez de inventar enemigos nuevos. */
+const CONTRACT_TARGET_SPAWN_PRESETS = {
+  cuervo_alfa: { baseName:"Cuervo Corrupto", displayName:"Cuervo Alfa", emoji:"🐦‍⬛", levelBonus:4, hpMult:1.8, atkMult:1.4 },
+  demonio_marcado: { baseName:"Demonio Menor", displayName:"Demonio Marcado", emoji:"👹", levelBonus:5, hpMult:2.0, atkMult:1.5 },
+  depredador_ancestral: { baseName:"Golem de Roca", displayName:"Depredador Ancestral", emoji:"🐉", levelBonus:10, hpMult:3.0, atkMult:1.8 },
+};
+function spawnContractTargetMonster(spawnKey, targetTag){
+  const preset = CONTRACT_TARGET_SPAWN_PRESETS[spawnKey];
+  if(!preset || !playerLatLng) return;
+  const baseTpl = MONSTER_TEMPLATES.find(t=> t.name === preset.baseName);
+  if(!baseTpl) return;
+  const tpl = { ...baseTpl, name: preset.displayName, emoji: preset.emoji, hpM: baseTpl.hpM*preset.hpMult, atkM: baseTpl.atkM*preset.atkMult };
+  const level = Math.max(1, (player ? player.level : 1) + preset.levelBonus);
+  const pos = randOffset(30 + Math.random()*40);
+  const mon = makeMonster(tpl, level, pos, { special: true });
+  mon.contractTargetTag = targetTag;
+  monsters.push(mon);
+  toast(`⚠️ ¡${preset.displayName} apareció cerca!`, 4200);
+}
+
+/** Marcador de entrega — se ubica en el centro de la ciudad/zona actual
+ *  ("centro" ya existe en NEIVA_ZONES, ver world.js) porque el juego no tiene
+ *  todavía un edificio de gremio propio en el mapa. Aparece SOLO mientras el
+ *  contrato está en TURN_IN_REQUIRED y desaparece solo (reclamado, vencido o
+ *  abandonado). */
+let contractTurnInMarker = null;
+function removeContractTurnInMarker(){
+  if(contractTurnInMarker){ contractTurnInMarker.remove(); contractTurnInMarker = null; }
+}
+function showContractTurnInMarker(contract){
+  removeContractTurnInMarker();
+  if(!map || !NEIVA_ZONES || !NEIVA_ZONES.length) return;
+  const zone = NEIVA_ZONES.find(z=> z.key === "centro") || NEIVA_ZONES[0];
+  const icon = L.divIcon({ className:'', html:`<div class="contract-turnin-marker">🎗️</div>`, iconSize:[42,46], iconAnchor:[21,42] });
+  contractTurnInMarker = L.marker([zone.center.lat, zone.center.lng], { icon, zIndexOffset:250 }).addTo(map);
+  contractTurnInMarker.bindTooltip(`Entrega disponible — ${contract.turnInLabel||contract.clientName}`, { direction:"top", offset:[0,-40] });
+  contractTurnInMarker.on('click', ()=>{
+    $("adventurerContractOverlay").classList.remove("hidden");
+    renderContractBoard();
+  });
+}
+/** Único punto que decide si el marcador de entrega debe estar puesto — se llama
+ *  desde adventurerContractsService.subscribe(), así cubre TODOS los casos
+ *  (aceptar, progresar, entregar, vencer, abandonar, reabrir la app) sin
+ *  repetir esta decisión en cada callback. */
+function syncContractTurnInMarker(){
+  const state = adventurerContractsService.getState();
+  const c = state && state.currentContract;
+  if(c && c.status === "TURN_IN_REQUIRED") showContractTurnInMarker(c);
+  else removeContractTurnInMarker();
+}
+
+function materialDisplayName(materialId){
+  return RESOURCE_LABEL[materialId] || (CRAFT_MATERIALS.find(m=> m.key===materialId)||{}).label || materialId;
+}
+function materialEmoji(materialId){
+  return RESOURCE_ICON[materialId] || (CRAFT_MATERIALS.find(m=> m.key===materialId)||{}).emoji || "📦";
+}
+function formatContractReward(reward){
+  const parts = [];
+  if(reward.gold) parts.push(`💰 ${reward.gold} oro`);
+  if(reward.experience) parts.push(`✨ ${reward.experience} XP`);
+  if(reward.diamonds) parts.push(`💎 ${reward.diamonds} diamante${reward.diamonds>1?"s":""}`);
+  if(reward.reputation) parts.push(`🏅 ${reward.reputation} reputación`);
+  (reward.materials||[]).forEach(m=> parts.push(`${materialEmoji(m.materialId)} ${m.quantity} ${materialDisplayName(m.materialId)}`));
+  if(reward.freeRepairCount) parts.push(`🔨 Reparación gratuita`);
+  if(reward.chestId) parts.push(`🎁 Objeto especial`);
+  return parts.join(" · ");
+}
+function formatContractTimeLeft(ms){
+  const totalMin = Math.max(0, Math.floor(ms/60000));
+  const h = Math.floor(totalMin/60), m = totalMin%60;
+  return `${h} h ${m} min`;
+}
+function computeReputationProgress(reputation){
+  let idx = 0;
+  for(let i=0;i<REPUTATION_RANKS.length;i++){ if(reputation >= REPUTATION_RANKS[i].min) idx = i; }
+  const current = REPUTATION_RANKS[idx];
+  const next = REPUTATION_RANKS[idx+1];
+  if(!next) return { pct:100, label:`${current.name} · Reputación: ${reputation} (rango máximo)` };
+  const pct = Math.max(0, Math.min(100, Math.round(((reputation-current.min)/(next.min-current.min))*100)));
+  return { pct, label:`${current.name} · Reputación: ${reputation} / ${next.min}` };
+}
+
+/** Aplica al `player` real una recompensa YA reclamada (el servicio ya la
+ *  persistió como CLAIMED antes de devolverla acá) — mismo criterio que
+ *  applyDailyMissionReward. Devuelve las líneas para el resumen visual. */
+function grantMaterial(materialId, quantity){
+  if(WORLD_RESOURCE_KEYS.includes(materialId)) player[materialId] = (player[materialId]||0) + quantity;
+  else { if(!player.craftMats) player.craftMats = {}; player.craftMats[materialId] = (player.craftMats[materialId]||0) + quantity; }
+}
+function grantFreeRepair(){
+  allDurabilityItems().filter(it=> it.durability < it.maxDurability).forEach(it=>{
+    it.durability = it.maxDurability; syncDamagedPenalty(it);
+  });
+}
+function grantContractChestItem(){
+  const item = rollLoot();
+  return pushItemSafe({...item}) ? item : null;
+}
+function applyContractReward(reward){
+  const lines = [];
+  if(reward.gold){ player.gold += reward.gold; lines.push(`💰 +${reward.gold} oro`); }
+  if(reward.experience){ player.xp += reward.experience; lines.push(`✨ +${reward.experience} XP`); }
+  if(reward.diamonds){ player.crystals = (player.crystals||0) + reward.diamonds; lines.push(`💎 +${reward.diamonds} diamante${reward.diamonds>1?"s":""}`); }
+  if(reward.reputation) lines.push(`🏅 +${reward.reputation} reputación`);
+  (reward.materials||[]).forEach(m=>{ grantMaterial(m.materialId, m.quantity); lines.push(`${materialEmoji(m.materialId)} +${m.quantity} ${materialDisplayName(m.materialId)}`); });
+  if(reward.freeRepairCount){ grantFreeRepair(); lines.push("🔨 Reparación gratuita aplicada"); }
+  if(reward.chestId){ const item = grantContractChestItem(); if(item) lines.push(`${item.emoji} ${item.name}`); }
+  return lines;
+}
+
+function updateContractButton(){
+  const btn = $("btnAdventurerContract");
+  if(!btn) return;
+  const state = adventurerContractsService.getState();
+  const dot = $("contractNotifDot");
+  const badge = $("contractBadge");
+  const c = state && state.currentContract;
+  btn.classList.remove("contract-btn-glow");
+  if(!c){
+    if(badge) badge.textContent = "";
+    if(dot) dot.classList.remove("show");
+    btn.title = "Contrato del Aventurero"; btn.setAttribute("aria-label", "Contrato del Aventurero");
+    return;
+  }
+  const gameplayObjectives = c.objectives.filter(o=> o.type !== "RETURN_TO_NPC");
+  const completedCount = gameplayObjectives.filter(o=> o.status === "COMPLETED").length;
+  const total = gameplayObjectives.length;
+  let badgeText = "", label = "";
+  if(c.status === "AVAILABLE"){
+    badgeText = "Nuevo";
+    label = `Contrato del Aventurero: nuevo contrato disponible — ${c.title}`;
+    if(dot) dot.classList.add("show");
+  } else if(c.status === "ACTIVE"){
+    badgeText = `${completedCount}/${total}`;
+    label = `Contrato del Aventurero: ${completedCount} de ${total} objetivos completados`;
+    if(dot) dot.classList.remove("show");
+  } else {
+    badgeText = "Entregar";
+    label = "Contrato del Aventurero: listo para entregar";
+    btn.classList.add("contract-btn-glow");
+    if(dot) dot.classList.add("show");
+  }
+  if(badge) badge.textContent = badgeText;
+  btn.title = label; btn.setAttribute("aria-label", label);
+}
+
+function renderContractObjectiveLine(o){
+  const locked = o.status === "LOCKED";
+  const completed = o.status === "COMPLETED";
+  const icon = completed ? "✅" : locked ? "🔒" : "▫️";
+  let text;
+  if(locked) text = "Completa el objetivo anterior";
+  else if(completed || o.type === "RETURN_TO_NPC") text = o.description;
+  else text = `${o.description} (${Math.min(o.progress,o.target)}/${o.target})`;
+  return `<div class="contract-objective-line${locked?" is-locked":""}${completed?" is-completed":""}">
+    <span class="contract-objective-icon" aria-hidden="true">${icon}</span>
+    <span class="contract-objective-text">${escapeHtml(text)}</span>
+  </div>`;
+}
+
+function renderContractCard(state){
+  const c = state.currentContract;
+  if(!c){
+    return `<div class="contract-empty-state">
+      <div class="contract-empty-icon" aria-hidden="true">📭</div>
+      <div>No hay ningún contrato disponible ahora mismo. Vuelve más tarde.</div>
+    </div>`;
+  }
+  const rarityClass = `contract-rarity-${c.rarity.toLowerCase()}`;
+  const showTimer = c.status === "ACTIVE" || c.status === "TURN_IN_REQUIRED";
+  const msLeft = showTimer ? adventurerContractsService.getMillisecondsUntilExpiration() : null;
+  const timeHtml = msLeft!=null ? `<div class="contract-time-left${msLeft < 3*3600000 ? " contract-time-low":""}">Tiempo restante: ${formatContractTimeLeft(msLeft)}</div>` : "";
+  const objectivesHtml = c.objectives.map(renderContractObjectiveLine).join("");
+  let actionHtml = "";
+  if(c.status === "AVAILABLE"){
+    actionHtml = `<button class="contract-action-btn contract-action-btn--active" id="btnAcceptContract">Aceptar contrato</button>`;
+  } else if(c.status === "ACTIVE"){
+    actionHtml = `<button class="contract-action-btn contract-action-btn--danger" id="btnAbandonContract">Abandonar contrato</button>`;
+  } else if(c.status === "TURN_IN_REQUIRED"){
+    actionHtml = `<div class="contract-turnin-hint">📍 Regresa con ${escapeHtml(c.turnInLabel||c.clientName)} (marcado en el mapa) para entregar.</div>
+      <button class="contract-action-btn contract-action-btn--active" id="btnTurnInContract">Entregar contrato</button>`;
+  } else if(c.status === "COMPLETED"){
+    actionHtml = `<button class="contract-action-btn contract-action-btn--active" id="btnClaimContract">Reclamar recompensa</button>`;
+  }
+  const heroLine = (c.status==="COMPLETED" && player) ? `<div class="contract-reward-hero">La experiencia será entregada a: ${escapeHtml(player.className||player.classKey)} Nv.${player.level}</div>` : "";
+  return `
+    <div class="contract-parchment ${rarityClass}">
+      <div class="contract-seal" aria-hidden="true">🔥</div>
+      <div class="contract-client-row">
+        <span class="contract-client-portrait" aria-hidden="true">${c.clientPortrait||"🛡️"}</span>
+        <span class="contract-client-name">${escapeHtml(c.clientName)}</span>
+        <span class="contract-rarity-badge">${CONTRACT_RARITY_LABEL[c.rarity]||c.rarity}</span>
+      </div>
+      <div class="contract-title">${escapeHtml(c.title)}</div>
+      <div class="contract-description">${escapeHtml(c.description)}</div>
+      ${timeHtml}
+      <div class="contract-objectives-list">${objectivesHtml}</div>
+      <div class="contract-reward-line">${formatContractReward(c.reward)}</div>
+      ${heroLine}
+      <div class="contract-action-row">${actionHtml}</div>
+    </div>`;
+}
+
+function renderContractBoard(){
+  const state = adventurerContractsService.getState();
+  if(!state) return;
+  const progress = computeReputationProgress(state.reputation);
+  const repLabel = $("contractReputationLabel");
+  if(repLabel) repLabel.textContent = progress.label;
+  const repFill = $("contractReputationFill");
+  if(repFill) repFill.style.width = progress.pct + "%";
+  const wrap = $("contractCardWrap");
+  if(wrap) wrap.innerHTML = renderContractCard(state);
+
+  const acceptBtn = $("btnAcceptContract");
+  if(acceptBtn) acceptBtn.onclick = handleAcceptContractClick;
+  const abandonBtn = $("btnAbandonContract");
+  if(abandonBtn) abandonBtn.onclick = handleAbandonContractClick;
+  const turnInBtn = $("btnTurnInContract");
+  if(turnInBtn) turnInBtn.onclick = handleTurnInContractClick;
+  const claimBtn = $("btnClaimContract");
+  if(claimBtn) claimBtn.onclick = handleClaimContractClick;
+}
+
+function handleAcceptContractClick(){
+  const c = adventurerContractsService.getState().currentContract;
+  if(!c) return;
+  const hours = Math.round((CONTRACT_DURATION_MS_BY_DIFFICULTY[c.difficulty]||0)/3600000);
+  showConfirm(
+    `<div style="text-align:left; font-size:13px; line-height:1.6;">
+       <div style="font-size:15px; font-weight:800; margin-bottom:4px;">${escapeHtml(c.title)}</div>
+       <div style="color:var(--dim); margin-bottom:8px;">${escapeHtml(c.description)}</div>
+       <div>🏅 Rareza: ${CONTRACT_RARITY_LABEL[c.rarity]}</div>
+       <div>⚔️ Dificultad: ${CONTRACT_DIFFICULTY_LABEL[c.difficulty]}</div>
+       <div>⏳ Tiempo límite: ${hours} horas</div>
+       <div style="margin-top:8px; font-weight:700;">Recompensa: ${formatContractReward(c.reward)}</div>
+     </div>
+     <div style="margin-top:12px; font-weight:700;">¿Deseas aceptar este contrato?</div>`,
+    async ()=>{
+      const res = await adventurerContractsService.acceptContract();
+      if(res.ok) toast(`📜 Contrato aceptado: ${c.title}`, 4000);
+      renderContractBoard();
+    },
+    { icon:"📜", title:"Nuevo contrato", confirmLabel:"Aceptar contrato", cancelLabel:"Cancelar" }
+  );
+}
+function handleAbandonContractClick(){
+  showConfirm(
+    "Perderás todo el progreso de este contrato. ¿Abandonar de todas formas?",
+    async ()=>{
+      const res = await adventurerContractsService.abandonContract();
+      if(res.ok){ toast("Contrato abandonado.", 3000); removeContractTurnInMarker(); }
+      renderContractBoard();
+    },
+    { icon:"⚠️", title:"Abandonar contrato", confirmLabel:"Abandonar", cancelLabel:"Cancelar" }
+  );
+}
+async function handleTurnInContractClick(){
+  const res = await adventurerContractsService.turnInContract();
+  if(res.ok) removeContractTurnInMarker();
+  renderContractBoard();
+}
+let contractClaimInFlight = false;
+async function handleClaimContractClick(){
+  if(!player || contractClaimInFlight) return;
+  contractClaimInFlight = true;
+  try{
+    const res = await adventurerContractsService.claimReward(player.classKey);
+    if(res.ok){
+      const lines = applyContractReward(res.reward);
+      checkLevelUps();
+      refreshHud(); saveGame();
+      showAlert(
+        `¡Contrato completado! Recibiste:
+         <div style="display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin:12px 0 2px; font-size:16px; font-weight:800; color:var(--text);">
+           ${lines.map(l=>`<span>${l}</span>`).join("")}
+         </div>`,
+        { icon:"📜", title:"¡Contrato reclamado!", confirmLabel:"¡Genial!" }
+      );
+    }
+  } finally {
+    contractClaimInFlight = false;
+    renderContractBoard();
+  }
+}
+
+$("btnAdventurerContract").onclick = ()=>{
+  $("adventurerContractOverlay").classList.remove("hidden");
+  renderContractBoard();
+};
+$("btnCloseAdventurerContract").onclick = ()=>{
+  $("adventurerContractOverlay").classList.add("hidden");
+};
+
 /** Al loguearse/registrarse por primera vez en ESTE navegador, si ya había partidas guardadas
  *  localmente (jugó de invitado antes) y el servidor todavía no tiene nada para esa clase, las
  *  sube una sola vez — así no pierde lo que ya tenía acá. Nunca pisa un save que ya exista en el
@@ -3286,6 +3885,12 @@ $("btnStart").onclick = async ()=>{
   refreshHud();
   saveGame();
   checkDailyBonus();
+  await dailyMissionsService.init();
+  gameEventBus.emit({ type: "CHARACTER_SELECTED", payload: { amount: 1 }, dedupeKey: selectedClass });
+  updateDailyMissionsButton();
+  await adventurerContractsService.init();
+  updateContractButton();
+  syncContractTurnInMarker();
 };
 
 /** Recompensa por jugar cada día: +50 de oro gratis la primera vez que abres el juego en el día. */
@@ -3692,6 +4297,12 @@ async function initContinueScreen(){
       if(activeQuest && !activeQuest.itemObtained) drawQuestRoute();
       renderQuestTracker();
       checkDailyBonus();
+      await dailyMissionsService.init();
+      gameEventBus.emit({ type: "CHARACTER_SELECTED", payload: { amount: 1 }, dedupeKey: key });
+      updateDailyMissionsButton();
+      await adventurerContractsService.init();
+      updateContractButton();
+      syncContractTurnInMarker();
       // si cerraste la app a mitad de una corrida de mazmorra, al volver retoma el MISMO piso
       // (la secuencia de eventos ya sorteada vive en player.activeDungeonRun) en vez de perderla.
       if(player.activeDungeonRun){
@@ -3921,6 +4532,7 @@ function updateCampfireProximity(){
   if(nearFire && player.hp < player.maxHp){
     if(el){ el.classList.remove("hidden"); el.textContent = "🔥 Curándote junto a la fogata..."; }
     if(!campfireHealTimer){
+      gameEventBus.emit({ type: "CAMPFIRE_USED", payload: { amount: 1 } });
       campfireHealTimer = setInterval(()=>{
         if(!playerLatLng) return;
         const stillNear = CAMPFIRES.some(f=> distMeters(playerLatLng, f) <= f.healRadius);
@@ -4069,6 +4681,7 @@ function captureTower(towerId){
   // se guarda la marca COMPLETA (no solo el oro) — así, aunque la conexión con otros jugadores
   // falle, TÚ siempre vas a ver bien que la torre es tuya la próxima vez que entres.
   player.ownedTowers[towerId] = {goldPerHour: tower.goldPerHour, lastCollectAt: Date.now(), record};
+  gameEventBus.emit({ type: "TOWER_COMPLETED", payload: { amount: 1 }, dedupeKey: towerId });
   toast(`🗼 ¡La ${tower.name} ahora es tuya! Generará 💰${tower.goldPerHour} oro cada hora.`, 4500);
   saveGame();
 }
@@ -4089,6 +4702,7 @@ function collectTowerGold(){
   });
   if(totalGold > 0){
     player.gold += totalGold;
+    gameEventBus.emit({ type: "GOLD_EARNED", payload: { amount: totalGold } });
     toast(`🗼 Tus torres generaron 💰${totalGold} oro mientras no jugabas.`, 4500);
     refreshHud(); saveGame();
   }
@@ -4893,6 +5507,7 @@ function addWalkedDistance(meters){
     if(!player.zoneDistanceM) player.zoneDistanceM = {};
     player.zoneDistanceM[zone.key] = (player.zoneDistanceM[zone.key]||0) + meters;
   }
+  gameEventBus.emit({ type: "DISTANCE_WALKED", payload: { amount: meters } });
   checkDistanceMedals();
 }
 function checkDistanceMedals(){
@@ -5704,6 +6319,8 @@ function tryOpenChest(chest){
   const xp = Math.round(rarity.xpMin + Math.random()*(rarity.xpMax-rarity.xpMin));
   player.gold += gold;
   player.xp += xp;
+  gameEventBus.emit({ type: "GOLD_EARNED", payload: { amount: gold } });
+  gameEventBus.emit({ type: "CHEST_OPENED", payload: { amount: 1 } });
   checkLevelUps();
   let itemWon = null;
   if(Math.random() < rarity.itemChance){
@@ -5954,6 +6571,7 @@ function finishGather(node, type){
   const amount = Math.round(type.amountMin + Math.random()*(type.amountMax-type.amountMin));
   const beforeQty = player[type.kind]||0;
   player[type.kind] = beforeQty + amount;
+  gameEventBus.emit({ type: "RESOURCE_COLLECTED", payload: { amount, resourceKind: type.kind } });
   removeResourceNodeMarker(node.id);
   // el pico se gasta un uso por cada recolección — al llegar a 0 se rompe y hay que comprar otro
   let pickaxeMsg = "";
@@ -6147,6 +6765,7 @@ function tryActivateShrine(shrine){
   if(d > shrine.activateRadius){ toast(`Este santuario está a ${Math.round(d)} m — acércate (≤${shrine.activateRadius} m).`); return; }
   const type = SHRINE_TYPES.find(t=>t.key===shrine.typeKey);
   player.activeShrineBuff = {stat: type.buffStat, amount: type.buffAmount, expiresAt: Date.now()+type.durationMs, sourceName: type.name};
+  gameEventBus.emit({ type: "SANCTUARY_USED", payload: { amount: 1 } });
   const statLabel = type.buffStat==="atk" ? "ataque" : type.buffStat==="matk" ? "daño mágico" : "velocidad";
   toast(`${type.emoji} ¡${type.name} activado! +${Math.round(type.buffAmount*100)}% de ${statLabel} durante 20 minutos.`, 4500);
   refreshHud();
@@ -6863,6 +7482,7 @@ $("btnCloseBasesMenu").onclick = ()=> $("basesMenuOverlay").classList.add("hidde
  *  nuevo ni una pantalla separada. */
 let forgeActiveTab = "repair";
 function renderForge(){
+  gameEventBus.emit({ type: "BLACKSMITH_VISITED", payload: { amount: 1 } });
   $("btnForgeTabRepair").classList.toggle("active", forgeActiveTab==="repair");
   $("btnForgeTabCraft").classList.toggle("active", forgeActiveTab==="craft");
   $("btnRepairAll").classList.toggle("hidden", forgeActiveTab!=="repair");
@@ -7604,6 +8224,7 @@ function acceptQuest(npcMon, template, park){
   monsters = monsters.filter(m=>m.id!==npcMon.id);
   drawQuestRoute();
   renderQuestTracker();
+  gameEventBus.emit({ type: "NPC_INTERACTED", payload: { amount: 1 }, dedupeKey: npcMon.id });
   toast(`📜 Misión aceptada: consigue ${template.itemEmoji} ${template.itemName} en ${park.name}.`, 4500);
   saveGame();
   // si estás en grupo, invita a tus compañeros a la misma misión (cada quien consigue su propio ítem)
@@ -9086,6 +9707,9 @@ function useItem(idx){
     player.mp = Math.min(player.maxMp, Math.round(player.mp + player.maxMp*it.amount));
     showHealFeedback("mp", before, player.mp, player.maxMp);
   }
+  if(it.type==="heal" || it.type==="mana"){
+    gameEventBus.emit({ type: "CONSUMABLE_USED", payload: { amount: 1 } });
+  }
   player.inventory.splice(idx,1);
   refreshHud(); renderInventory();
   saveGame();
@@ -9622,6 +10246,7 @@ function equipItem(idx, accessorySlotIdx){
   }
   syncDungeonSetBonuses();
   player.inventory.splice(idx,1);
+  gameEventBus.emit({ type: "ITEM_EQUIPPED", payload: { amount: 1 }, dedupeKey: item.id });
   refreshHud(); renderInventory();
   toast(`${item.emoji} Equipaste ${item.name}.`);
   saveGame();
@@ -12107,6 +12732,8 @@ function winBattle(){
   applyCombatWearToEquipment(mon);
   if(mon.marker){ map.removeLayer(mon.marker); monsters = monsters.filter(m=>m.id!==mon.id); }
   registerQuestKill(mon.tpl.name);
+  gameEventBus.emit({ type: "ENEMY_DEFEATED", payload: { amount: 1, enemyName: mon.tpl.name, isThief: !!mon.isThief, isBoss: !!mon.isBoss, contractTargetTag: mon.contractTargetTag || undefined }, eventId: "win_enemy_"+mon.id });
+  gameEventBus.emit({ type: "BATTLE_WON", payload: { amount: 1 }, eventId: "win_battle_"+mon.id });
   let crystalsFromFirstBoss = 0;
   if(mon.isBoss && !mon.isParkGuardian){
     const today = new Date().toISOString().slice(0,10); // "2026-07-11", solo la fecha
@@ -12123,6 +12750,7 @@ function winBattle(){
   const goldGain = Math.round((mon.level*5 + Math.random()*8) * rewardMult);
   player.xp += xpGain;
   player.gold += goldGain;
+  gameEventBus.emit({ type: "GOLD_EARNED", payload: { amount: goldGain }, eventId: "win_gold_"+mon.id });
   // el Demonio Oscuro (ronda la niebla de un portal de mazmorra) suelta Esencia Oscura en vez de
   // — o además de — el oro normal: una moneda que NUNCA se gasta, solo se acumula, y entre más
   // tengas mejor tu suerte de rareza en el botín de la mazmorra (ver pickDungeonRarity).
@@ -13213,6 +13841,8 @@ function dungeonWinFloor(){
   const floorIndex = battleState.dungeonFloor;
   const isBossFloor = floorIndex > dungeon.floorCount;
   logBattle(isBossFloor ? `¡Derrotaste a ${dungeon.name}!` : `¡Superaste esta habitación!`);
+  gameEventBus.emit({ type: "DUNGEON_BATTLE_WON", payload: { amount: 1, isBossFloor }, eventId: "dungeon_floor_"+run.dungeonId+"_"+floorIndex+"_"+Date.now() });
+  if(isBossFloor) gameEventBus.emit({ type: "DUNGEON_COMPLETED", payload: { amount: 1 }, eventId: "dungeon_completed_"+run.dungeonId+"_"+Date.now() });
 
   const gold = Math.round(40 + floorIndex*20);
   const exp = Math.round(25 + floorIndex*15);
@@ -16468,6 +17098,7 @@ function openVagabundoNpc(mon){
   $("vagabundoPortrait").src = VAGABUNDO_SPRITES.portrait;
   $("vagabundoCostLabel").textContent = VAGABUNDO_COST;
   $("vagabundoOverlay").classList.remove("hidden");
+  gameEventBus.emit({ type: "NPC_INTERACTED", payload: { amount: 1 }, dedupeKey: mon.id });
   $("btnVagabundoGive").onclick = ()=>{
     if(player.gold < VAGABUNDO_COST){ toast(`No te alcanza — necesitas 💰${VAGABUNDO_COST}.`, 3200); return; }
     player.gold -= VAGABUNDO_COST;
@@ -16546,6 +17177,7 @@ $("btnCloseRecallReplace").onclick = ()=> $("recallReplaceOverlay").classList.ad
 
 function openMerchantNpc(mon){
   currentMerchant = mon;
+  gameEventBus.emit({ type: "NPC_INTERACTED", payload: { amount: 1 }, dedupeKey: mon.id });
   $("merchantOverlay").querySelector(".title").textContent = "🥷🛍️ Comerciante Errante";
   $("merchantTimeLeft").textContent = "";
   const buyList = $("merchantBuyList");

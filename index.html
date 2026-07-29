@@ -198,6 +198,25 @@
   <!-- El Coliseo ahora es una ubicación permanente en el mapa (Mapa Vivo, Capa 1) — ver drawColiseoMarker. -->
 </div>
 
+<!-- Misiones diarias: espejo de #floatingSideBtns pero del lado derecho a media altura — ese
+     costado está libre (el fabMenu solo ocupa la esquina inferior derecha), así que no tapa la
+     brújula, el botón de centrar mapa, el menú principal ni las barras de vida/maná. -->
+<div id="floatingSideBtnsRight">
+  <button class="floating-side-btn daily-missions-btn" id="btnDailyMissions" title="Misiones diarias" aria-label="Misiones diarias">
+    <span class="daily-missions-btn-icon" aria-hidden="true">📜</span>
+    <span class="daily-missions-badge" id="dailyMissionsBadge"></span>
+    <span class="notif-dot" id="dailyMissionsNotifDot"></span>
+  </button>
+  <!-- Contrato del Aventurero: mismo grupo/columna que Misiones Diarias (apilado debajo, sin
+       solaparse — el flex column con gap ya deja espacio) pero con estética de pergamino sellado
+       en vez de madera oscura, para que se distinga a simple vista del botón de arriba. -->
+  <button class="floating-side-btn adventurer-contract-btn" id="btnAdventurerContract" title="Contrato del Aventurero" aria-label="Contrato del Aventurero">
+    <span class="adventurer-contract-btn-icon" aria-hidden="true">🪶</span>
+    <span class="adventurer-contract-badge" id="contractBadge"></span>
+    <span class="notif-dot" id="contractNotifDot"></span>
+  </button>
+</div>
+
 <div id="fabMenuBackdrop"></div>
 <div id="fabMenu">
   <div class="wheel-overlay-content" id="wheelOverlayContent">
@@ -231,6 +250,64 @@
   </div>
   <button class="fab-main" id="btnFabToggle"><img id="btnFabToggleImg" src="/new_elements/btn_menu1.png" alt="Menú" draggable="false"></button>
   <button class="fab-corner-settings" id="btnSettingsCorner" title="Ajustes">⚙️</button>
+</div>
+
+<!-- MISIONES DIARIAS -->
+<div class="overlay hidden" id="dailyMissionsOverlay">
+  <div class="daily-missions-sheet" role="dialog" aria-modal="true" aria-labelledby="dailyMissionsTitle">
+    <div class="daily-missions-header">
+      <div class="daily-missions-header-icon" aria-hidden="true">📜</div>
+      <div class="daily-missions-header-text">
+        <div class="daily-missions-title" id="dailyMissionsTitle">Misiones diarias</div>
+        <div class="daily-missions-subtitle">Completa las actividades antes del reinicio diario.</div>
+        <div class="daily-missions-countdown">Se reinician en <span id="dailyMissionsCountdown">00:00:00</span></div>
+      </div>
+      <button class="daily-missions-close-btn" id="btnCloseDailyMissions" title="Cerrar" aria-label="Cerrar misiones diarias">✕</button>
+    </div>
+
+    <div class="daily-missions-body">
+      <div class="daily-missions-progress-section">
+        <div class="daily-missions-progress-header">
+          <span>Progreso diario</span>
+          <span id="dailyMissionsProgressLabel">0 / 10 completadas</span>
+        </div>
+        <div class="daily-missions-progress-track">
+          <div class="daily-missions-progress-fill" id="dailyMissionsProgressFill" style="width:0%;"></div>
+        </div>
+      </div>
+
+      <div class="daily-missions-reward-hero" id="dailyMissionsRewardHero"></div>
+
+      <div class="daily-missions-list" id="dailyMissionsList"></div>
+
+      <div class="daily-mission-final-wrap" id="dailyMissionsFinalWrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- CONTRATO DEL AVENTURERO -->
+<div class="overlay hidden" id="adventurerContractOverlay">
+  <div class="contract-board" role="dialog" aria-modal="true" aria-labelledby="contractBoardTitle">
+    <div class="contract-board-header">
+      <div class="contract-board-header-icon" aria-hidden="true">🏰</div>
+      <div class="contract-board-header-text">
+        <div class="contract-board-title" id="contractBoardTitle">Contrato del Aventurero</div>
+        <div class="contract-board-subtitle">Acepta encargos especiales y aumenta tu reputación.</div>
+      </div>
+      <button class="contract-board-close-btn" id="btnCloseAdventurerContract" title="Cerrar" aria-label="Cerrar Contrato del Aventurero">✕</button>
+    </div>
+
+    <div class="contract-board-body">
+      <div class="contract-reputation-section">
+        <div class="contract-reputation-label" id="contractReputationLabel">Novato · Reputación: 0 / 100</div>
+        <div class="contract-reputation-track">
+          <div class="contract-reputation-fill" id="contractReputationFill" style="width:0%;"></div>
+        </div>
+      </div>
+
+      <div class="contract-card-wrap" id="contractCardWrap"></div>
+    </div>
+  </div>
 </div>
 
 <!-- OTHER PLAYER ACTIONS -->
