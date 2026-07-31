@@ -190,6 +190,14 @@
 </div>
 <div id="floatingSideBtns">
   <button class="floating-side-btn img-btn" id="btnShop" title="Tienda"><img src="/new_elements/btn_tienda.png" alt="Tienda" draggable="false"></button>
+  <!-- Salón de la Fortuna: sin arte propio en new_elements/ todavía, así que sigue el mismo
+       fallback que btnDailyMissions/btnAdventurerContract (span con emoji + fondo temático en vez
+       de <img>) en lugar de inventar un ícono. Misma base .floating-side-btn que Tienda (mismo
+       tamaño/blur/animación de presión). -->
+  <button class="floating-side-btn fortune-hall-btn" id="btnFortune" title="Salón de la Fortuna" aria-label="Salón de la Fortuna">
+    <span class="fortune-hall-btn-icon" aria-hidden="true">🎲</span>
+    <span class="notif-dot" id="fortuneHallNotifDot"></span>
+  </button>
   <button class="floating-side-btn img-btn" id="btnInv" title="Inventario"><img src="/new_elements/btn_inventario.png" alt="Inventario" draggable="false"><span class="notif-dot" id="invNotifDot"></span></button>
   <button class="floating-side-btn img-btn" id="btnRegions" title="Regiones"><img src="/new_elements/btn_regiones.png" alt="Regiones" draggable="false"></button>
   <!--<button class="floating-side-btn" id="btnAudioMute" title="Silenciar música y efectos" aria-label="Silenciar música y efectos">
@@ -317,6 +325,87 @@
       </div>
 
       <div class="contract-card-wrap" id="contractCardWrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- SALÓN DE LA FORTUNA -->
+<div class="overlay hidden" id="fortuneHallOverlay">
+  <div class="fortune-hall-sheet" role="dialog" aria-modal="true" aria-labelledby="fortuneHallTitle">
+    <div class="fortune-hall-rune fh-rune-1" aria-hidden="true">✦</div>
+    <div class="fortune-hall-rune fh-rune-2" aria-hidden="true">ᛝ</div>
+    <div class="fortune-hall-rune fh-rune-3" aria-hidden="true">᛭</div>
+    <div class="fortune-hall-rune fh-rune-4" aria-hidden="true">✦</div>
+
+    <div class="fortune-hall-header">
+      <div class="fortune-hall-oracle-portrait" aria-hidden="true">🔮</div>
+      <div class="fortune-hall-header-text">
+        <div class="fortune-hall-title" id="fortuneHallTitle">Salón de la Fortuna</div>
+        <div class="fortune-hall-oracle-quote" id="fortuneHallOracleQuote">"…"</div>
+      </div>
+      <button class="fortune-hall-close-btn" id="btnCloseFortuneHall" title="Cerrar" aria-label="Cerrar Salón de la Fortuna">✕</button>
+    </div>
+
+    <div class="fortune-hall-body" id="fortuneHallBody">
+      <div class="fortune-hall-tile-row" id="fortuneHallTileRow"></div>
+
+      <!-- Cofre del Aventurero -->
+      <div class="fortune-minigame-view hidden" id="fortuneChestView">
+        <button class="fortune-minigame-back-btn" id="btnFortuneChestBack">← Volver</button>
+        <div class="fortune-minigame-title">🪙 Cofre del Aventurero</div>
+        <div class="fortune-minigame-sub">Los tres cofres esconden exactamente lo mismo — elige el que más te guste.</div>
+        <div class="fortune-chest-row" id="fortuneChestRow"></div>
+      </div>
+
+      <!-- Cartas del Destino -->
+      <div class="fortune-minigame-view hidden" id="fortuneCardsView">
+        <button class="fortune-minigame-back-btn" id="btnFortuneCardsBack">← Volver</button>
+        <div class="fortune-minigame-title">🃏 Cartas del Destino</div>
+        <div class="fortune-minigame-sub">Toca una carta para descubrir tu suerte.</div>
+        <div class="fortune-card-row" id="fortuneCardRow"></div>
+      </div>
+
+      <!-- Ruleta de la Fortuna — los 9 segmentos (fortuneWheelDial) se arman en JS a partir de
+           FORTUNE_WHEEL_REWARDS (fortuneHall.config.js), nunca a mano acá. -->
+      <div class="fortune-minigame-view hidden" id="fortuneWheelView">
+        <button class="fortune-minigame-back-btn" id="btnFortuneWheelBack">← Volver</button>
+        <div class="fortune-minigame-title">🎡 Ruleta de la Fortuna</div>
+        <div class="fortune-minigame-sub">Gira la rueda y deja que el destino decida tu recompensa.</div>
+        <div class="fortune-wheel-wrap">
+          <div class="fortune-wheel-pointer" aria-hidden="true"></div>
+          <div class="fortune-wheel-frame">
+            <div class="fortune-wheel-dial" id="fortuneWheelDial" role="img" aria-label="Ruleta de la Fortuna con nueve premios posibles"></div>
+            <div class="fortune-wheel-hub" aria-hidden="true">✦</div>
+          </div>
+        </div>
+        <div class="fortune-wheel-disclaimer">Las recompensas tienen probabilidades diferentes según su rareza.</div>
+        <button class="fortune-wheel-spin-btn" id="btnFortuneWheelSpin">🎲 Girar gratis</button>
+      </div>
+    </div>
+
+    <!-- Popup de recompensa — vive dentro del mismo modal (no un overlay aparte), mismo criterio
+         que el resto de esta pantalla: nunca tapa completamente el Salón. -->
+    <div class="fortune-reward-popup hidden" id="fortuneRewardPopup">
+      <div class="fortune-reward-popup-inner">
+        <span class="fortune-reward-sparkle p1" aria-hidden="true">✦</span>
+        <span class="fortune-reward-sparkle p2" aria-hidden="true">✧</span>
+        <span class="fortune-reward-sparkle p3" aria-hidden="true">✦</span>
+        <div class="fortune-reward-icon" id="fortuneRewardIcon">🎁</div>
+        <div class="fortune-reward-label" id="fortuneRewardLabel"></div>
+      </div>
+    </div>
+
+    <!-- "La fortuna todavía puede sonreírte…" -->
+    <div class="fortune-second-chance hidden" id="fortuneSecondChance">
+      <div class="fortune-second-chance-inner">
+        <div class="fortune-second-chance-text">La fortuna todavía puede sonreírte…</div>
+        <button class="ad-offer-btn fortune-second-chance-btn" id="btnFortuneSecondChanceAd">
+          <span class="ad-btn-play-icon" aria-hidden="true">▶</span>
+          <span class="ad-btn-label">Ver anuncio</span>
+        </button>
+        <button class="fortune-second-chance-btn fortune-second-chance-diamonds" id="btnFortuneSecondChanceDiamonds">💎 Gastar 5 diamantes</button>
+        <button class="fortune-second-chance-btn fortune-second-chance-cancel" id="btnFortuneSecondChanceCancel">Cancelar</button>
+      </div>
     </div>
   </div>
 </div>

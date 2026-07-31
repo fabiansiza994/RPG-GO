@@ -137,6 +137,8 @@ import {
   CLASS_MAGIC_CIRCLE_SPRITES,
   ARMOR_ICON_PATH,
   ESPADA_LUNAR_ICON_PATH,
+  COFRE_CLOSED_ICON_PATH,
+  COFRE_OPEN_ICON_PATH,
   DUNGEON_PORTAL_SPRITES,
   SENOR_OSCURO_SPRITES,
   DEMONIO_OSCURO_SPRITES,
@@ -153,6 +155,15 @@ import { createDailyMissionsService } from "./game/systems/dailyMissions/dailyMi
 import { createAdventurerContractsService } from "./game/systems/adventurerContracts/adventurerContractsService.js";
 import { REPUTATION_RANKS, CONTRACT_DURATION_MS_BY_DIFFICULTY } from "./game/config/adventurerContracts.config.js";
 import { createAdsService } from "./game/systems/ads/adsService.js";
+import { DEV_FORCE_MOCK_ADS } from "./game/config/ads.config.js";
+import { createFortuneHallService } from "./game/systems/fortuneHall/fortuneHallService.js";
+import { rollReward as rollFortuneReward, rollWheelReward as rollFortuneWheelReward } from "./game/systems/fortuneHall/fortuneRewardService.js";
+import { pickOracleQuote } from "./game/systems/fortuneHall/fortuneOracle.js";
+import { MINIGAME_DEFS as FORTUNE_MINIGAME_DEFS, getMinigameDef as getFortuneMinigameDef } from "./game/systems/fortuneHall/fortuneMinigames.js";
+import {
+  SECOND_CHANCE_DIAMOND_COST, ANIMATION_MS as FORTUNE_ANIMATION_MS,
+  FORTUNE_WHEEL_REWARDS, FORTUNE_WHEEL_RARITY_COLORS, FORTUNE_WHEEL_CONFIG,
+} from "./game/config/fortuneHall.config.js";
 import { createCloudShadowManager } from "./game/systems/cloudShadows/cloudShadowManager.js";
 import { createAudioManager } from "./game/systems/audio/audioManager.js";
 import { ensureDailyMissionReminderScheduled } from "./game/systems/notifications/dailyRewardNotifications.js";
@@ -3093,6 +3104,27 @@ adventurerContractsService.subscribe(()=>{
 });
 
 /* ============================================================
+   SALÓN DE LA FORTUNA — instancia única del servicio (ver
+   src/game/systems/fortuneHall/). Clave propia (rpgGo.fortuneHall.v1),
+   nunca player_account/player_<clase>. No toca `player` — solo sabe si cada
+   minijuego tiene su intento gratis/premium disponible hoy; aplicar la
+   recompensa real es responsabilidad de main.js (ver applyFortuneHallReward
+   más abajo, junto al resto de la UI del Salón). */
+const fortuneHallService = createFortuneHallService({
+  storage: AppStorage,
+  onDailyReset: ()=>{
+    toast("🎲 El Salón de la Fortuna se renovó para hoy.", 4000);
+    updateFortuneHallButton();
+    const overlay = $("fortuneHallOverlay");
+    if(overlay && !overlay.classList.contains("hidden")) renderFortuneHallTiles();
+  },
+  onCorruptedState: ()=>{
+    toast("⚠️ No se pudo leer tu progreso del Salón de la Fortuna guardado — se reinició.", 4500);
+  },
+});
+fortuneHallService.subscribe(()=> updateFortuneHallButton());
+
+/* ============================================================
    PUBLICIDAD (rewarded ads) — instancia única (ver src/game/systems/ads/).
    Clave propia (rpgGo.ads.v1), nunca player_account/player_<clase>. En web
    (o si ADS_CONFIG.enabled es false) esto se resuelve solo a
@@ -3105,7 +3137,7 @@ adventurerContractsService.subscribe(()=>{
    la app, sin bloquear la pantalla de selección de personaje ni el mapa. */
 const adsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
 const adsService = createAdsService();
-adsService.init({ storage: AppStorage, getSessionId: ()=> adsSessionId });
+adsService.init({ storage: AppStorage, getSessionId: ()=> adsSessionId, forceMock: DEV_FORCE_MOCK_ADS });
 
 /* ============================================================
    SOMBRAS DE NUBE — instancia única (ver src/game/systems/cloudShadows/).
@@ -4025,6 +4057,522 @@ function openBuyQuantityModal(item, unitGoldCost, unitMatCost, onConfirm){
   };
 }
 
+/* ============================================================
+   SALÓN DE LA FORTUNA — UI (botón flotante + modal + minijuegos). Igual que
+   Misiones Diarias/Contrato del Aventurero: todo lo que sigue solo LEE el
+   estado vía fortuneHallService.getGameStatus()/consumeFreeAttempt()/
+   consumePremiumAttempt() y sortea recompensas vía rollFortuneReward() —
+   nunca escribe directo a localStorage ni duplica esa lógica, que vive
+   enteramente en src/game/systems/fortuneHall/. El segundo intento
+   reutiliza adsService exactamente como el "Cofre del patrocinador"
+   (ver handleSponsorChestClick más arriba).
+   ============================================================ */
+const FORTUNE_STATUS_LABEL = {
+  FREE_AVAILABLE: "Disponible",
+  SECOND_CHANCE_AVAILABLE: "¿Otra oportunidad?",
+  LOCKED: "Disponible mañana",
+};
+const FORTUNE_STATUS_CLASS = {
+  FREE_AVAILABLE: "fortune-tile-status--free",
+  SECOND_CHANCE_AVAILABLE: "fortune-tile-status--second",
+  LOCKED: "fortune-tile-status--locked",
+};
+/** Puramente cosmético (pedido explícito: "el color solo es visual para
+ *  generar curiosidad") — los tres cofres usan exactamente el mismo sistema
+ *  de recompensas, ver rollFortuneReward(). Un solo arte real (cofre.png/
+ *  cofre_abierto.png, ver spriteRegistry.js) sirve para los tres: el tinte
+ *  madera/plata se logra con un filtro CSS sobre esa misma ilustración
+ *  dorada en vez de pedir 3 imágenes distintas. */
+const FORTUNE_CHEST_VISUALS = [
+  { label: "Madera", filter: "sepia(1) saturate(2.4) hue-rotate(-35deg) brightness(.68) contrast(1.05)" },
+  { label: "Plata",  filter: "grayscale(1) brightness(1.3) contrast(1.05)" },
+  { label: "Dorado", filter: "none" },
+];
+
+let fortuneActiveGameId = null;   // "chest" | "cards" | null (en la fila de selección)
+let fortuneCurrentAttemptKind = "free"; // "free" | "premium" — cuál intento se está jugando ahora
+let fortuneRolledRewards = [];    // pre-sorteadas al entrar al minijuego, una por cofre/carta
+let fortunePickedIndex = null;    // índice ya elegido en esta partida (null = todavía nadie tocó nada)
+
+function updateFortuneHallButton(){
+  const btn = $("btnFortune");
+  if(!btn) return;
+  const anyFree = FORTUNE_MINIGAME_DEFS.some(d=> fortuneHallService.getGameStatus(d.id)==="FREE_AVAILABLE");
+  const anySecond = FORTUNE_MINIGAME_DEFS.some(d=> fortuneHallService.getGameStatus(d.id)==="SECOND_CHANCE_AVAILABLE");
+  btn.classList.toggle("fortune-hall-btn-glow", anyFree);
+  const dot = $("fortuneHallNotifDot");
+  if(dot) dot.classList.toggle("show", anyFree || anySecond);
+}
+
+/** Descriptor -> {icon,text} SIN mutar `player` — usado para mostrar los
+ *  cofres/cartas que NO se eligieron (nunca se otorgan, solo se muestran). */
+function describeFortuneReward(reward){
+  switch(reward.category){
+    case "gold": return { icon: "💰", text: `+${reward.gold} oro` };
+    case "material": return { icon: materialEmoji(reward.materialId), text: `+${reward.quantity} ${materialDisplayName(reward.materialId)}` };
+    case "consumable": {
+      const base = ITEM_TABLE.find(it=> it.id===reward.itemId);
+      return { icon: base ? base.emoji : "🧪", text: base ? base.name : "Consumible" };
+    }
+    case "diamonds": return { icon: "💎", text: `+${reward.diamonds} diamante${reward.diamonds>1?"s":""}` };
+    case "equipment": {
+      const item = EQUIP_TABLE.find(it=> it.id===reward.equipItemId);
+      return { icon: item ? item.emoji : "🛡️", text: item ? item.name : "Equipo" };
+    }
+    default: return { icon: "🎁", text: "Recompensa" };
+  }
+}
+/** Aplica al `player` real UNA recompensa ya elegida — mismo criterio que
+ *  applyContractReward/applyDailyMissionReward. Si el inventario está lleno
+ *  (consumible/equipo), nunca se pierde el premio: se convierte en oro
+ *  equivalente en su lugar. */
+function applyFortuneHallReward(reward){
+  switch(reward.category){
+    case "gold": player.gold += reward.gold; return describeFortuneReward(reward);
+    case "material": grantMaterial(reward.materialId, reward.quantity); return describeFortuneReward(reward);
+    case "diamonds": player.crystals = (player.crystals||0) + reward.diamonds; return describeFortuneReward(reward);
+    case "consumable": {
+      const base = ITEM_TABLE.find(it=> it.id===reward.itemId);
+      if(base && pushItemSafe({...base}, true)) return describeFortuneReward(reward);
+      const fallbackGold = base ? Math.round(base.value||20) : 20;
+      player.gold += fallbackGold;
+      return { icon: "💰", text: `Inventario lleno — +${fallbackGold} oro en su lugar` };
+    }
+    case "equipment": {
+      const item = EQUIP_TABLE.find(it=> it.id===reward.equipItemId);
+      if(item && pushItemSafe({...item}, true)) return describeFortuneReward(reward);
+      player.gold += 100;
+      return { icon: "💰", text: "Inventario lleno — +100 oro en su lugar" };
+    }
+    default: return describeFortuneReward(reward);
+  }
+}
+
+function openFortuneHall(){
+  $("fortuneHallOverlay").classList.remove("hidden");
+  $("fortuneHallOracleQuote").textContent = `"${pickOracleQuote()}"`;
+  showFortuneTileRow();
+}
+function closeFortuneHall(){
+  $("fortuneHallOverlay").classList.add("hidden");
+}
+function showFortuneTileRow(){
+  $("fortuneHallTileRow").classList.remove("hidden");
+  $("fortuneChestView").classList.add("hidden");
+  $("fortuneCardsView").classList.add("hidden");
+  $("fortuneWheelView").classList.add("hidden");
+  $("fortuneSecondChance").classList.add("hidden");
+  $("fortuneRewardPopup").classList.add("hidden");
+  fortuneActiveGameId = null;
+  renderFortuneHallTiles();
+}
+function returnToFortuneTiles(){ showFortuneTileRow(); }
+
+function renderFortuneHallTiles(){
+  const wrap = $("fortuneHallTileRow");
+  if(!wrap) return;
+  wrap.innerHTML = "";
+  FORTUNE_MINIGAME_DEFS.forEach(def=>{
+    const status = fortuneHallService.getGameStatus(def.id);
+    const locked = status === "LOCKED";
+    const el = document.createElement("button");
+    el.className = "fortune-tile"
+      + (status==="FREE_AVAILABLE" ? " fortune-tile--available" : "")
+      + (locked ? " is-locked" : "");
+    el.disabled = locked;
+    el.innerHTML = `
+      <div class="fortune-tile-icon">${def.icon}</div>
+      <div class="fortune-tile-body">
+        <div class="fortune-tile-title">${def.label}</div>
+        <div class="fortune-tile-sub">${def.subtitle}</div>
+        <div class="fortune-tile-status ${FORTUNE_STATUS_CLASS[status]||""}">${FORTUNE_STATUS_LABEL[status]||""}</div>
+      </div>`;
+    el.onclick = ()=> enterFortuneMinigame(def.id);
+    wrap.appendChild(el);
+  });
+}
+
+function enterFortuneMinigame(gameId){
+  const status = fortuneHallService.getGameStatus(gameId);
+  if(status === "LOCKED") return;
+  if(status === "SECOND_CHANCE_AVAILABLE"){ openFortuneSecondChancePrompt(gameId); return; }
+  startFortuneMinigamePlay(gameId, "free");
+}
+
+/** Arranca UNA partida de un minijuego. Cofre/Cartas sortean `pickCount`
+ *  recompensas independientes de antemano (una por cofre/carta) — solo la
+ *  que el jugador toque se otorga de verdad; las demás se revelan después
+ *  solo como ambientación ("casi me sale", pedido explícito). La Ruleta no
+ *  tiene "decoys" — sortea un único resultado recién al girar (ver
+ *  spinFortuneWheel), así que acá solo prepara la vista. */
+function startFortuneMinigamePlay(gameId, attemptKind){
+  const def = getFortuneMinigameDef(gameId);
+  if(!def) return;
+  fortuneActiveGameId = gameId;
+  fortuneCurrentAttemptKind = attemptKind;
+  fortunePickedIndex = null;
+
+  $("fortuneHallTileRow").classList.add("hidden");
+  $("fortuneSecondChance").classList.add("hidden");
+  $("fortuneRewardPopup").classList.add("hidden");
+  $("fortuneChestView").classList.add("hidden");
+  $("fortuneCardsView").classList.add("hidden");
+  $("fortuneWheelView").classList.add("hidden");
+
+  if(gameId === "chest"){
+    fortuneRolledRewards = Array.from({ length: def.pickCount },
+      ()=> rollFortuneReward({ classKey: player.classKey, level: player.level }));
+    $("fortuneChestView").classList.remove("hidden");
+    renderFortuneChestRow();
+  } else if(gameId === "cards"){
+    fortuneRolledRewards = Array.from({ length: def.pickCount },
+      ()=> rollFortuneReward({ classKey: player.classKey, level: player.level }));
+    $("fortuneCardsView").classList.remove("hidden");
+    renderFortuneCardRow();
+  } else if(gameId === "wheel"){
+    $("fortuneWheelView").classList.remove("hidden");
+    renderFortuneWheelView();
+  }
+}
+
+function showFortuneRewardPopup(applied){
+  $("fortuneRewardIcon").textContent = applied.icon;
+  $("fortuneRewardLabel").textContent = `¡Obtuviste ${applied.text}!`;
+  const popup = $("fortuneRewardPopup");
+  popup.classList.remove("hidden");
+  const inner = popup.querySelector(".fortune-reward-popup-inner");
+  if(inner){ inner.style.animation = "none"; void inner.offsetWidth; inner.style.animation = ""; }
+}
+
+/** Tras revelar el premio: si era el intento GRATUITO y ahora hay segunda
+ *  oportunidad disponible, se ofrece; si no (era el premium, o ya no queda
+ *  nada), se vuelve a la fila de minijuegos. */
+function finishFortuneMinigameTurn(gameId){
+  $("fortuneRewardPopup").classList.add("hidden");
+  if(fortuneCurrentAttemptKind === "free" && fortuneHallService.getGameStatus(gameId) === "SECOND_CHANCE_AVAILABLE"){
+    openFortuneSecondChancePrompt(gameId);
+  } else {
+    returnToFortuneTiles();
+  }
+}
+
+/** Línea de tiempo compartida por Cofre/Cartas para revelar "los demás" UNA
+ *  VEZ que el jugador ya leyó su propio premio (pedido explícito: antes
+ *  pasaba todo de un golpe y no daba tiempo a verlo). `revealOne(otherIdx)`
+ *  hace la revelación visual de un solo elemento — el resto de la
+ *  coreografía (popup, pausas, cuándo termina el turno) es igual para
+ *  ambos minijuegos. Devuelve el instante (ms desde ahora) en que termina
+ *  todo, para que cada minijuego pueda seguir agregando sus propios timeouts
+ *  si hiciera falta. */
+function scheduleFortuneReveal({ gameId, applied, openAt, otherIndexes, revealOne }){
+  const popupAt = openAt + FORTUNE_ANIMATION_MS.revealPopupDelay;
+  setTimeout(()=> showFortuneRewardPopup(applied), popupAt);
+
+  const popupHideAt = popupAt + FORTUNE_ANIMATION_MS.popupReadMs;
+  setTimeout(()=> $("fortuneRewardPopup").classList.add("hidden"), popupHideAt);
+
+  // Cada cofre/carta restante se revela por separado, uno a la vez, con
+  // pausa entre cada uno — nunca todos juntos de un golpe.
+  otherIndexes.forEach((otherIdx, order)=>{
+    setTimeout(()=> revealOne(otherIdx), popupHideAt + FORTUNE_ANIMATION_MS.otherRevealStagger * (order + 1));
+  });
+
+  const lastRevealAt = popupHideAt + FORTUNE_ANIMATION_MS.otherRevealStagger * otherIndexes.length;
+  setTimeout(()=> finishFortuneMinigameTurn(gameId), lastRevealAt + FORTUNE_ANIMATION_MS.afterAllRevealedPause);
+}
+
+/* ---------- Cofre del Aventurero ---------- */
+function renderFortuneChestRow(){
+  const wrap = $("fortuneChestRow");
+  wrap.innerHTML = "";
+  fortuneRolledRewards.forEach((reward, idx)=>{
+    const visual = FORTUNE_CHEST_VISUALS[idx % FORTUNE_CHEST_VISUALS.length];
+    const el = document.createElement("div");
+    el.className = "fortune-chest";
+    el.innerHTML = `<img class="fortune-chest-img" src="${COFRE_CLOSED_ICON_PATH}" alt="Cofre ${visual.label}" style="filter:${visual.filter}">
+      <span class="fortune-chest-label">${visual.label}</span>`;
+    el.onclick = ()=> pickFortuneChest(idx);
+    wrap.appendChild(el);
+  });
+}
+
+function pickFortuneChest(idx){
+  if(fortunePickedIndex != null) return;
+  fortunePickedIndex = idx;
+  const gameId = fortuneActiveGameId;
+  const chestEls = Array.from($("fortuneChestRow").children);
+  // Los cofres NO elegidos quedan en espera (atenuados, sin poder tocarse) mientras
+  // se abre el elegido — todavía no se revelan, eso pasa más adelante, de a uno.
+  chestEls.forEach((el,i)=>{ if(i!==idx) el.classList.add("is-waiting"); });
+
+  const reward = fortuneRolledRewards[idx];
+  const applied = applyFortuneHallReward(reward);
+  refreshHud();
+  saveGame();
+  if(fortuneCurrentAttemptKind === "free") fortuneHallService.consumeFreeAttempt(gameId);
+  else fortuneHallService.consumePremiumAttempt(gameId);
+  audioManager.playSfx("GOLD");
+
+  const chosenEl = chestEls[idx];
+  chosenEl.classList.add("is-vibrating");
+
+  const openAt = FORTUNE_ANIMATION_MS.chestVibrate + FORTUNE_ANIMATION_MS.chestOpen;
+  setTimeout(()=>{
+    chosenEl.classList.remove("is-vibrating");
+    chosenEl.classList.add("is-opening");
+  }, FORTUNE_ANIMATION_MS.chestVibrate);
+
+  setTimeout(()=>{
+    chosenEl.classList.add("is-opened");
+    // cofre_abierto.png ya trae el destello de luz dibujado — no hace falta
+    // agregar un haz de luz aparte encima (se veía duplicado/artificial).
+    const img = chosenEl.querySelector(".fortune-chest-img");
+    if(img) img.src = COFRE_OPEN_ICON_PATH;
+    const label = chosenEl.querySelector(".fortune-chest-label");
+    if(label) label.textContent = applied.text;
+  }, openAt);
+
+  scheduleFortuneReveal({
+    gameId, applied, openAt,
+    otherIndexes: chestEls.map((el,i)=> i).filter(i=> i!==idx),
+    revealOne: (otherIdx)=>{
+      const el = chestEls[otherIdx];
+      el.classList.remove("is-waiting");
+      el.classList.add("is-revealing");
+      const img = el.querySelector(".fortune-chest-img");
+      if(img) img.src = COFRE_OPEN_ICON_PATH;
+      const label = el.querySelector(".fortune-chest-label");
+      if(label) label.textContent = describeFortuneReward(fortuneRolledRewards[otherIdx]).text;
+    },
+  });
+}
+
+/* ---------- Cartas del Destino ---------- */
+function renderFortuneCardRow(){
+  const wrap = $("fortuneCardRow");
+  wrap.innerHTML = "";
+  fortuneRolledRewards.forEach((reward, idx)=>{
+    const el = document.createElement("div");
+    el.className = "fortune-card";
+    el.innerHTML = `
+      <div class="fortune-card-inner">
+        <div class="fortune-card-face fortune-card-back" aria-hidden="true">🂠</div>
+        <div class="fortune-card-face fortune-card-front"></div>
+      </div>`;
+    el.onclick = ()=> pickFortuneCard(idx);
+    wrap.appendChild(el);
+  });
+}
+
+function pickFortuneCard(idx){
+  if(fortunePickedIndex != null) return;
+  fortunePickedIndex = idx;
+  const gameId = fortuneActiveGameId;
+  const cardEls = Array.from($("fortuneCardRow").children);
+  cardEls.forEach((el,i)=>{ if(i!==idx) el.classList.add("is-waiting"); });
+
+  const reward = fortuneRolledRewards[idx];
+  const applied = applyFortuneHallReward(reward);
+  refreshHud();
+  saveGame();
+  if(fortuneCurrentAttemptKind === "free") fortuneHallService.consumeFreeAttempt(gameId);
+  else fortuneHallService.consumePremiumAttempt(gameId);
+  audioManager.playSfx("GOLD");
+
+  const chosenEl = cardEls[idx];
+  chosenEl.querySelector(".fortune-card-front").textContent = applied.icon;
+  chosenEl.classList.add("is-flipped");
+
+  scheduleFortuneReveal({
+    gameId, applied, openAt: FORTUNE_ANIMATION_MS.cardFlip,
+    otherIndexes: cardEls.map((el,i)=> i).filter(i=> i!==idx),
+    revealOne: (otherIdx)=>{
+      const el = cardEls[otherIdx];
+      el.classList.remove("is-waiting");
+      el.classList.add("is-flipped");
+      el.querySelector(".fortune-card-front").textContent = describeFortuneReward(fortuneRolledRewards[otherIdx]).icon;
+    },
+  });
+}
+
+/* ---------- Ruleta de la Fortuna ----------
+   Regla técnica principal (pedido explícito): el resultado NUNCA depende de
+   dónde termina la animación — se sortea y se aplica al `player` (oro/
+   inventario/diamantes) ANTES de que exista ninguna animación, exactamente
+   igual que pickFortuneChest/pickFortuneCard más arriba. La rueda solo
+   representa visualmente un resultado que ya quedó decidido y guardado, así
+   que aunque la pestaña se cierre a mitad del giro, la recompensa ya está
+   aplicada y persistida — no hay ventana en la que se pueda perder o
+   duplicar un premio. */
+const FORTUNE_WHEEL_LABEL_RADIUS_PX = 78; // debe calzar con el diámetro fijo (220px) de .fortune-wheel-frame en main.css
+let fortuneWheelBusy = false; // bloqueo de ejecución — nunca dos giros a la vez ni doble clic
+
+function fortuneWheelBackgroundGradient(){
+  const n = FORTUNE_WHEEL_REWARDS.length;
+  const segAngle = 360 / n;
+  const stops = FORTUNE_WHEEL_REWARDS.map((reward, i)=>{
+    const color = FORTUNE_WHEEL_RARITY_COLORS[reward.rarity] || FORTUNE_WHEEL_RARITY_COLORS.common;
+    return `${color} ${i*segAngle}deg ${(i+1)*segAngle}deg`;
+  }).join(", ");
+  return `conic-gradient(from 0deg, ${stops})`;
+}
+
+function renderFortuneWheelView(){
+  const dial = $("fortuneWheelDial");
+  // Si quedó girada de un giro anterior en esta misma sesión (segundo intento),
+  // se reinicia SIN animar antes de volver a mostrarse — nunca "se desenrosca" a la vista.
+  dial.style.transition = "none";
+  dial.style.transform = "rotate(0deg)";
+  void dial.offsetWidth;
+  dial.style.transition = "";
+  dial.style.background = fortuneWheelBackgroundGradient();
+
+  dial.querySelectorAll(".fortune-wheel-label").forEach(el=> el.remove());
+  const segAngle = 360 / FORTUNE_WHEEL_REWARDS.length;
+  FORTUNE_WHEEL_REWARDS.forEach((reward, i)=>{
+    const centerAngle = i*segAngle + segAngle/2;
+    const label = document.createElement("div");
+    label.className = "fortune-wheel-label";
+    // rotar al ángulo del segmento -> empujar hacia afuera -> des-rotar el
+    // texto en sí (para que quede horizontal y legible, no en diagonal).
+    label.style.transform = `rotate(${centerAngle}deg) translateY(-${FORTUNE_WHEEL_LABEL_RADIUS_PX}px) rotate(${-centerAngle}deg)`;
+    label.innerHTML = `<span class="fortune-wheel-label-icon" aria-hidden="true">${reward.icon}</span><span class="fortune-wheel-label-text">${reward.label}</span>`;
+    dial.appendChild(label);
+  });
+
+  const spinBtn = $("btnFortuneWheelSpin");
+  spinBtn.textContent = fortuneCurrentAttemptKind === "free" ? "🎲 Girar gratis" : "🎲 Girar nuevamente";
+  spinBtn.disabled = false;
+  spinBtn.onclick = spinFortuneWheel;
+  $("btnFortuneWheelBack").disabled = false;
+  $("btnCloseFortuneHall").disabled = false;
+  fortuneWheelBusy = false;
+}
+
+/** Ángulo final de rotación del dial para que el centro del segmento
+ *  `selectedIndex` quede exactamente bajo el marcador fijo (arriba, 0°),
+ *  con 5-8 vueltas completas de más y una pequeña variación dentro del
+ *  propio segmento (nunca cruza a un segmento vecino — margen de seguridad
+ *  del 32% del ancho del segmento a cada lado del centro). */
+function computeFortuneWheelFinalRotation(selectedIndex, rng = Math.random){
+  const segmentAngle = 360 / FORTUNE_WHEEL_REWARDS.length;
+  const segmentCenter = selectedIndex * segmentAngle + segmentAngle / 2;
+  const { minRotations, maxRotations } = FORTUNE_WHEEL_CONFIG;
+  const extraRotations = minRotations + Math.floor(rng() * (maxRotations - minRotations + 1));
+  const maxSafeVariation = segmentAngle * 0.32;
+  const variation = (rng() * 2 - 1) * maxSafeVariation;
+  return extraRotations * 360 + (360 - segmentCenter) + variation;
+}
+
+function spinFortuneWheel(){
+  if(fortuneWheelBusy) return;
+  fortuneWheelBusy = true;
+  const gameId = fortuneActiveGameId;
+
+  // "Durante el giro: deshabilitar todos los botones... no permitir cerrar la
+  // ruleta accidentalmente" (pedido explícito).
+  $("btnFortuneWheelSpin").disabled = true;
+  $("btnFortuneWheelBack").disabled = true;
+  $("btnCloseFortuneHall").disabled = true;
+
+  // 1) Sortear -> 2) aplicar YA (nunca depende de la animación) -> 3) recién
+  // ahí calcular a qué segmento visual corresponde y animar hasta ahí.
+  const reward = rollFortuneWheelReward({ classKey: player.classKey, level: player.level });
+  const applied = applyFortuneHallReward(reward);
+  refreshHud();
+  saveGame();
+  if(fortuneCurrentAttemptKind === "free") fortuneHallService.consumeFreeAttempt(gameId);
+  else fortuneHallService.consumePremiumAttempt(gameId);
+
+  const selectedIndex = Math.max(0, FORTUNE_WHEEL_REWARDS.findIndex(r=> r.id === reward.segmentId));
+  const finalRotation = computeFortuneWheelFinalRotation(selectedIndex);
+  $("fortuneWheelDial").style.transform = `rotate(${finalRotation}deg)`;
+
+  setTimeout(()=>{
+    audioManager.playSfx("GOLD");
+    if(navigator.vibrate) navigator.vibrate(reward.category==="equipment" ? [40,30,70] : 45);
+    showFortuneRewardPopup(applied);
+    setTimeout(()=>{
+      $("btnCloseFortuneHall").disabled = false;
+      finishFortuneMinigameTurn(gameId);
+    }, FORTUNE_ANIMATION_MS.popupReadMs);
+  }, FORTUNE_WHEEL_CONFIG.spinDurationMs);
+}
+
+/* ---------- "La fortuna todavía puede sonreírte…" ---------- */
+function openFortuneSecondChancePrompt(gameId){
+  fortuneActiveGameId = gameId;
+  $("fortuneHallTileRow").classList.add("hidden");
+  $("fortuneChestView").classList.add("hidden");
+  $("fortuneCardsView").classList.add("hidden");
+  $("fortuneWheelView").classList.add("hidden");
+  renderFortuneSecondChancePrompt(gameId);
+  $("fortuneSecondChance").classList.remove("hidden");
+}
+
+function renderFortuneSecondChancePrompt(gameId){
+  const def = getFortuneMinigameDef(gameId);
+  const adBtn = $("btnFortuneSecondChanceAd");
+  const diamondBtn = $("btnFortuneSecondChanceDiamonds");
+
+  const ui = adsService.getPlacementUiState(def.adPlacement, {});
+  applyAdButtonUiState(adBtn, ui, "Ver anuncio");
+  adsService.preloadPlacement(def.adPlacement, {});
+
+  const canAffordDiamonds = (player.crystals||0) >= SECOND_CHANCE_DIAMOND_COST;
+  diamondBtn.disabled = !canAffordDiamonds;
+  diamondBtn.classList.toggle("is-disabled", !canAffordDiamonds);
+  diamondBtn.textContent = `💎 Gastar ${SECOND_CHANCE_DIAMOND_COST} diamantes`;
+
+  adBtn.onclick = ()=> handleFortuneSecondChanceAd(gameId);
+  diamondBtn.onclick = ()=> handleFortuneSecondChanceDiamonds(gameId);
+  $("btnFortuneSecondChanceCancel").onclick = ()=>{
+    // Cancelar NO bloquea el minijuego — sigue SECOND_CHANCE_AVAILABLE, así que
+    // reabrir el Salón más tarde el mismo día todavía ofrece la segunda oportunidad
+    // (pedido explícito: "sin ventanas insistentes").
+    $("fortuneSecondChance").classList.add("hidden");
+    returnToFortuneTiles();
+  };
+}
+
+let fortuneSecondChanceInFlight = false;
+async function handleFortuneSecondChanceAd(gameId){
+  if(fortuneSecondChanceInFlight) return;
+  const def = getFortuneMinigameDef(gameId);
+  const ui = adsService.getPlacementUiState(def.adPlacement, {});
+  if(ui.state !== "READY") return;
+  fortuneSecondChanceInFlight = true;
+  const adBtn = $("btnFortuneSecondChanceAd");
+  adBtn.disabled = true;
+  const label = adBtn.querySelector(".ad-btn-label");
+  if(label) label.textContent = "Reproduciendo anuncio…";
+  try{
+    const res = await adsService.requestReward(def.adPlacement, {});
+    if(res.ok){
+      await adsService.confirmRewardApplied(res.transactionId);
+      $("fortuneSecondChance").classList.add("hidden");
+      startFortuneMinigamePlay(gameId, "premium");
+    }
+  } finally {
+    fortuneSecondChanceInFlight = false;
+    if(!$("fortuneSecondChance").classList.contains("hidden")) renderFortuneSecondChancePrompt(gameId);
+  }
+}
+
+function handleFortuneSecondChanceDiamonds(gameId){
+  if((player.crystals||0) < SECOND_CHANCE_DIAMOND_COST) return;
+  player.crystals -= SECOND_CHANCE_DIAMOND_COST;
+  refreshHud();
+  saveGame();
+  $("fortuneSecondChance").classList.add("hidden");
+  startFortuneMinigamePlay(gameId, "premium");
+}
+
+$("btnFortune").onclick = openFortuneHall;
+$("btnCloseFortuneHall").onclick = closeFortuneHall;
+$("btnFortuneChestBack").onclick = returnToFortuneTiles;
+$("btnFortuneCardsBack").onclick = returnToFortuneTiles;
+$("btnFortuneWheelBack").onclick = returnToFortuneTiles;
 
 /* ============================================================
    1. PANTALLA DE SELECCIÓN DE CLASE
@@ -4142,6 +4690,8 @@ $("btnStart").onclick = async ()=>{
   await adventurerContractsService.init();
   updateContractButton();
   syncContractTurnInMarker();
+  await fortuneHallService.init();
+  updateFortuneHallButton();
 };
 
 /** Recompensa por jugar cada día: +50 de oro gratis la primera vez que abres el juego en el día. */
@@ -4557,6 +5107,8 @@ async function initContinueScreen(){
       await adventurerContractsService.init();
       updateContractButton();
       syncContractTurnInMarker();
+      await fortuneHallService.init();
+      updateFortuneHallButton();
       // si cerraste la app a mitad de una corrida de mazmorra, al volver retoma el MISMO piso
       // (la secuencia de eventos ya sorteada vive en player.activeDungeonRun) en vez de perderla.
       if(player.activeDungeonRun){

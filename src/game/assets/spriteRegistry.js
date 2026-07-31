@@ -227,6 +227,10 @@ export const ESPADA_LUNAR_ICON_PATH = "/assets/sprites/items/espada-lunar.png";
 export const POTION_SMALL_ICON_PATH = "/new_elements/pocion-pequena.png";
 export const POTION_MANA_ICON_PATH = "/new_elements/pocion-mana.png";
 export const ELIXIR_MAYOR_ICON_PATH = "/new_elements/elixir-mayor.png";
+/** Ilustraciones reales del Cofre del Aventurero (Salón de la Fortuna), cerrado/abierto —
+ *  reemplazan el emoji genérico usado antes (ver renderFortuneChestRow/pickFortuneChest en main.js). */
+export const COFRE_CLOSED_ICON_PATH = "/new_elements/cofre.png";
+export const COFRE_OPEN_ICON_PATH = "/new_elements/cofre_abierto.png";
 /** Ilustración del portal de cada mazmorra, usada en vez del emoji genérico en su marcador del mapa —
  *  clave = dungeon.id (game/config/dungeons.js), así una mazmorra nueva solo agrega una fila acá. */
 export const DUNGEON_PORTAL_SPRITES = {

@@ -26,6 +26,7 @@ export const ADS_STORAGE_KEY = "rpgGo.ads.v1";
 export const AD_PLACEMENTS = Object.freeze([
   "BATTLE_REVIVE", "POST_BATTLE_GOLD_BONUS", "DAILY_AD_CHEST",
   "DAILY_SECOND_CHANCE", "BLACKSMITH_TIME_REDUCTION", "EXPLORATION_BONUS", "CONTRACT_BONUS",
+  "FORTUNE_CHEST_SECOND_TRY", "FORTUNE_CARDS_SECOND_TRY", "FORTUNE_WHEEL_SECOND_TRY",
 ]);
 
 /** Fase 1 — los únicos 3 que de verdad se ofrecen al jugador en esta entrega. */
@@ -120,6 +121,25 @@ export const PLACEMENT_CONFIG = Object.freeze({
     rewardType: "CONTRACT_REWARD_BONUS", requiresInternet: true, preloadStrategy: "NONE",
     analyticsName: "contract_bonus",
   }),
+  // --- Salón de la Fortuna — un placement POR minijuego (no se reutiliza
+  // DAILY_SECOND_CHANCE de arriba a propósito: cada minijuego debe poder
+  // ofrecer su propio segundo intento de forma independiente del otro, y un
+  // placement compartido con dailyLimit:1 se lo impediría). */
+  FORTUNE_CHEST_SECOND_TRY: Object.freeze({
+    enabled: true, dailyLimit: 1, sessionLimit: 1, cooldownSeconds: 0,
+    rewardType: "SECOND_ATTEMPT", requiresInternet: true, preloadStrategy: "ON_PANEL_OPEN",
+    analyticsName: "fortune_chest_second_try",
+  }),
+  FORTUNE_CARDS_SECOND_TRY: Object.freeze({
+    enabled: true, dailyLimit: 1, sessionLimit: 1, cooldownSeconds: 0,
+    rewardType: "SECOND_ATTEMPT", requiresInternet: true, preloadStrategy: "ON_PANEL_OPEN",
+    analyticsName: "fortune_cards_second_try",
+  }),
+  FORTUNE_WHEEL_SECOND_TRY: Object.freeze({
+    enabled: true, dailyLimit: 1, sessionLimit: 1, cooldownSeconds: 0,
+    rewardType: "SECOND_ATTEMPT", requiresInternet: true, preloadStrategy: "ON_PANEL_OPEN",
+    analyticsName: "fortune_wheel_second_try",
+  }),
 });
 
 export const GLOBAL_LIMITS = Object.freeze({
@@ -164,6 +184,16 @@ export const SERVER_SIDE_VERIFICATION = Object.freeze({
 
 export const HISTORY_MAX_ENTRIES = 50;
 export const MAX_PROCESSED_TRANSACTION_IDS = 200;
+
+/** ⚠️ SOLO PARA PROBAR EN DESARROLLO — con esto en `true`, adsService usa
+ *  SIEMPRE MockAdsProvider (ver mockAdsProvider.js) en vez de resolver
+ *  AdMob real / NoOpAdsProvider según la plataforma. Sin esto, "Ver
+ *  anuncio" nunca aparece disponible en el navegador (web) porque no hay
+ *  Capacitor nativo — con el mock, el anuncio "se completa" al toque, para
+ *  poder probar el flujo de segunda oportunidad (Salón de la Fortuna,
+ *  Cofre del patrocinador, revivir, etc.) sin un dispositivo Android.
+ *  Volver a `false` antes de publicar — en producción esto NUNCA va en `true`. */
+export const DEV_FORCE_MOCK_ADS = true;
 
 export const DEBUG = Object.freeze({
   verboseLogging: !IS_PRODUCTION,
