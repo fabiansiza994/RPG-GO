@@ -202,7 +202,25 @@ export const ROTATING_WEAPON_POOL = [
     bonuses:{atk:9, def:5}, proc:null, desc:"+9 ATQ, +5 DEF · un berserker que también aguanta golpes"},
 ];
 
+/** Nivel de mejora hasta el que se paga solo con oro (ver upgradeCost en main.js). A partir de acá
+ *  no es un tope duro — se puede seguir mejorando (upgradeLevel no tiene límite superior), pero
+ *  cada nivel extra además pide diamantes: ver EQUIP_UPGRADE_DIAMOND_STEP/upgradeDiamondCost. */
 export const EQUIP_UPGRADE_MAX = 5;
+/** Diamantes que pide el primer nivel de mejora más allá de EQUIP_UPGRADE_MAX (+6), y cuánto sube
+ *  ese costo por cada nivel adicional después de ese — pedido explícito: "empezando con 5 de
+ *  diamantes y así vas incrementando". Mismo criterio lineal que ya usa upgradeCost() con el oro. */
+export const EQUIP_UPGRADE_DIAMOND_STEP = 5;
+/** Cuántos niveles más allá de EQUIP_UPGRADE_MAX se pueden mejorar con oro+diamantes SIN riesgo
+ *  (pedido explícito: "7 veces más" — o sea del +6 al +12). El nivel siguiente a eso (el 8vo
+ *  intento extra, +13) es donde arranca el riesgo de que la pieza no lo resista — ver
+ *  EQUIP_UPGRADE_RISK_START_CHANCE/_STEP y upgradeRiskChance() en main.js. */
+export const EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS = 7;
+/** Probabilidad de que la mejora falle y la pieza vuelva a +0 (pierde todos los niveles ganados,
+ *  pero NO se destruye — sigue equipada) en el primer nivel arriesgado (+13) — pedido explícito:
+ *  "un 30%". Sube EQUIP_UPGRADE_RISK_STEP por cada nivel arriesgado adicional, sin techo (+13=30%,
+ *  +14=35%, +15=40%...). El oro/diamantes de ese intento se gastan igual, falle o no. */
+export const EQUIP_UPGRADE_RISK_START_CHANCE = 0.30;
+export const EQUIP_UPGRADE_RISK_STEP = 0.05;
 
 export const ATTR_DEFS = [
   {key:"maxHp", label:"Vida", emoji:"❤️", per:4},
@@ -214,16 +232,16 @@ export const ATTR_DEFS = [
 ];
 
 export const SHOP_CATEGORIES = [
-  {key:"weekly",    label:"🌟 Oferta Semanal", test:it=> it.isWeeklyOffer},
-  {key:"weapon",    label:"Armas",           test:it=> it.slot==="weapon" && !it.isWeeklyOffer},
-  {key:"offhand",   label:"Mano secundaria", test:it=> it.slot==="offhand", classOnly:["berserker","guerrero"]},
-  {key:"armor",     label:"Armaduras",       test:it=> it.slot==="armor"},
-  {key:"helmet",    label:"Cascos",          test:it=> it.slot==="helmet"},
-  {key:"boots",     label:"Botas",           test:it=> it.slot==="boots"},
-  {key:"accessory", label:"Accesorios",      test:it=> it.slot==="accessory" && it.type!=="book"},
-  {key:"books",     label:"📖 Libros",        test:it=> it.type==="book", classOnly:["mago"]},
-  {key:"potion",    label:"Pociones",        test:it=> it.type==="heal"||it.type==="mana"},
-  {key:"pets",      label:"🐾 Mascotas",     test:it=> it.type==="pet_item", requiresPet:true},
+  {key:"weekly",    label:"Oferta Semanal", icon:"🌟", test:it=> it.isWeeklyOffer},
+  {key:"weapon",    label:"Armas",           icon:"⚔️", test:it=> it.slot==="weapon" && !it.isWeeklyOffer},
+  {key:"offhand",   label:"Mano secundaria", icon:"🗡️", test:it=> it.slot==="offhand", classOnly:["berserker","guerrero"]},
+  {key:"armor",     label:"Armaduras",       icon:"🛡️", test:it=> it.slot==="armor"},
+  {key:"helmet",    label:"Cascos",          icon:"🪖", test:it=> it.slot==="helmet"},
+  {key:"boots",     label:"Botas",           icon:"👢", test:it=> it.slot==="boots"},
+  {key:"accessory", label:"Accesorios",      icon:"💍", test:it=> it.slot==="accessory" && it.type!=="book"},
+  {key:"books",     label:"Libros",          icon:"📖", test:it=> it.type==="book", classOnly:["mago"]},
+  {key:"potion",    label:"Pociones",        icon:"🧪", test:it=> it.type==="heal"||it.type==="mana"},
+  {key:"pets",      label:"Mascotas",        icon:"🐾", test:it=> it.type==="pet_item", requiresPet:true},
   // Las Gemas/Núcleos que vivían acá se sacaron del juego (ver ITEM_TABLE) — la Carta de Captura
   // (antes en una categoría oculta de pruebas, liberada acá con precio alto: 150.000 oro en el
   // ítem, ver TEST_SHOP_ITEMS, para que siga siendo un lujo caro y no un atajo barato a la captura
@@ -231,7 +249,7 @@ export const SHOP_CATEGORIES = [
   // categoría. Base Personal y los Picos, en cambio, son tarjetas fijas propias (#baseShopCard/
   // #pickaxeShopCard/#pickaxeTierRow en index.html, no ítems de ITEM_TABLE) que se muestran/ocultan
   // junto con ESTA categoría — ver updateBaseAndPickaxeCardsVisibility() en main.js.
-  {key:"special",   label:"🎴 Objetos especiales", test:it=> it.type==="capture_card"},
+  {key:"special",   label:"Especiales",      icon:"🎴", test:it=> it.type==="capture_card"},
 ];
 
 // `requiredClass` (warrior/archer/mage/berserker, en inglés — pedido explícito del rediseño de
@@ -251,4 +269,5 @@ export const GIFT_CODES = {
   "SHOWMETHEMONEY": {type:"gold", amount:500},
   "GIVEMETHEPOWER": {type:"weapon"},
   "CAPTORS": {type:"capture_card", reusable:true},
+  "GETALLFEPLS": {type:"material", materialId:"iron", amount:500},
 };

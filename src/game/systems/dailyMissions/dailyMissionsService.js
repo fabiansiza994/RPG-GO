@@ -29,8 +29,9 @@ export function createDailyMissionsService({
   getPlayerLevel = ()=> 1,
   onDailyReset,
   onMissionsCompleted,
+  onCorruptedState, // opcional: (reason)=>void — el guardado local no se pudo leer y se reinició desde cero
 } = {}){
-  const repository = createDailyMissionsRepository(storage || createInMemoryStorage());
+  const repository = createDailyMissionsRepository(storage || createInMemoryStorage(), { onDiscarded: onCorruptedState });
   let root = null;
   let initPromise = null;
   let resetTimer = null;

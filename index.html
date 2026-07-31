@@ -50,14 +50,14 @@
 </div>
 
 <div id="wildEncounterFlash" class="hidden"></div>
+<div id="lvupCloseFlash"></div>
 <div id="mapInnerFrame"></div>
-<div id="mapLightBeam"><div class="beam-rays"><span></span><span></span><span></span></div><div class="beam-spot"></div><div class="beam-cloud"></div></div>
+<div id="mapLightBeam"><div class="beam-rays"><span></span><span></span><span></span></div><div class="beam-spot"></div></div>
 <div id="updateBanner" class="hidden">
   🔄 Hay una nueva versión disponible. <button id="btnReloadUpdate">Actualizar ahora</button>
 </div>
 <div id="weatherEffects" class="hidden">
   <div id="weatherSun"></div>
-  <div id="weatherClouds"></div>
   <div id="weatherRain"></div>
   <div id="weatherSnow"></div>
   <div id="weatherWaterBoost"></div>
@@ -147,9 +147,6 @@
     <div class="hfp-numbers"><span id="healFeedbackBefore">0</span> → <span id="healFeedbackAfter">0</span> <span class="hfp-gain" id="healFeedbackGain"></span></div>
   </div>
 </div>
-<div class="shadow-wolf-dialogue" id="shadowWolfDialoguePopup">
-  <span class="swd-icon" id="shadowWolfDialogueIcon">🐺</span><span class="swd-text" id="shadowWolfDialogueText"></span>
-</div>
 
 <!-- TORRE DE CONTROL -->
 <div class="overlay hidden" id="towerOverlay">
@@ -195,6 +192,9 @@
   <button class="floating-side-btn img-btn" id="btnShop" title="Tienda"><img src="/new_elements/btn_tienda.png" alt="Tienda" draggable="false"></button>
   <button class="floating-side-btn img-btn" id="btnInv" title="Inventario"><img src="/new_elements/btn_inventario.png" alt="Inventario" draggable="false"><span class="notif-dot" id="invNotifDot"></span></button>
   <button class="floating-side-btn img-btn" id="btnRegions" title="Regiones"><img src="/new_elements/btn_regiones.png" alt="Regiones" draggable="false"></button>
+  <!--<button class="floating-side-btn" id="btnAudioMute" title="Silenciar música y efectos" aria-label="Silenciar música y efectos">
+    <span id="btnAudioMuteIcon" aria-hidden="true">🔊</span>
+  </button> -->
   <!-- El Coliseo ahora es una ubicación permanente en el mapa (Mapa Vivo, Capa 1) — ver drawColiseoMarker. -->
 </div>
 
@@ -281,6 +281,17 @@
       <div class="daily-missions-list" id="dailyMissionsList"></div>
 
       <div class="daily-mission-final-wrap" id="dailyMissionsFinalWrap"></div>
+
+      <!-- Cofre del patrocinador (rewarded ad, opcional) — separado a propósito del cofre final de
+           arriba: recompensa menor, nunca diamantes, nunca objetos legendarios. -->
+      <div class="ad-offer-card sponsor-chest-card hidden" id="sponsorChestWrap">
+        <div class="ad-offer-title">🎁 Cofre del patrocinador</div>
+        <div class="ad-offer-sub">Mira un anuncio para obtener una recompensa adicional.</div>
+        <button class="ad-offer-btn" id="btnSponsorChest" aria-label="Ver anuncio y abrir el cofre del patrocinador">
+          <span class="ad-btn-play-icon" aria-hidden="true">▶</span>
+          <span class="ad-btn-label">Ver anuncio y abrir</span>
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -415,17 +426,57 @@
   <div class="sheet shop-sheet">
     <button class="floating-close-btn" id="btnCloseShop">✕</button>
     <div class="floating-gold-badge">💰 <span id="shopGoldDisplay">0</span></div>
-    <h1 class="title">🏪 Tienda</h1>
-    <p class="sub">Compra con tus monedas, o vende lo que no necesites.</p>
+    <div class="shop-header-row">
+      <div class="shop-header-icon">🏪</div>
+      <div class="shop-header-text">
+        <h1 class="title">Tienda</h1>
+        <p class="sub">Compra con tus monedas, o vende lo que no necesites.</p>
+      </div>
+    </div>
     <div class="shop-mode-tabs">
       <button class="shop-mode-btn active" id="btnShopModeBuy">🛒 Comprar</button>
       <button class="shop-mode-btn" id="btnShopModeSell">💸 Vender</button>
+      <button class="shop-mode-btn" id="btnShopModeGlobal">🌐 Global</button>
     </div>
     <div class="gift-code-row" id="giftCodeRow">
       <input type="text" id="giftCodeInput" placeholder="🎁 Código de regalo" maxlength="30" autocapitalize="characters">
       <button class="ghostbtn" id="btnRedeemGiftCode" style="width:auto; padding:8px 14px;">Canjear</button>
     </div>
-    <div class="shop-tabs" id="shopTabs"></div>
+    <div class="shop-toolbar" id="shopFilterBar">
+      <button class="shop-toolbar-btn" id="btnShopCategoriesToggle">▦ <span id="shopCategoriesBtnLabel">Categorías</span></button>
+      <div class="shop-search-box">
+        <input type="text" id="shopSearchInput" placeholder="🔍 Buscar objeto...">
+      </div>
+      <button class="shop-toolbar-btn shop-toolbar-btn-icon" id="btnShopFiltersToggle" title="Filtros">▽<span class="shop-filter-dot hidden" id="shopFilterDot"></span></button>
+    </div>
+    <!-- Panel de categorías (desplegable, ver btnShopCategoriesToggle) — reemplaza la fila fija de
+         antes: con 10 categorías no entraba bien siempre visible en un celular angosto. -->
+    <div class="shop-panel hidden" id="shopCategoriesPanel">
+      <div class="shop-panel-head"><span>Todas las categorías</span><button id="btnCloseShopCategoriesPanel">✕</button></div>
+      <div class="shop-cat-grid" id="shopTabs"></div>
+    </div>
+    <!-- Panel de filtros/orden (desplegable, ver btnShopFiltersToggle) — mismo contenido de antes
+         (rareza + orden + vista), ahora escondido detrás de un botón en vez de siempre visible. -->
+    <div class="shop-panel hidden" id="shopFiltersPanel">
+      <div class="shop-panel-head"><span>Filtros</span><button id="btnCloseShopFiltersPanel">✕</button></div>
+      <div class="shop-filter-bar">
+        <select class="shop-filter-select" id="shopRarityFilterSelect">
+          <option value="all">Todos los raros</option>
+          <option value="common">Común</option>
+          <option value="uncommon">Poco Común</option>
+          <option value="rare">Raro</option>
+          <option value="epic">Épico</option>
+          <option value="legendary">Legendario</option>
+        </select>
+        <select class="shop-filter-select" id="shopSortSelect">
+          <option value="relevance">Ordenar: Relevancia</option>
+          <option value="price_asc">Ordenar: Precio ↑</option>
+          <option value="price_desc">Ordenar: Precio ↓</option>
+          <option value="name">Ordenar: Nombre</option>
+        </select>
+        <button class="shop-view-toggle" id="btnShopViewToggle" title="Cambiar a vista de lista">☰</button>
+      </div>
+    </div>
     <!-- Base Personal y los Picos viven acá, dentro de "🎴 Objetos especiales" (antes eran tarjetas
          fijas siempre visibles arriba de la tienda) — se muestran/ocultan junto con esa categoría,
          ver updateBaseAndPickaxeCardsVisibility() en main.js. -->
@@ -458,6 +509,53 @@
       <button class="ghostbtn" id="btnShopNextPage" style="width:auto; padding:6px 14px;">Siguiente ›</button>
     </div>
     <div class="shop-grid hidden" id="shopSellList"></div>
+
+    <!-- TIENDA GLOBAL — mercado entre jugadores (ver PN_GLOBAL_SHOP_CHANNEL en main.js). Publicás lo
+         que quieras vender (objeto o material), le ponés vos el precio/moneda, y cualquier otro
+         jugador lo puede comprar. No hay servidor real: el "precio sugerido" es solo una referencia,
+         nunca obligatoria. -->
+    <div class="hidden" id="shopGlobalPanel">
+      <div class="shop-mode-tabs" id="shopGlobalSubTabs" style="margin:10px 0 8px;">
+        <button class="shop-mode-btn active" id="btnGlobalSubExplore">🔍 Explorar</button>
+        <button class="shop-mode-btn" id="btnGlobalSubMine">📦 Mis publicaciones</button>
+        <button class="shop-mode-btn" id="btnGlobalSubPublish">➕ Publicar</button>
+      </div>
+
+      <div id="shopGlobalExploreWrap">
+        <p class="sub" style="margin:0 0 8px;">Lo que otros jugadores están vendiendo ahora mismo.</p>
+        <div class="shop-grid" id="shopGlobalExploreList"></div>
+        <div class="empty-note hidden" id="shopGlobalExploreEmpty">Todavía no hay nada publicado — ¡sé el primero!</div>
+      </div>
+
+      <div class="hidden" id="shopGlobalMineWrap">
+        <p class="sub" style="margin:0 0 8px;">Tus publicaciones activas (máx. <span id="shopGlobalMaxListings">10</span>).</p>
+        <div class="shop-grid" id="shopGlobalMyList"></div>
+        <div class="empty-note hidden" id="shopGlobalMineEmpty">No tenés nada publicado — probá la pestaña "Publicar".</div>
+      </div>
+
+      <div class="hidden" id="shopGlobalPublishWrap">
+        <div class="shop-mode-tabs" style="margin-bottom:8px;">
+          <button class="shop-mode-btn active" id="btnGlobalPublishKindItem">🎒 Objeto</button>
+          <button class="shop-mode-btn" id="btnGlobalPublishKindMaterial">🪵 Material</button>
+        </div>
+        <div id="shopGlobalPublishItemWrap">
+          <select class="shop-filter-select" id="shopGlobalPublishItemSelect" style="width:100%; margin-bottom:8px;"></select>
+        </div>
+        <div class="hidden" id="shopGlobalPublishMaterialWrap">
+          <select class="shop-filter-select" id="shopGlobalPublishMaterialSelect" style="width:100%; margin-bottom:8px;"></select>
+          <input type="number" id="shopGlobalPublishQty" min="1" placeholder="Cantidad" style="width:100%; margin-bottom:8px;">
+        </div>
+        <div class="result-prog-meta" id="shopGlobalSuggestedPrice" style="margin-bottom:8px;"></div>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <input type="number" id="shopGlobalPublishPrice" min="1" placeholder="Precio" style="flex:1;">
+          <div class="shop-mode-tabs" id="shopGlobalCurrencyTabs" style="flex:0 0 auto;">
+            <button class="shop-mode-btn active" id="btnGlobalCurrencyGold">🪙 Oro</button>
+            <button class="shop-mode-btn" id="btnGlobalCurrencyCrystals">💎 Diamantes</button>
+          </div>
+        </div>
+        <button class="primarybtn" id="btnGlobalPublishSubmit" style="width:100%;">🌐 Publicar en la Tienda Global</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -906,6 +1004,7 @@
 <div class="overlay hidden fullscreen" id="settingsOverlay">
   <div class="sheet" style="text-align:center;">
     <h1 class="title">⚙️ Ajustes</h1>
+    <br><hr><br>
     <div class="cs-account-row" id="csAccountRow">
       <span id="csAccountText">Jugando sin cuenta</span>
       <button class="cs-account-btn" id="btnAccountAction" type="button">Iniciar sesión</button>
@@ -914,6 +1013,28 @@
       <span>Guardado</span>
       <button class="cs-account-btn" id="btnExportSave" type="button">⬇️ Exportar</button>
       <button class="cs-account-btn" id="btnImportSave" type="button">⬆️ Importar</button>
+    </div>
+    <div class="cs-account-row hidden" id="csAdsPrivacyRow" title="Cambiar tu elección de consentimiento de anuncios">
+      <span>Privacidad</span>
+      <button class="cs-account-btn" id="btnAdsPrivacyOptions" type="button">Opciones de privacidad de anuncios</button>
+    </div>
+    <div class="eyebrow" style="margin-top:12px;">🔊 Sonido</div>
+    <div class="cs-audio-section" id="csAudioSection">
+      <div class="cs-volume-row">
+        <label for="volMapSlider">🗺️ Mapa</label>
+        <input type="range" id="volMapSlider" min="0" max="100" step="5">
+        <span class="cs-volume-pct" id="volMapPct"></span>
+      </div>
+      <div class="cs-volume-row">
+        <label for="volBattleSlider">⚔️ Batalla</label>
+        <input type="range" id="volBattleSlider" min="0" max="100" step="5">
+        <span class="cs-volume-pct" id="volBattlePct"></span>
+      </div>
+      <div class="cs-volume-row">
+        <label for="volShopSlider">🛒 Tienda</label>
+        <input type="range" id="volShopSlider" min="0" max="100" step="5">
+        <span class="cs-volume-pct" id="volShopPct"></span>
+      </div>
     </div>
     <button class="ghostbtn" id="btnCloseSettings" style="margin-top:14px;">Cerrar</button>
   </div>
@@ -1049,6 +1170,15 @@
       </div>
     </div>
     <div id="packEnemyPanels" class="hidden" style="display:flex; gap:6px; padding:0 14px 8px 60px; flex-wrap:wrap; justify-content:flex-end;"></div>
+    <!-- Diálogo del Lobo Sombrío/Ladrón Errante — pedido explícito: que nunca tape al personaje.
+         Vive en el FLUJO NORMAL del documento (no position:fixed/absolute) entre la barra de vida
+         del enemigo y el escenario, así queda estructuralmente arriba de él SIEMPRE, sin ningún
+         cálculo de posición ni condición de carrera con el sistema de perspectiva de combate (ver
+         showShadowWolfDialogue en main.js — un intento anterior con posición calculada por JS
+         entraba en carrera con positionEntityOnStage y a veces no llegaba a mostrarse). -->
+    <div class="shadow-wolf-dialogue" id="shadowWolfDialoguePopup">
+      <span class="swd-icon" id="shadowWolfDialogueIcon">🐺</span><span class="swd-text" id="shadowWolfDialogueText"></span>
+    </div>
     <div class="stage">
       <div class="ally-side">
         <div class="perspective-anchor" id="spritePlayerAnchor"><div class="sprite" id="spritePlayer">🗡️</div></div>
@@ -1118,14 +1248,55 @@
 
 <!-- LEVEL UP -->
 <div class="overlay hidden" id="levelupOverlay">
-  <div class="sheet">
-    <div class="levelup-anim">
-      <div class="eyebrow">¡Subiste de nivel!</div>
-      <div class="lv-badge" id="lvBadge">Nv. 2</div>
+  <div class="sheet lvup-sheet" id="lvupSheet">
+    <div class="lvup-ornaments"></div>
+    <div class="lvup-beam"></div>
+    <div class="lvup-particles" id="lvupParticles">
+      <span class="lvup-particle p1">✦</span><span class="lvup-particle p2">✧</span>
+      <span class="lvup-particle p3">✦</span><span class="lvup-particle p4">✧</span>
+      <span class="lvup-particle p5">✦</span><span class="lvup-particle p6">✧</span>
+      <span class="lvup-particle p7">✦</span><span class="lvup-particle p8">✧</span>
     </div>
-    <div id="statDiffList"></div>
+
+    <div class="lvup-header">
+      <div class="lvup-eyebrow">✨ ¡NIVEL ALCANZADO! ✨</div>
+      <div class="lvup-badge-wrap">
+        <div class="lvup-badge-rays"></div>
+        <div class="lvup-badge-halo"></div>
+        <div class="lvup-badge">
+          <div class="lvup-badge-label">NIVEL</div>
+          <div class="lvup-badge-num" id="lvBadge">2</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lvup-divider"><span>TUS ATRIBUTOS MEJORARON</span></div>
+
+    <div id="statDiffList" class="lvup-stat-list"></div>
+
     <div id="newMoveArea"></div>
-    <button class="primarybtn" id="btnLevelupClose">Continuar</button>
+
+    <div class="lvup-reward" id="lvupRewardBox">
+      <div class="lvup-reward-head">🎁 RECOMPENSA</div>
+      <div class="lvup-reward-body">
+        <div class="lvup-reward-icon">🧬</div>
+        <div class="lvup-reward-text">
+          <div class="lvup-reward-amount" id="lvupRewardAmount">+5</div>
+          <div class="lvup-reward-label">Puntos de atributo <span class="lvup-reward-sub">— distribúyelos en Atributos</span></div>
+        </div>
+        <div class="lvup-reward-glowicon">⬆️</div>
+      </div>
+      <div class="lvup-reward-bonus hidden" id="lvupRewardBonus">💍 ¡Nuevo espacio de accesorio desbloqueado!</div>
+      <div class="lvup-power-row">
+        <span class="lvup-power-label">🏆 Poder</span>
+        <span class="lvup-power-val" id="lvupPowerBefore">0</span>
+        <span class="lvup-power-arrow">➜</span>
+        <span class="lvup-power-val lvup-power-after" id="lvupPowerAfter">0</span>
+        <span class="lvup-power-diff" id="lvupPowerDiff">+0</span>
+      </div>
+    </div>
+
+    <button class="lvup-btn" id="btnLevelupClose">⚔ CONTINUAR LA AVENTURA ⚔</button>
   </div>
 </div>
 
@@ -1335,6 +1506,25 @@
   </div>
 </div>
 
+<!-- Pantalla de derrota — 3 opciones siempre disponibles (anuncio / diamante / volver al mapa),
+     nunca se revive solo por cerrar el anuncio. Ver offerRevive()/handleReviveWithAd() en main.js. -->
+<div class="overlay hidden" id="battleReviveOverlay">
+  <div class="sheet revive-sheet" style="text-align:center">
+    <div class="revive-emoji" aria-hidden="true">💀</div>
+    <h1 class="title">Has sido derrotado</h1>
+    <p class="sub">Elige cómo continuar.</p>
+    <button class="ad-offer-btn" id="btnReviveAd" aria-label="Ver anuncio y revivir">
+      <span class="ad-btn-play-icon" aria-hidden="true">▶</span>
+      <span class="ad-btn-label">Ver anuncio y revivir</span>
+    </button>
+    <p class="sub revive-btn-sub">Revive con toda tu vida · 1 vez por combate</p>
+    <button class="ghostbtn revive-diamond-btn" id="btnReviveDiamond">
+      <span aria-hidden="true">💎</span> <span class="revive-diamond-label">Revivir usando 5 diamantes</span>
+    </button>
+    <button class="ghostbtn" id="btnReviveDecline" style="margin-top:6px;">Volver al mapa</button>
+  </div>
+</div>
+
 <div class="overlay hidden" id="resultOverlay">
   <div class="sheet" style="text-align:center">
     <div style="font-size:46px" id="resultEmoji">🏆</div>
@@ -1360,6 +1550,16 @@
       <div class="result-achievements hidden" id="resultAchievements"></div>
     </div>
     <button class="ghostbtn hidden" id="btnBoostResultXp" style="margin-bottom:8px;">💎 Duplicar la XP de este combate</button>
+    <!-- Bonus del aventurero (rewarded ad) — opcional, nunca obligatorio; "Continuar" (btnResultClose)
+         siempre funciona sin verlo, la recompensa base ya se entregó antes de mostrar esto. -->
+    <div class="ad-offer-card hidden" id="adGoldBonusWrap">
+      <div class="ad-offer-title">🎬 Bonus del aventurero</div>
+      <div class="ad-offer-sub" id="adGoldBonusAmount">Duplica el oro que ganaste en este combate.</div>
+      <button class="ad-offer-btn" id="btnAdGoldBonus" aria-label="Ver anuncio y duplicar el oro">
+        <span class="ad-btn-play-icon" aria-hidden="true">▶</span>
+        <span class="ad-btn-label">Ver anuncio y duplicar el oro</span>
+      </button>
+    </div>
     <button class="primarybtn" id="btnResultClose">Volver al mapa</button>
   </div>
 </div>

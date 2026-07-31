@@ -4,3 +4,10 @@ dist.zip
 .DS_Store
 .wrangler/
 .dev.vars
+
+# Variables de entorno con Ad Unit IDs de producción (VITE_ADMOB_*, ver ads.config.js) —
+# nunca deben commitearse. .env.example sí se commitea (no tiene valores reales).
+.env
+.env.local
+.env.production
+.env.qa

@@ -1,4 +1,4 @@
-/* ============================================================
+﻿/* ============================================================
    CONTRATO DEL AVENTURERO — catálogo de tipos y plantillas
    ------------------------------------------------------------
    Solo DATOS (mismo criterio que dailyMissionTemplates.js) — sin lógica de
@@ -84,6 +84,10 @@ export const TURN_IN_OBJECTIVE_TYPES = Object.freeze(["RETURN_TO_NPC"]);
  */
 
 /** @type {AdventurerContractTemplate[]} */
+// Pedido explícito: que completar misiones se sienta como la mejor forma de subir de nivel — la
+// XP de `reward.experience` en cada plantilla se multiplicó x2 respecto al diseño original (ver
+// mismo criterio en dailyMissions.config.js y progression.js, con multiplicadores más altos porque
+// partían de una base bastante menor comparada con el combate normal).
 export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
   {
     id: "contract_forest_threat",
@@ -101,7 +105,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "RETURN_TO_NPC", title: "Regresa con el Maestro del Gremio", description: "Regresa con el Maestro del Gremio.", target: 1 },
     ],
     turnIn: { turnInNpcId: "guild_master", turnInLabel: "Maestro del Gremio" },
-    reward: { gold: 1000, experience: 300, diamonds: 2, reputation: 10 },
+    reward: { gold: 1000, experience: 600, diamonds: 2, reputation: 10 },
   },
   {
     id: "contract_blacksmith_request",
@@ -119,7 +123,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       // "Entrega los materiales" se resuelve abriendo la Forja (no hay NPC de mapa para el herrero) — ver BLACKSMITH_VISITED.
       { id: "o3", type: "DELIVER_ITEM", title: "Entrega los materiales", description: "Visita la Forja para entregar los materiales.", target: 1 },
     ],
-    reward: { gold: 900, experience: 250, diamonds: 0, reputation: 10, materials: [{ materialId: "iron", quantity: 6 }] },
+    reward: { gold: 900, experience: 500, diamonds: 0, reputation: 10, materials: [{ materialId: "iron", quantity: 6 }] },
   },
   {
     id: "contract_unsafe_roads",
@@ -137,7 +141,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "RETURN_TO_NPC", title: "Regresa con el Capitán", description: "Regresa con el Capitán Aldren.", target: 1 },
     ],
     turnIn: { turnInNpcId: "captain_aldren", turnInLabel: "Capitán Aldren" },
-    reward: { gold: 1300, experience: 400, diamonds: 2, reputation: 15 },
+    reward: { gold: 1300, experience: 800, diamonds: 2, reputation: 15 },
   },
   {
     id: "contract_violet_eyed_crow",
@@ -157,7 +161,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "RETURN_TO_NPC", title: "Regresa con el cliente", description: "Regresa con el cliente.", target: 1 },
     ],
     turnIn: { turnInNpcId: "bounty_client", turnInLabel: "Cazarrecompensas" },
-    reward: { gold: 1600, experience: 500, diamonds: 3, reputation: 20, chestId: "uncommon" },
+    reward: { gold: 1600, experience: 1000, diamonds: 3, reputation: 20, chestId: "uncommon" },
   },
   {
     id: "contract_fangs_for_alchemist",
@@ -175,7 +179,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "RETURN_TO_NPC", title: "Entrega los colmillos", description: "Entrega los colmillos al alquimista.", target: 1 },
     ],
     turnIn: { turnInNpcId: "alchemist", turnInLabel: "Alquimista" },
-    reward: { gold: 1400, experience: 450, diamonds: 0, reputation: 20, materials: [{ materialId: "colmillo_lobo", quantity: 2 }] },
+    reward: { gold: 1400, experience: 900, diamonds: 0, reputation: 20, materials: [{ materialId: "colmillo_lobo", quantity: 2 }] },
   },
   {
     id: "contract_tower_under_siege",
@@ -193,7 +197,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "RETURN_TO_NPC", title: "Regresa con el Capitán", description: "Regresa con el Capitán.", target: 1 },
     ],
     turnIn: { turnInNpcId: "captain_aldren", turnInLabel: "Capitán Aldren" },
-    reward: { gold: 2500, experience: 700, diamonds: 5, reputation: 35, chestId: "rare" },
+    reward: { gold: 2500, experience: 1400, diamonds: 5, reputation: 35, chestId: "rare" },
   },
   {
     id: "contract_echo_in_ruins",
@@ -210,7 +214,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o2", type: "USE_CAMPFIRE", title: "Usa una fogata", description: "Usa una fogata para curarte.", target: 1 },
       { id: "o3", type: "OPEN_CHEST", title: "Abre cofres", description: "Abre 2 cofres.", target: 2 },
     ],
-    reward: { gold: 1500, experience: 450, diamonds: 0, reputation: 20, materials: [{ materialId: "stone", quantity: 10 }] },
+    reward: { gold: 1500, experience: 900, diamonds: 0, reputation: 20, materials: [{ materialId: "stone", quantity: 10 }] },
   },
   {
     id: "contract_fire_for_the_forge",
@@ -227,7 +231,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o2", type: "COLLECT_RESOURCE", title: "Recolecta hierro", description: "Recolecta 8 de hierro.", target: 8, metadata: { resourceKind: "iron" } },
       { id: "o3", type: "DELIVER_ITEM", title: "Visita al herrero", description: "Visita la Forja.", target: 1 },
     ],
-    reward: { gold: 1000, experience: 300, diamonds: 0, reputation: 10, freeRepairCount: 1 },
+    reward: { gold: 1000, experience: 600, diamonds: 0, reputation: 10, freeRepairCount: 1 },
   },
   {
     id: "contract_shadows_on_the_path",
@@ -246,7 +250,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o4", type: "RETURN_TO_NPC", title: "Regresa al gremio", description: "Regresa al gremio.", target: 1 },
     ],
     turnIn: { turnInNpcId: "guild_master", turnInLabel: "Maestro del Gremio" },
-    reward: { gold: 1600, experience: 500, diamonds: 3, reputation: 20 },
+    reward: { gold: 1600, experience: 1000, diamonds: 3, reputation: 20 },
   },
   {
     id: "contract_minor_demon_hunt",
@@ -262,7 +266,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o1", type: "DEFEAT_ENEMY_TYPE", title: "Derrota Demonios Menores", description: "Derrota 5 Demonios Menores.", target: 5, metadata: { enemyName: "Demonio Menor" } },
       { id: "o2", type: "DEFEAT_SPECIFIC_ENEMY", title: "Derrota al Demonio Marcado", description: "Localiza y derrota al Demonio Marcado.", target: 1, metadata: { spawnOnActivate: "demonio_marcado" } },
     ],
-    reward: { gold: 2700, experience: 800, diamonds: 5, reputation: 40, materials: [{ materialId: "cuerno_demonio", quantity: 3 }] },
+    reward: { gold: 2700, experience: 1600, diamonds: 5, reputation: 40, materials: [{ materialId: "cuerno_demonio", quantity: 3 }] },
   },
   {
     id: "contract_forgotten_sanctuary",
@@ -278,7 +282,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o1", type: "DEFEAT_ENEMIES", title: "Despeja los alrededores", description: "Derrota 6 enemigos.", target: 6 },
       { id: "o2", type: "USE_SANCTUARY", title: "Activa el santuario", description: "Activa un santuario.", target: 1 },
     ],
-    reward: { gold: 2400, experience: 700, diamonds: 3, reputation: 35, chestId: "rare" },
+    reward: { gold: 2400, experience: 1400, diamonds: 3, reputation: 35, chestId: "rare" },
   },
   {
     id: "contract_recover_the_cargo",
@@ -298,7 +302,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "RETURN_TO_NPC", title: "Entrégalo al mercader", description: "Entrégalo al mercader.", target: 1 },
     ],
     turnIn: { turnInNpcId: "merchant", turnInLabel: "Mercader" },
-    reward: { gold: 1800, experience: 550, diamonds: 3, reputation: 25 },
+    reward: { gold: 1800, experience: 1100, diamonds: 3, reputation: 25 },
   },
   {
     id: "contract_steel_worthy_of_a_hero",
@@ -316,7 +320,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "WIN_BATTLES", title: "Gana combates", description: "Gana 3 combates.", target: 3 },
       { id: "o4", type: "DELIVER_ITEM", title: "Regresa con el herrero", description: "Visita la Forja.", target: 1 },
     ],
-    reward: { gold: 2500, experience: 750, diamonds: 5, reputation: 40, freeRepairCount: 1 },
+    reward: { gold: 2500, experience: 1500, diamonds: 5, reputation: 40, freeRepairCount: 1 },
   },
   {
     id: "contract_dark_lair",
@@ -334,7 +338,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "COMPLETE_DUNGEON_FLOOR", title: "Derrota al jefe", description: "Derrota al jefe de la mazmorra.", target: 1, metadata: { isBossFloor: true } },
       { id: "o4", type: "COMPLETE_DUNGEON", title: "Reclama el cofre final", description: "Reclama el cofre final de la mazmorra.", target: 1 },
     ],
-    reward: { gold: 4500, experience: 1200, diamonds: 10, reputation: 75, chestId: "epic" },
+    reward: { gold: 4500, experience: 2400, diamonds: 10, reputation: 75, chestId: "epic" },
   },
   {
     id: "contract_ancestral_predator",
@@ -353,7 +357,7 @@ export const ADVENTURER_CONTRACT_TEMPLATES = Object.freeze([
       { id: "o3", type: "RETURN_TO_NPC", title: "Regresa con el Maestro del Gremio", description: "Regresa con el Maestro del Gremio.", target: 1 },
     ],
     turnIn: { turnInNpcId: "guild_master", turnInLabel: "Maestro del Gremio" },
-    reward: { gold: 8000, experience: 2000, diamonds: 20, reputation: 150, chestId: "legendary" },
+    reward: { gold: 8000, experience: 4000, diamonds: 20, reputation: 150, chestId: "legendary" },
   },
 ]);
 

@@ -40,7 +40,8 @@ function freshRoot(){
   return { version: DAILY_MISSIONS_SCHEMA_VERSION, current: null, history: [], lastKnownTimestamp: Date.now() };
 }
 
-export function createDailyMissionsRepository(storage){
+export function createDailyMissionsRepository(storage, options = {}){
+  const { onDiscarded } = options; // opcional: (reason)=>void — para avisar en pantalla, no solo en consola (ver dailyMissionsService.js)
   /** Devuelve el root persistido, o un root vacío nuevo si nunca hubo nada
    *  guardado o si lo guardado está corrupto/con un esquema que no reconocemos.
    *  Nunca lanza — un problema acá jamás debe tumbar el resto del juego. */
@@ -58,10 +59,12 @@ export function createDailyMissionsRepository(storage){
       parsed = JSON.parse(raw);
     }catch(e){
       console.warn("[MISIONES DIARIAS] el guardado local no es JSON válido — se descarta y se regenera. El resto del guardado del jugador NO se toca.", e);
+      if(onDiscarded) onDiscarded("invalid_json");
       return freshRoot();
     }
     if(!isValidRoot(parsed)){
       console.warn("[MISIONES DIARIAS] el guardado local tiene una forma inesperada (versión distinta o corrupto) — se descarta y se regenera. El resto del guardado del jugador NO se toca.");
+      if(onDiscarded) onDiscarded("invalid_schema");
       return freshRoot();
     }
     return parsed;

@@ -27,11 +27,21 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- AdMob (@capacitor-community/admob) — el valor real de @string/admob_app_id se resuelve
+             en build.gradle (resValue), nunca queda un ID hardcodeado en el manifest. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="@string/admob_app_id" />
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Google Mobile Ads SDK (targetSdk 33+): identificador de publicidad para medición/frecuencia
+         de anuncios — no es un permiso de ubicación ni de datos personales. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 
     <!-- Geolocation Plugin (@capacitor/geolocation) — solo ubicación en primer plano, este juego
          no necesita rastreo en segundo plano. -->

@@ -27,6 +27,7 @@ export const CRAFT_MATERIALS = [
   {key:"piel_lobo",       label:"Piel de Lobo",            emoji:"🐺", monsterName:"Lobo Umbrío",   dropChance:0.30, min:1, max:2, sellValue:3},
   {key:"telarana_arana",  label:"Telaraña de Araña",       emoji:"🕸️", monsterName:"Araña Gigante", dropChance:0.40, min:1, max:3, sellValue:3},
   {key:"cuerno_demonio",  label:"Cuerno de Demonio Menor", emoji:"👹", monsterName:"Demonio Menor",  dropChance:0.30, min:1, max:1, sellValue:6},
+  {key:"alma_espectro",   label:"Alma de Espectro",        emoji:"👻", monsterName:"Espectro",       dropChance:0.30, min:1, max:2, sellValue:5},
 ];
 
 /** Recetas disponibles en el Herrero — arma exclusiva, solo se consigue fabricándola (no aparece
@@ -47,5 +48,15 @@ export const BLACKSMITH_RECIPES = [
     bonuses:{atk:15, spd:2}, proc:{type:"burn", chance:0.25}, nightDmgBonus:0.35,
     materials:[{key:"telarana_arana", amount:100}, {key:"wood", amount:100}, {key:"cuerno_demonio", amount:15}],
     desc:"+15 ATQ, +2 VEL · 25% de quemar al golpear, y 35% de daño extra durante la noche.",
+  },
+  {
+    // `defShred`/`stunChance` son campos genéricos (mismo criterio que `nightDmgBonus` en el Arco
+    // Demoníaco de arriba): CUALQUIER arma con estos campos aplica el efecto sola, sin hacer falta
+    // un caso especial por arma — ver applyWeaponOnHitEffects en main.js.
+    id:"craft_hacha_espectral", name:"Hacha Espectral", emoji:"🪓",
+    type:"equip", slot:"weapon", classKey:"berserker", rarity:"epic", value:650,
+    bonuses:{atk:18}, defShred:0.06, stunChance:0.2,
+    materials:[{key:"alma_espectro", amount:100}, {key:"iron", amount:100}, {key:"wood", amount:40}],
+    desc:"+18 ATQ · cada golpe desgasta un poco la DEF del rival, y puede dejarlo aturdido un turno. Forjada con almas atrapadas entre este mundo y el siguiente.",
   },
 ];

@@ -84,6 +84,10 @@ import {
   EXCLUSIVE_TABLE,
   ROTATING_WEAPON_POOL,
   EQUIP_UPGRADE_MAX,
+  EQUIP_UPGRADE_DIAMOND_STEP,
+  EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS,
+  EQUIP_UPGRADE_RISK_START_CHANCE,
+  EQUIP_UPGRADE_RISK_STEP,
   ATTR_DEFS,
   SHOP_CATEGORIES,
   SHOP_PREVIEW_LEVEL_CAP,
@@ -141,11 +145,17 @@ import {
   MAGO_BATTLE_SPRITES,
   BERSERKER_BATTLE_SPRITES,
   ARQUERO_BATTLE_SPRITES,
+  PVP_GUERRERO_BATTLE_SPRITES,
+  PVP_BERSERKER_BATTLE_SPRITES,
   CHAR_SELECT_ART,
 } from "./game/assets/spriteRegistry.js";
 import { createDailyMissionsService } from "./game/systems/dailyMissions/dailyMissionsService.js";
 import { createAdventurerContractsService } from "./game/systems/adventurerContracts/adventurerContractsService.js";
 import { REPUTATION_RANKS, CONTRACT_DURATION_MS_BY_DIFFICULTY } from "./game/config/adventurerContracts.config.js";
+import { createAdsService } from "./game/systems/ads/adsService.js";
+import { createCloudShadowManager } from "./game/systems/cloudShadows/cloudShadowManager.js";
+import { createAudioManager } from "./game/systems/audio/audioManager.js";
+import { ensureDailyMissionReminderScheduled } from "./game/systems/notifications/dailyRewardNotifications.js";
 import { gameEventBus } from "./game/systems/eventBus/gameEventBus.js";
 
 // Registro del service worker mínimo (public/sw.js) — solo existe para que el navegador considere
@@ -622,6 +632,12 @@ let incomingInvite = null;
 let shopActiveCategory = "weapon";
 let shopPage = 0;
 const SHOP_PAGE_SIZE = 10;
+// Barra de filtro/orden de la tienda (ver new_elements/shop.png de referencia) — "relevance" es el
+// orden original del catálogo (sin reordenar), el resto ordena por shopPrice()/nombre.
+let shopSortMode = "relevance";
+let shopRarityFilter = "all";
+let shopViewMode = "grid"; // "grid" (2 por fila) o "list" (1 por fila, más detalle horizontal)
+let shopSearchQuery = "";
 
 // Estas 4 variables guardan los datos del MUNDO de la ciudad detectada (Neiva por defecto, hasta que
 // se detecte otra según la posición real/simulada del jugador — ver detectCityAndLoadWorldData más abajo).
@@ -1805,9 +1821,21 @@ function renderPlayerSprite(){
   }
 }
 
-/** Devuelve el HTML del sprite de combate en su pose BASE (arma en reposo), según clase y género. */
+/** Devuelve el HTML del sprite de combate en su pose BASE (arma en reposo), según clase y género.
+ *  `mirror` identifica exactamente el caso "rival de PvP" (los únicos dos call sites que lo pasan
+ *  en true, ver renderPvpBattleUI) — NO es un espejado genérico. */
 function combatSpriteHtml(classKey, gender, mirror){
   const g = gender === "f" ? "f" : "m";
+  // Rival de PvP de Guerrero/Berserker: arte de frente DEDICADO (pvp_guerrero/pvp_berserk, ver
+  // spriteRegistry.js) — nunca se espeja (el CSS scaleX(-1) de abajo era un truco para cuando no
+  // había más remedio que reusar la pose de espalda del propio jugador; esta imagen ya está
+  // dibujada de frente, espejarla la dejaría al revés — espada en la mano equivocada, etc.).
+  if(mirror && classKey === "guerrero"){
+    return `<img src="${PVP_GUERRERO_BATTLE_SPRITES.base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-pvp-guerrero-battle="1" alt="">`;
+  }
+  if(mirror && classKey === "berserker"){
+    return `<img src="${PVP_BERSERKER_BATTLE_SPRITES.base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-pvp-berserker-battle="1" alt="">`;
+  }
   const mirrorStyle = mirror ? ' style="transform:scaleX(-1);"' : '';
   // El Guerrero (cualquier género — todavía solo llegó un set de arte, no dos) usa su propio
   // registro con presentación + secuencia de golpe en vez del par genérico base/attack.
@@ -2077,10 +2105,29 @@ const GUERRERO_DEFEND_HOLD_MS = 1000;
 // el golpe (más o menos a mitad de su animación) reaccione el jugador, en vez de las dos cosas a
 // la vez. Compartido entre las clases con pose de defensa (ver classHasDefendPose).
 const BLOCK_REACT_MS = 280;
-// Tamaño de la barra de defensa al arrancar CADA combate: un % de la vida máxima actual del
-// jugador (ver startBattle). Pedido explícito: nunca se recarga ni se cura durante el combate —
-// solo se vuelve a llenar al empezar uno nuevo. Compartido entre las clases con pose de defensa.
-const DEFENSE_BAR_PCT = 0.6;
+// La barra de defensa ya NO se gasta según el daño del golpe bloqueado — pedido explícito: que
+// SIEMPRE aguante una cantidad fija de bloqueos, sin importar qué tan fuerte pegue el enemigo.
+// Por defecto aguanta 2 golpes bloqueados (cada uno se come la mitad de la barra); el Guerrero con
+// escudo equipado (mano secundaria, ver SHIELD_BASE/player.equipment.offhand) aguanta 3 (un tercio
+// cada uno). Nunca se recarga ni se cura durante el combate — solo se vuelve a llenar al empezar
+// uno nuevo (ver startBattle).
+const DEFENSE_BAR_CHARGES_DEFAULT = 2;
+const DEFENSE_BAR_CHARGES_SHIELD = 3;
+
+/** ¿El jugador actual tiene el Escudo de Guerra equipado en su mano secundaria? Solo el Guerrero
+ *  puede llevar esta pieza (ver pushEquip("offhand","guerrero",...) en la tabla de equipo) — el
+ *  Berserker usa esa misma ranura para dagas, así que basta con mirar el classKey del ítem
+ *  equipado, no hace falta repetir el chequeo de clase del jugador acá. */
+function playerHasShieldEquipped(){
+  const offhand = player.equipment && player.equipment.offhand;
+  return !!(offhand && offhand.classKey === "guerrero");
+}
+
+/** Cuántos golpes fuertes puede bloquear el jugador este combate antes de que la barra de defensa
+ *  se agote — ver DEFENSE_BAR_CHARGES_DEFAULT/_SHIELD. */
+function defenseBarCharges(){
+  return playerHasShieldEquipped() ? DEFENSE_BAR_CHARGES_SHIELD : DEFENSE_BAR_CHARGES_DEFAULT;
+}
 
 /** Pose de escudo en alto — se dispara cuando el Guerrero bloquea con éxito un golpe fuerte usando
  *  el gesto de defensa (ver enemyTurn/resolveEnemyDirectAttack). No salta ni se desplaza, solo
@@ -2986,6 +3033,11 @@ const dailyMissionsService = createDailyMissionsService({
     if(missions.length === 1) toast(`✅ Misión completada: ${missions[0].title}`, 3200);
     else if(missions.length > 1) toast(`✅ ¡${missions.length} misiones completadas de un golpe!`, 3600);
   },
+  // Antes esto era 100% silencioso (solo un console.warn) — el jugador veía las misiones "vacías"
+  // de la nada sin ninguna pista de qué pasó. Ahora al menos se avisa en pantalla.
+  onCorruptedState: ()=>{
+    toast("⚠️ No se pudo leer tu progreso de misiones diarias guardado — se reinició.", 4500);
+  },
 });
 dailyMissionsService.subscribe(()=>{
   updateDailyMissionsButton();
@@ -3025,6 +3077,12 @@ const adventurerContractsService = createAdventurerContractsService({
   onContractExpired: ()=>{
     toast("⌛ El contrato ha vencido.", 3800);
   },
+  // Antes esto era 100% silencioso (solo un console.warn) — el jugador veía el contrato "vacío"
+  // de la nada sin ninguna pista de qué pasó. Ahora al menos se avisa en pantalla.
+  onCorruptedState: (reason)=>{
+    if(reason === "invalid_contract_only") toast("⚠️ Tu contrato activo no se pudo leer y se perdió — tu reputación e historial siguen intactos.", 4800);
+    else toast("⚠️ No se pudo leer tu progreso del Contrato del Aventurero guardado — se reinició.", 4800);
+  },
 });
 gameEventBus.subscribe((event)=> adventurerContractsService.reportEvent(event));
 adventurerContractsService.subscribe(()=>{
@@ -3033,6 +3091,131 @@ adventurerContractsService.subscribe(()=>{
   const overlay = $("adventurerContractOverlay");
   if(overlay && !overlay.classList.contains("hidden")) renderContractBoard();
 });
+
+/* ============================================================
+   PUBLICIDAD (rewarded ads) — instancia única (ver src/game/systems/ads/).
+   Clave propia (rpgGo.ads.v1), nunca player_account/player_<clase>. En web
+   (o si ADS_CONFIG.enabled es false) esto se resuelve solo a
+   NoOpAdsProvider — ningún código de acá abajo necesita preguntar "¿estoy
+   en Android?" para funcionar sin romperse.
+
+   init() se dispara UNA vez, sin esperar a que el jugador elija personaje
+   (a diferencia de Misiones Diarias/Contrato, no depende de `player`) — así
+   el consentimiento (UMP) puede resolverse en segundo plano apenas arranca
+   la app, sin bloquear la pantalla de selección de personaje ni el mapa. */
+const adsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+const adsService = createAdsService();
+adsService.init({ storage: AppStorage, getSessionId: ()=> adsSessionId });
+
+/* ============================================================
+   SOMBRAS DE NUBE — instancia única (ver src/game/systems/cloudShadows/).
+   Se inicializa desde initMap() (necesita el `map` ya creado) — ver
+   safeDrawStep("las sombras de nube", ...) más abajo. Es una capa `symbol`
+   nativa de MapLibre, nunca HTML: MapLibre la dibuja siempre por debajo de
+   cualquier marcador (jugador/NPCs/enemigos/torres), sin que haga falta
+   coordinar z-index con nada.
+   ============================================================ */
+const cloudShadowManager = createCloudShadowManager();
+
+/* ============================================================
+   AUDIO — instancia única (ver src/game/systems/audio/). init() no depende
+   de `map` ni de `player` (a diferencia de cloudShadowManager) así que se
+   llama ya mismo — el primer intento de reproducir puede quedar bloqueado
+   por la política de autoplay del navegador hasta el primer click/touch
+   real, pero audioManager.init() ya deja el reintento armado para eso.
+   ============================================================ */
+const audioManager = createAudioManager();
+audioManager.init();
+
+function updateAudioMuteButton(){
+  const icon = $("btnAudioMuteIcon");
+  if(icon) icon.textContent = audioManager.isMuted() ? "🔇" : "🔊";
+}
+if($("btnAudioMute")){
+  $("btnAudioMute").onclick = ()=>{ audioManager.toggleMuted(); updateAudioMuteButton(); };
+  updateAudioMuteButton(); // refleja de entrada la preferencia guardada (localStorage)
+}
+
+/** Barras de volumen por categoría en Ajustes (⚙️) — ver audioManager.setCategoryVolume/
+ *  getCategoryVolume. Cada slider va de 0 a 100 en el HTML pero audioManager trabaja en 0-1. */
+[["volMapSlider","volMapPct","MAP"], ["volBattleSlider","volBattlePct","BATTLE"], ["volShopSlider","volShopPct","SHOP"]]
+  .forEach(([sliderId, pctId, category])=>{
+    const slider = $(sliderId), pct = $(pctId);
+    if(!slider) return;
+    const pct0to100 = Math.round(audioManager.getCategoryVolume(category) * 100);
+    slider.value = pct0to100;
+    if(pct) pct.textContent = pct0to100 + "%";
+    slider.addEventListener("input", ()=>{
+      audioManager.setCategoryVolume(category, slider.value / 100);
+      if(pct) pct.textContent = slider.value + "%";
+    });
+  });
+
+/** Música de combate (BATTLE/BOSS) al aparecer #battleWrap, música de mapa (MAP) al volver a
+ *  ocultarse — cubre TODOS los tipos de combate (solo, manada, PvP, grupal, torre, mazmorra,
+ *  Coliseo, evento...) de una sola vez, sin tener que enganchar cada función que arranca un
+ *  combate (startBattle, startPackBattle, renderPvpBattleUI, renderGroupBattleUI) por separado:
+ *  son "varios puntos de entrada" (ver el comentario de refreshBattleStagePerspective más abajo)
+ *  que todos terminan sacando/poniendo la misma clase "hidden" en el mismo elemento.
+ *  #battleWrap es estático en index.html (existe desde que carga la página), así que este observer
+ *  se registra UNA sola vez acá, no hace falta esperar a initMap(). */
+(function setupBattleMusicObserver(){
+  const wrap = document.getElementById("battleWrap");
+  if(!wrap) return;
+  let wasHidden = wrap.classList.contains("hidden");
+  new MutationObserver(()=>{
+    const isHidden = wrap.classList.contains("hidden");
+    if(isHidden === wasHidden) return;
+    wasHidden = isHidden;
+    if(isHidden){
+      audioManager.playMusic("MAP");
+    } else {
+      const isBossFight = !!(battleState && (battleState.isPack
+        ? (battleState.mons||[]).some(m=> m.isBoss)
+        : battleState.mon && battleState.mon.isBoss));
+      audioManager.playMusic(isBossFight ? "BOSS" : "BATTLE");
+    }
+  }).observe(wrap, {attributes:true, attributeFilter:["class"]});
+})();
+
+/** Misma idea que arriba, para la música de la tienda (SHOP) — #shopOverlay también es estático.
+ *  Si por algún motivo la tienda se cerrara en medio de un combate (no debería pasar en la
+ *  práctica), se ignora el "volver a MAP" para no pisar la música de combate ya sonando. */
+(function setupShopMusicObserver(){
+  const overlay = document.getElementById("shopOverlay");
+  if(!overlay) return;
+  let wasHidden = overlay.classList.contains("hidden");
+  new MutationObserver(()=>{
+    const isHidden = overlay.classList.contains("hidden");
+    if(isHidden === wasHidden) return;
+    wasHidden = isHidden;
+    if(isHidden){
+      if(!isBattleUiVisible()) audioManager.playMusic("MAP");
+    } else {
+      audioManager.playMusic("SHOP");
+    }
+  }).observe(overlay, {attributes:true, attributeFilter:["class"]});
+})();
+
+/** Pinta un botón de anuncio (icono + texto + estado) según
+ *  adsService.getPlacementUiState() — usado por los 3 placements de Fase 1
+ *  (revivir, bonus de oro, cofre patrocinador) para no triplicar esta lógica.
+ *  `btn` debe tener un `.ad-btn-label` adentro para el texto principal. */
+function applyAdButtonUiState(btn, ui, readyLabel){
+  if(!btn) return;
+  if(ui.state === "HIDDEN"){ btn.classList.add("hidden"); return; }
+  btn.classList.remove("hidden");
+  const label = btn.querySelector(".ad-btn-label") || btn;
+  btn.disabled = ui.state !== "READY";
+  btn.classList.toggle("is-disabled", ui.state !== "READY");
+  switch(ui.state){
+    case "READY": label.textContent = readyLabel; break;
+    case "LOADING": case "NOT_LOADED": label.textContent = "Preparando anuncio…"; break;
+    case "LIMIT_REACHED": label.textContent = "Disponible mañana"; break;
+    case "COOLDOWN": label.textContent = "Disponible más tarde"; break;
+    default: label.textContent = "Anuncio no disponible";
+  }
+}
 
 /* ============================================================
    MISIONES DIARIAS — UI (botón flotante + panel). Todo lo que sigue solo
@@ -3177,6 +3360,67 @@ function renderDailyMissionsPanel(){
   const rewardHeroLabel = $("dailyMissionsRewardHero");
   if(rewardHeroLabel){
     rewardHeroLabel.textContent = player ? `La experiencia será entregada a: ${player.className||player.classKey} Nv.${player.level}` : "";
+  }
+
+  renderSponsorChestCard();
+}
+
+/** "Cofre del patrocinador" — a propósito NO se llama "recompensa diaria" (pedido explícito,
+ *  para no confundirlo con el cofre final de Misiones Diarias) y su recompensa nunca supera a
+ *  la de ese cofre: solo oro + a veces un recurso común + a veces una poción, nunca diamantes
+ *  ni objetos raros en esta primera versión (ver PLACEMENT_CONFIG.DAILY_AD_CHEST). */
+function renderSponsorChestCard(){
+  const wrap = $("sponsorChestWrap");
+  if(!wrap) return;
+  const ui = adsService.getPlacementUiState("DAILY_AD_CHEST", {});
+  if(ui.state === "HIDDEN"){ wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  const btn = $("btnSponsorChest");
+  applyAdButtonUiState(btn, ui, "Ver anuncio y abrir");
+  btn.onclick = handleSponsorChestClick;
+  adsService.preloadPlacement("DAILY_AD_CHEST", {});
+}
+function rollSponsorChestReward(){
+  const cfg = adsService.getPlacementConfig("DAILY_AD_CHEST");
+  const table = (cfg && cfg.rewardTable) || { goldMin:100, goldMax:250, materialChance:0.4, potionChance:0.15 };
+  const gold = Math.round(table.goldMin + Math.random()*(table.goldMax-table.goldMin));
+  const lines = [`💰 +${gold} oro`];
+  player.gold += gold;
+  if(Math.random() < table.materialChance){
+    const materialKey = WORLD_RESOURCE_KEYS[Math.floor(Math.random()*WORLD_RESOURCE_KEYS.length)];
+    const qty = 3 + Math.floor(Math.random()*5);
+    grantMaterial(materialKey, qty);
+    lines.push(`${materialEmoji(materialKey)} +${qty} ${materialDisplayName(materialKey)}`);
+  }
+  if(Math.random() < table.potionChance){
+    const commonPotions = ITEM_TABLE.filter(it=> it.type==="heal");
+    if(commonPotions.length){
+      const potion = commonPotions[Math.floor(Math.random()*commonPotions.length)];
+      if(pushItemSafe({...potion})) lines.push(`${potion.emoji} ${potion.name}`);
+    }
+  }
+  return lines;
+}
+let sponsorChestInFlight = false;
+async function handleSponsorChestClick(){
+  if(sponsorChestInFlight) return;
+  const ui = adsService.getPlacementUiState("DAILY_AD_CHEST", {});
+  if(ui.state !== "READY") return;
+  sponsorChestInFlight = true;
+  const btn = $("btnSponsorChest");
+  if(btn){ btn.disabled = true; const l = btn.querySelector(".ad-btn-label"); if(l) l.textContent = "Reproduciendo anuncio…"; }
+  try{
+    const res = await adsService.requestReward("DAILY_AD_CHEST", {});
+    if(res.ok){
+      const lines = rollSponsorChestReward();
+      refreshHud();
+      saveGame();
+      await adsService.confirmRewardApplied(res.transactionId);
+      toast(`🎁 Cofre del patrocinador: ${lines.join(" · ")}`, 4000);
+    }
+  } finally {
+    sponsorChestInFlight = false;
+    renderSponsorChestCard();
   }
 }
 
@@ -3683,14 +3927,20 @@ function showHealFeedback(kind, before, after, max){
 }
 
 let shadowWolfDialogueTimer = null;
-/** Muestra una frase o aviso del Lobo Sombrío en un popup grande y llamativo (encima de todo, con
- *  brillo propio) — antes tanto sus diálogos como el aviso de que está cargando su ataque especial
- *  solo aparecían mezclados en la narración normal de la batalla (logBattle), donde podían pasar
- *  desapercibidos. Este popup es ADEMÁS del registro en el log de batalla (que se mantiene para el
- *  historial), nunca lo reemplaza. `opts.variant` = "speech" (diálogo hablado, morado, ícono 🐺 —
- *  por defecto) o "charge" (aviso del Súper ataque cargado, ámbar/eléctrico con pulso urgente,
- *  ícono ⚡, y se queda más tiempo en pantalla porque el jugador todavía tiene que decidir su
- *  turno). */
+/** Muestra una frase o aviso del Lobo Sombrío en un popup grande y llamativo (con brillo propio)
+ *  — antes tanto sus diálogos como el aviso de que está cargando su ataque especial solo aparecían
+ *  mezclados en la narración normal de la batalla (logBattle), donde podían pasar desapercibidos.
+ *  Este popup es ADEMÁS del registro en el log de batalla (que se mantiene para el historial),
+ *  nunca lo reemplaza. `opts.variant` = "speech" (diálogo hablado, morado, ícono 🐺 — por defecto)
+ *  o "charge" (aviso del Súper ataque cargado, ámbar/eléctrico con pulso urgente, ícono ⚡, y se
+ *  queda más tiempo en pantalla porque el jugador todavía tiene que decidir su turno).
+ *  Pedido explícito: que NUNCA tape al personaje — en vez de flotar superpuesto sobre la escena
+ *  (con posición fija o calculada por JS, que en un intento anterior entró en carrera con el
+ *  sistema de perspectiva de combate — ver positionEntityOnStage/refreshBattleStagePerspective —
+ *  y a veces el popup terminaba sin mostrarse), el popup vive en el FLUJO NORMAL del documento,
+ *  como una franja propia entre la barra de vida del enemigo y el escenario (ver .shadow-wolf-dialogue
+ *  en main.css e index.html) — así queda estructuralmente arriba de él siempre, sin cálculos ni
+ *  condiciones de carrera posibles. */
 function showShadowWolfDialogue(text, opts){
   opts = opts || {};
   const el = $("shadowWolfDialoguePopup");
@@ -3878,6 +4128,7 @@ $("btnStart").onclick = async ()=>{
   const _mapLoadGen = mapLoadingGen;
   initMap();
   armMapLoadingHide(_mapLoadGen);
+  ensureDailyMissionReminderScheduled(); // fire-and-forget — no bloquea nada, no hace falta esperar
   // el marcador del jugador (meMarker) recién existe DESPUÉS de initMap() — refreshHud() de arriba
   // corrió antes, así que cualquier cosa que dependa de él (como el aura del Legado en el mapa)
   // se queda sin aplicar hasta el siguiente refreshHud(). Se repite acá para que quede sincronizado
@@ -3980,6 +4231,7 @@ async function saveGame(){
       dungeonPortalCooldowns: player.dungeonPortalCooldowns || {},
       wood: player.wood||0, stone: player.stone||0, iron: player.iron||0,
       craftMats: player.craftMats || {},
+      globalShopListings: player.globalShopListings || [],
       pickaxe: player.pickaxe || null,
       seenBattleTutorial: player.seenBattleTutorial || false,
       inventoryIds: player.inventory.map(it=>it.id),
@@ -4178,6 +4430,7 @@ function rebuildPlayer(accountData, heroData){
     activeFrameClass: heroData.activeFrameClass || null,
     wood: accountData.wood||0, stone: accountData.stone||0, iron: accountData.iron||0,
     craftMats: accountData.craftMats || {},
+    globalShopListings: accountData.globalShopListings || [],
     pickaxe: accountData.pickaxe || null,
     seenBattleTutorial: accountData.seenBattleTutorial || false,
     maxHp: heroData.maxHp, hp: heroData.hp, maxMp: heroData.maxMp, mp: heroData.mp,
@@ -4288,6 +4541,7 @@ async function initContinueScreen(){
       const _mapLoadGen = mapLoadingGen;
       initMap(accountData.lastPos);
       armMapLoadingHide(_mapLoadGen);
+      ensureDailyMissionReminderScheduled(); // fire-and-forget — no bloquea nada, no hace falta esperar
       // el marcador del jugador (meMarker) recién existe DESPUÉS de initMap() — refreshHud() de
       // arriba corrió antes, así que el aura del Legado (y cualquier otra cosa que dependa del
       // marcador) se quedaba sin aplicar al continuar una partida existente hasta la siguiente
@@ -4739,6 +4993,12 @@ function updateParkProximity(){
 // menú y elige otro personaje antes de que el primer mapa terminara de cargar).
 let mapLoadingGen = 0;
 let mapLoadingStepTimer = null;
+// Promesa del último cloudShadowManager.init(map) disparado desde initMap() — armMapLoadingHide()
+// la espera junto con whenTilesLoaded para que la pantalla de carga no se oculte mientras las
+// sombras de nube (spritesheet + detección de formas) todavía se están armando de fondo. Nunca
+// rechaza (init() ya atrapa sus propios errores internamente), así que un fallo ahí nunca puede
+// dejar trabada la pantalla de carga.
+let cloudShadowsInitPromise = null;
 
 /** Los "pasos" que se muestran en el checklist de la pantalla de carga — no son un progreso medido
  *  de verdad paso a paso (initMap() no expone ganchos tan finos como para saber exactamente cuándo
@@ -4809,6 +5069,7 @@ function hideMapLoadingScreen(gen){
   if(gen !== mapLoadingGen) return; // un initMap() más nuevo ya tomó el control, este callback quedó viejo
   const el = $("mapLoadingOverlay");
   if(!el || el.classList.contains("hidden")) return;
+  audioManager.playMusic("MAP");
   el.classList.add("fading-out");
   clearInterval(mapLoadingStepTimer);
   setTimeout(()=>{
@@ -4823,7 +5084,15 @@ const MAP_LOADING_SAFETY_MS = 9000;
  *  cada initMap(). `gen` es el número de generación tomado ANTES de llamar a initMap(), para que el
  *  timer de seguridad y el callback de whenTilesLoaded se refieran los dos al mismo mapa. */
 function armMapLoadingHide(gen){
-  if(map && map.whenTilesLoaded) map.whenTilesLoaded(()=> hideMapLoadingScreen(gen));
+  const tilesLoaded = new Promise(resolve=>{
+    if(map && map.whenTilesLoaded) map.whenTilesLoaded(resolve);
+    else resolve();
+  });
+  // Espera TAMBIÉN a que terminen de cargar/detectarse las sombras de nube — si no, la pantalla de
+  // carga se ocultaba apenas los mosaicos base estaban listos, dejando ver cómo las nubes
+  // "aparecían de golpe" varios segundos después, ya con el mapa a la vista.
+  Promise.all([tilesLoaded, cloudShadowsInitPromise || Promise.resolve()])
+    .then(()=> hideMapLoadingScreen(gen));
   setTimeout(()=> hideMapLoadingScreen(gen), MAP_LOADING_SAFETY_MS);
 }
 
@@ -4871,6 +5140,9 @@ function teardownMapIfExists(){
 /** El zoom "normal"/por defecto del juego. Se usa al iniciar el mapa, al tocar el botón de
  *  centrar, y para decidir a qué distancia los enemigos empiezan a achicarse. */
 const DEFAULT_ZOOM = 18.50;
+/** Límite de zoom-out del mapa, definido probando en vivo con el indicador de zoom (ver
+ *  updateZoomDebugBadge) — más lejos que esto el terreno/las sombras de nube se ven mal. */
+const MIN_ZOOM_ALLOWED = 17.29;
 /** Qué tan cerca hay que estar de algo para poder interactuar (pelear, hablar, etc.) — el aro
  *  alrededor del jugador se dibuja exactamente a este radio real, para que sea consistente con
  *  lo que en verdad se puede alcanzar (antes el aro era solo decorativo y no coincidía). */
@@ -4935,6 +5207,7 @@ function initMap(savedPos){
   const detectedCity = detectCityAndLoadWorldData(start.lat, start.lng);
   map = L.map('map', {zoomControl:false, attributionControl:false, tap:true, tapTolerance:28}).setView([start.lat,start.lng], MAP_ENTRY_ZOOM);
   map.setPitch(65); // vista TOTALMENTE inclinada por defecto (el maximo que permite el mapa)
+  if(map._maplibre && map._maplibre.setMinZoom) map._maplibre.setMinZoom(MIN_ZOOM_ALLOWED);
   if(map.whenTilesLoaded){
     map.whenTilesLoaded(()=>{
       map.flyTo([start.lat, start.lng], {zoom: DEFAULT_ZOOM, pitch: 65, duration: MAP_ENTRY_ZOOM_ANIM_MS});
@@ -5016,6 +5289,7 @@ function initMap(savedPos){
   safeDrawStep("la limpieza de eventos del mundo expirados", pruneExpiredWorldEvents);
   safeDrawStep("los eventos del mundo", drawAllWorldEvents);
   safeDrawStep("las bases", drawAllBases);
+  safeDrawStep("las sombras de nube", ()=>{ cloudShadowsInitPromise = cloudShadowManager.init(map); });
   showBaseDebugPanelIfRequested();
 
   checkZoneDiscovery();
@@ -5054,7 +5328,8 @@ function initMap(savedPos){
   updateMapTimeOfDay();
   updateAmbientEffects();
   updateDungeonAuraAmbience();
-  setInterval(()=> runIfNotInBattle(()=>{ updateDayNightBadge(); updateMapTimeOfDay(); updateAmbientEffects(); updateDungeonAuraAmbience(); }), 60000);
+  updateCloudWeatherProfile();
+  setInterval(()=> runIfNotInBattle(()=>{ updateDayNightBadge(); updateMapTimeOfDay(); updateAmbientEffects(); updateDungeonAuraAmbience(); updateCloudWeatherProfile(); }), 60000);
   collectTowerGold();
   collectBuildingGold();
   setInterval(()=> runIfNotInBattle(collectTowerGold), 5*60000); // revisa el oro acumulado de tus torres cada 5 minutos
@@ -5623,19 +5898,6 @@ function updateMapTimeOfDay(skipTransition){
  *  inclinas la cámara, su posición en pantalla se recalcula según dónde le toque proyectarse
  *  ahora — no es un adorno pegado a la pantalla, es parte del mundo. */
 let beamWorldSpot = null;
-let __cloudPositionSet = false;
-/** Fija la posición de la nube en píxeles UNA sola vez (no en porcentaje) — así nunca se
- *  recalcula cuando la barra de direcciones del navegador se oculta o aparece al deslizar en
- *  el celular, que es lo que hacía que pareciera "moverse" al mover el mapa hacia arriba/abajo
- *  aunque no tuviera ninguna relación real con la cámara. */
-function ensureCloudFixedPosition(){
-  if(__cloudPositionSet) return;
-  const cloud = document.querySelector(".beam-cloud");
-  if(!cloud) return;
-  cloud.style.left = Math.round(window.innerWidth*0.30)+"px";
-  cloud.style.top = Math.round(window.innerHeight*0.35)+"px";
-  __cloudPositionSet = true;
-}
 function ensureBeamWorldSpot(){
   if(beamWorldSpot || !playerLatLng) return;
   // Anclado al Coliseo de la ciudad (siempre un punto real, central y memorable) — así el rayo
@@ -5654,14 +5916,9 @@ function ensureBeamWorldSpot(){
 }
 /** Se llama cada vez que el mapa se mueve, gira o se inclina — recalcula en qué píxel de la
  *  pantalla cae AHORA el punto real donde está anclada la luz (como si fuera un marcador más). */
-/** Se llama cada vez que el mapa se mueve, gira o se inclina — recalcula en qué píxel de la
- *  pantalla cae AHORA el punto real donde está anclada la LUZ (como si fuera un marcador más).
- *  La NUBE, en cambio, es totalmente independiente de la cámara — no se reproyecta con nada,
- *  solo tiene su propia animación de deriva corriendo libre (ver @keyframes cloudDrift). */
 function updateBeamWorldPosition(){
   const beam = $("mapLightBeam");
   if(!beam || !map || !map.project) return;
-  ensureCloudFixedPosition();
   ensureBeamWorldSpot();
   if(!beamWorldSpot) return;
   const px = map.project(beamWorldSpot);
@@ -5825,6 +6082,25 @@ function applyWeatherEffect(category, tempC){
     badge.title = info.label;
     lastWeatherBadgeHTML = badge.textContent; // se cachea para reusar en la barra contextual sin repetir efectos (como la lluvia)
   }
+  updateCloudWeatherProfile();
+}
+/** Pedido explícito: las sombras de nube (CloudShadowManager) deben reflejar el clima real, no
+ *  quedarse siempre en el perfil DAY. No hay un perfil por cada combinación posible, así que se
+ *  prioriza así: lluvia real (STORM, el cambio más notorio) > de noche (NIGHT) > nublado real
+ *  (CLOUDY) > nieve real (FOG, todavía no hay un perfil de nieve dedicado — FOG da la sensación de
+ *  visibilidad reducida que más se le parece) > despejado de día (DAY). Se llama cada vez que
+ *  cambia el clima real (fetchWeatherForLocation) y en el mismo ciclo de 60s que ya revisa
+ *  día/noche (ver el setInterval junto a updateDayNightBadge), así que reacciona sin esperar a la
+ *  próxima consulta de clima. */
+function updateCloudWeatherProfile(){
+  if(!cloudShadowManager || !cloudShadowManager.setWeather) return;
+  const night = isNightTime();
+  const profile = currentWeatherCategory === "rain" ? "STORM"
+    : night ? "NIGHT"
+    : currentWeatherCategory === "cloudy" ? "CLOUDY"
+    : currentWeatherCategory === "snow" ? "FOG"
+    : "DAY";
+  cloudShadowManager.setWeather(profile);
 }
 /** Pedido explícito: si está lloviendo en el mapa, que también llueva en la escena de batalla —
  *  mismo efecto visual (gotas, ver spawnRaindrops) sobre el escenario de combate. Se decide al
@@ -6341,6 +6617,7 @@ function tryOpenChest(chest){
   $("resultTitle").textContent = `¡Cofre ${rarity.label.toLowerCase()} abierto!`;
   $("resultSub").innerHTML = `💰 +${gold} oro · ✨ +${xp} experiencia${itemLine}${crystalLine}`;
   $("btnBoostResultXp").classList.add("hidden");
+  $("adGoldBonusWrap").classList.add("hidden");
   updateResultProgressVisibility(false);
   $("resultOverlay").classList.remove("hidden");
 }
@@ -9625,6 +9902,7 @@ function openInventoryDetail(it, count){
   if(usable){
     actionBtn.classList.remove("hidden");
     actionBtn.textContent = "Usar";
+    actionBtn.disabled = false; // el botón es el MISMO elemento reusado para todo el inventario — si el objeto anterior que mirabas estaba equipado, esto quedaba en true (ver rama isEquipableNow) y el de "Usar" heredaba el disabled aunque diga otra cosa
     actionBtn.onclick = ()=>{
       if(inBattleItemMode && it.type==="pet_item"){ toast("🦴 Los ítems de mascota solo se pueden usar fuera de combate."); return; }
       inBattleItemMode ? useItemInBattleByGroupId(it.id) : useItemByGroupId(it.id);
@@ -10116,6 +10394,7 @@ function resolvePetMove(pet, mv, afterCallback){
   if(mon){
     const dmg = calcDamage(pet.atk, mon.def, mv.power, 0.05);
     mon.curHp = Math.max(0, mon.curHp - dmg);
+    audioManager.playSfx("HIT");
     logBattle(`🐾 ${petDisplayName(pet)} usa ${mv.name}: ${dmg} de daño.`);
     if(battleState.isPack){ renderPackEnemyPanels(); renderPackStage(); }
     animateSprite("spriteEnemy","hitshake");
@@ -10179,6 +10458,28 @@ function upgradeCost(item){
   const lvl = item.upgradeLevel||0;
   return Math.round((item.value||30) * 0.45 * (lvl+1));
 }
+/** Diamantes que pide subir al PRÓXIMO nivel (item.upgradeLevel+1) — 0 mientras ese próximo nivel
+ *  todavía entra dentro de EQUIP_UPGRADE_MAX (esos siguen pagándose solo con oro, ver upgradeCost).
+ *  Pedido explícito: pasado ese punto ya no hay tope — se puede seguir mejorando, pero cada nivel
+ *  extra además cuesta diamantes, empezando en EQUIP_UPGRADE_DIAMOND_STEP (5) para el primer nivel
+ *  más allá del +5, y subiendo ese mismo paso por cada nivel adicional (+5, +10, +15...). */
+function upgradeDiamondCost(item){
+  const nextLevel = (item.upgradeLevel||0) + 1;
+  const stepsPastMax = nextLevel - EQUIP_UPGRADE_MAX;
+  return stepsPastMax > 0 ? EQUIP_UPGRADE_DIAMOND_STEP * stepsPastMax : 0;
+}
+/** Primer nivel "arriesgado" — el nivel siguiente a los EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS niveles
+ *  seguros de oro+diamantes (ver arriba). Ej. con MAX=5 y SAFE=7, el riesgo arranca en +13. */
+const EQUIP_UPGRADE_RISK_START_LEVEL = EQUIP_UPGRADE_MAX + EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS + 1;
+/** Probabilidad de que el PRÓXIMO nivel de mejora (item.upgradeLevel+1) falle y la pieza vuelva a
+ *  +0 — 0 mientras ese próximo nivel siga dentro de la zona segura (≤ EQUIP_UPGRADE_MAX +
+ *  EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS). A partir de ahí empieza en EQUIP_UPGRADE_RISK_START_CHANCE
+ *  y sube EQUIP_UPGRADE_RISK_STEP por cada nivel arriesgado adicional, sin techo. */
+function upgradeRiskChance(item){
+  const nextLevel = (item.upgradeLevel||0) + 1;
+  if(nextLevel < EQUIP_UPGRADE_RISK_START_LEVEL) return 0;
+  return EQUIP_UPGRADE_RISK_START_CHANCE + EQUIP_UPGRADE_RISK_STEP*(nextLevel - EQUIP_UPGRADE_RISK_START_LEVEL);
+}
 /** Aplica un nivel de mejora al objeto (recalcula sus bonificaciones desde las ORIGINALES, para que no se
  *  vayan acumulando de forma descontrolada si se mejora varias veces). */
 function applyUpgradeToItem(item, level){
@@ -10199,15 +10500,28 @@ function upgradeEquippedItem(slot, accIdx){
   const item = slot==="accessory" ? player.equipment.accessory[accIdx] : player.equipment[slot];
   if(!item) return;
   const level = item.upgradeLevel||0;
-  if(level >= EQUIP_UPGRADE_MAX){ toast("Este objeto ya está al máximo de mejora (+5)."); return; }
   const cost = upgradeCost(item);
+  const diamondCost = upgradeDiamondCost(item);
+  const riskChance = upgradeRiskChance(item);
   if(player.gold < cost){ toast(`Necesitas 💰${cost} para mejorarlo.`, 3200); return; }
+  if(diamondCost > 0 && (player.crystals||0) < diamondCost){ toast(`Necesitas 💎${diamondCost} para mejorarlo más allá de +${EQUIP_UPGRADE_MAX}.`, 3200); return; }
+  // El oro y los diamantes se gastan SIEMPRE, falle o no el intento — pedido explícito, es lo que
+  // le da peso real al riesgo a partir de EQUIP_UPGRADE_RISK_START_LEVEL.
   player.gold -= cost;
+  if(diamondCost > 0) player.crystals -= diamondCost;
   unapplyBonuses(item.bonuses);
-  applyUpgradeToItem(item, level+1);
-  applyBonuses(item.bonuses);
-  refreshHud(); renderEquipPanel(); saveGame();
-  toast(`🔧 ¡${item.name} mejorado a +${level+1}!`);
+  if(riskChance > 0 && Math.random() < riskChance){
+    // Falla: la pieza NO se destruye, pero pierde TODOS los niveles de mejora ganados hasta ahora.
+    applyUpgradeToItem(item, 0);
+    applyBonuses(item.bonuses);
+    refreshHud(); renderEquipPanel(); saveGame();
+    toast(`💥 ¡${item.name} no resistió la mejora y volvió a +0!`, 4200);
+  } else {
+    applyUpgradeToItem(item, level+1);
+    applyBonuses(item.bonuses);
+    refreshHud(); renderEquipPanel(); saveGame();
+    toast(`🔧 ¡${item.name} mejorado a +${level+1}!`);
+  }
 }
 
 function equipItem(idx, accessorySlotIdx){
@@ -10340,10 +10654,13 @@ $("pointsBadge").onclick = openAttrsScreen;
  *  vive en #settingsOverlay en vez de #charSheetOverlay. */
 function openSettingsScreen(){
   closeFabMenu();
+  const row = $("csAdsPrivacyRow");
+  if(row) row.classList.toggle("hidden", !adsService.isPrivacyOptionsRequired());
   $("settingsOverlay").classList.remove("hidden");
 }
 $("btnSettingsCorner").onclick = openSettingsScreen;
 $("btnCloseSettings").onclick = ()=> $("settingsOverlay").classList.add("hidden");
+$("btnAdsPrivacyOptions").onclick = ()=> adsService.openPrivacyOptions();
 $("btnCloseAttrs").onclick = ()=> $("attrsOverlay").classList.add("hidden");
 
 function renderAttrsScreen(){
@@ -10865,11 +11182,13 @@ function startBattle(mon, opts){
   // arrastrarse a un combate nuevo si de alguna forma quedó sin limpiar del anterior.
   player.status = null;
   // Barra de defensa del jugador (Guerrero: escudo, Mago: barrera mágica — pedido explícito): al
-  // bloquear un golpe fuerte con el gesto de defensa, el daño que le haría a la vida se descuenta
-  // de acá en vez de HP — se llena fresca en cada combate nuevo, pero jamás se recarga ni se cura
-  // mientras dura ESTE combate (ver DEFENSE_BAR_PCT, resolveEnemyDirectAttack y enemyTurn).
+  // bloquear un golpe fuerte con el gesto de defensa, ese golpe no toca la vida en absoluto — en
+  // cambio se come una carga fija de esta barra (ver DEFENSE_BAR_CHARGES_DEFAULT/_SHIELD). Se llena
+  // fresca en cada combate nuevo, pero jamás se recarga ni se cura mientras dura ESTE combate (ver
+  // resolveEnemyDirectAttack y enemyTurn).
   if(classHasDefendPose(player.classKey)){
-    battleState.defenseBarMax = Math.max(1, Math.round(player.maxHp * DEFENSE_BAR_PCT));
+    battleState.defenseBarCharges = defenseBarCharges();
+    battleState.defenseBarMax = battleState.defenseBarCharges;
     battleState.defenseBar = battleState.defenseBarMax;
   }
   updateBattleSceneBackground();
@@ -11284,7 +11603,26 @@ window.addEventListener("resize", ()=>{
   if(!$("battleTutorialOverlay").classList.contains("hidden")) showBattleTutorialStep();
 });
 
+/** Pedido explícito: "que no todos los enemigos dejen escapar del combate, que algunos digan 'el
+ *  enemigo te ha acorralado'" — algunos monstruos (ver `cantFlee` en enemies.js, los mismos que ya
+ *  son `aggressive`) bloquean el intento de huir. No es gratis: igual que usar un ítem, PIERDE el
+ *  turno (el enemigo ataca después) — si no, el jugador podría apretar "Huir" gratis sin ningún
+ *  costo hasta que por fin funcionara con otro enemigo. */
+function fleeBlockedBy(){
+  if(battleState && battleState.mon && battleState.mon.tpl && battleState.mon.tpl.cantFlee) return battleState.mon;
+  if(battleState && battleState.isPack && battleState.mons) return battleState.mons.find(m=> m.curHp>0 && m.tpl.cantFlee) || null;
+  return null;
+}
 function fleeBattle(){
+  const blocker = fleeBlockedBy();
+  if(blocker){
+    clearTurnTimer();
+    disableMoves(true);
+    logBattle(`🚫 ¡${blocker.tpl.name} te ha acorralado! No puedes huir — pierdes el turno.`);
+    toast(`🚫 ¡${blocker.tpl.name} te ha acorralado! No puedes huir.`, 3500);
+    setTimeout(()=> maybeDoPetTurn(()=> battleState.isPack ? packEnemyTurn() : enemyTurn()), 500);
+    return;
+  }
   clearTurnTimer();
   if(battleState && battleState.mon && battleState.mon.isBoss && !battleState.mon.isParkGuardian){
     releaseBossLock(battleState.mon);
@@ -11770,6 +12108,7 @@ function executePlayerAction(mv){
       logBattle(`🐾 Tus mascotas ayudan con ${petBonus} de daño extra.`);
     }
     const revealHit = ()=>{
+      audioManager.playSfx("HIT"); // acá, no antes — debe sonar cuando el golpe REALMENTE conecta (ver deferHit/hitDelayMs)
       if(mv.isUltimate){
         animateSprite("spriteEnemy","ultimate-hit");
         animateSprite("spritePlayer","ultimate-strike");
@@ -11793,6 +12132,7 @@ function executePlayerAction(mv){
       if(proc.type==="haste"){ battleState.playerBuffs.spd = Math.max(battleState.playerBuffs.spd, 1.4); logBattle(`💨 ¡Tu arma te acelera!`); }
       else { applyStatusEffect(mon, proc.type); logBattle(`${PROC_LABELS[proc.type]} ¡${mon.tpl.name} queda ${STATUS_EFFECTS[proc.type].label.toLowerCase()}!`); }
     }
+    applyWeaponOnHitEffects(mon, true);
     if(mv.drain){ const heal = Math.round(totalDmg*mv.drain); player.hp = Math.min(player.maxHp, player.hp+heal); logBattle(`Absorbes ${heal} HP.`); }
     if(mv.slow){ battleState.monSlow = mv.slow; logBattle(`¡${mon.tpl.name} se vuelve más lento!`); }
     if(mv.stun && Math.random()<mv.stun){ battleState.monStunned = true; logBattle(`¡${mon.tpl.name} queda aturdido!`); }
@@ -11861,6 +12201,24 @@ function weaponNightDmgMult(){
 function isEspadaLunarEquipped(){
   const w = player.equipment && player.equipment.weapon;
   return !!(w && w.lunarWeapon);
+}
+/** `defShred`/`stunChance` del arma equipada (ver Hacha Espectral en BLACKSMITH_RECIPES) — campos
+ *  genéricos, mismo criterio que nightDmgBonus/lunarWeapon de arriba: CUALQUIER arma que los tenga
+ *  los aplica sola en cada golpe que conecta, sin hacer falta un caso especial por arma nueva.
+ *  `target` es el `mon`/miembro de manada recién golpeado; `isSoloTarget` distingue si hay que
+ *  aturdirlo con el flag único de combate solo (battleState.monStunned) o el propio de manada
+ *  (target.stunned) — mismo par de flags que ya usa mv.stun más abajo en enemyTurn/attackMove. */
+function applyWeaponOnHitEffects(target, isSoloTarget){
+  const w = player.equipment && player.equipment.weapon;
+  if(!w || !target || target.curHp<=0) return;
+  if(w.defShred){
+    target.def = +(target.def*(1-w.defShred)).toFixed(1);
+    logBattle(`🪓 ¡Tu arma desgasta la defensa de ${target.tpl.name}!`);
+  }
+  if(w.stunChance && Math.random() < w.stunChance){
+    if(isSoloTarget) battleState.monStunned = true; else target.stunned = true;
+    logBattle(`¡${target.tpl.name} queda aturdido por el golpe!`);
+  }
 }
 function effectiveDef(){ return player.def * (battleState.playerBuffs.def||1); }
 function effectivePlayerSpd(){ return player.spd * (battleState.playerBuffs.spd||1); }
@@ -12244,6 +12602,7 @@ function resolveThiefCloneTap(mon, idx){
     }
     const dmg = calcDamage(effectiveAtk({type:"phys"}), mon.def, 1, 0.06+(player.critBonus||0));
     mon.curHp = Math.max(0, mon.curHp - dmg);
+    audioManager.playSfx("HIT");
     animateSprite("spriteEnemy","hitshake");
     animateSprite("spritePlayer","attackp");
     flashSprite("spriteEnemy","red");
@@ -12364,6 +12723,7 @@ function enemyTurn(isExtraAttack){
       setTimeout(()=>{
         const dmg = calcDamage(mon.atk*thiefSpdMod, effectiveDef(), 0.6, 0.08);
         player.hp = Math.max(0, player.hp - dmg);
+        audioManager.playSfx("HIT");
         flashSprite("spritePlayer","purple");
         applyStatusEffect(player, "poison");
         logBattle(`☠️ ¡El shuriken te envenena! -${dmg} HP, y el veneno seguirá quitándote vida.`);
@@ -12414,6 +12774,7 @@ function enemyTurn(isExtraAttack){
     } else {
       let dmg = calcDamage(mon.atk*spdMod, pet.def, power, 0.08);
       pet.hp = Math.max(0, pet.hp - dmg);
+      audioManager.playSfx("HIT");
       const petEmojiEl = document.querySelector("#petStageSlot .pet-emoji");
       if(petEmojiEl){ petEmojiEl.classList.remove("hitshake"); void petEmojiEl.offsetWidth; petEmojiEl.classList.add("hitshake"); }
       logBattle(`${mon.tpl.name} ataca a tu mascota ${petDisplayName(pet)}: ${dmg} de daño.`);
@@ -12471,13 +12832,13 @@ function resolveEnemyDirectAttack(mon, power, spdMod, outcome){
     return;
   }
   let dmg = calcDamage(mon.atk*spdMod, effectiveDef(), power, 0.08);
+  audioManager.playSfx("HIT"); // cubre "blocked" y "hit" — "dodged" ya cortó con el return de arriba
   if(outcome === "blocked"){
-    // El daño que le habría hecho a la vida se descuenta de la barra de defensa en su lugar —
-    // nunca se recarga ni se cura durante el combate (ver DEFENSE_BAR_PCT/startBattle). Pedido
-    // explícito: bloquear "quedaba muy fuerte" (la barra aguantaba demasiado) — el golpe le hace
-    // un 15% MÁS de daño a esta barra que el que le habría hecho a la vida, para que no dure tanto.
-    const barDmg = Math.round(dmg * 1.15);
-    battleState.defenseBar = Math.max(0, battleState.defenseBar - barDmg);
+    // Bloquear un golpe fuerte nunca toca la vida — pero le cuesta UNA carga fija de la barra de
+    // defensa, sin importar cuánto daño hiciera ese golpe (pedido explícito: que la barra siempre
+    // aguante una cantidad fija de bloqueos — ver DEFENSE_BAR_CHARGES_DEFAULT/_SHIELD/startBattle),
+    // nunca se recarga ni se cura durante el combate.
+    battleState.defenseBar = Math.max(0, battleState.defenseBar - 1);
     const blockGesture = player.classKey === "mago" ? "la barrera mágica"
       : player.classKey === "berserker" ? "el filo de la espada"
       : player.classKey === "arquero" ? "el arco" : "el escudo";
@@ -12493,7 +12854,7 @@ function resolveEnemyDirectAttack(mon, power, spdMod, outcome){
       flashSprite("spritePlayer","purple");
       showBattlePopup("¡Bloqueado!", "blocked");
     }, BLOCK_REACT_MS);
-    logBattle(`🛡️ ¡Bloqueaste el golpe de ${mon.tpl.name} con ${blockGesture}! -${barDmg} en tu barra de defensa.`);
+    logBattle(`🛡️ ¡Bloqueaste el golpe de ${mon.tpl.name} con ${blockGesture}! Te quedan ${battleState.defenseBar}/${battleState.defenseBarMax} bloqueos.`);
     if(battleState.defenseBar <= 0){
       logBattle(`⚠️ Tu barra de defensa se agotó — ya no podrás bloquear golpes fuertes en este combate.`);
     }
@@ -12672,10 +13033,55 @@ function towerChallengeWon(towerId){
     $("resultTitle").textContent = "¡Torre conquistada!";
     $("resultSub").innerHTML = "La torre ahora es tuya.";
     $("resultOverlay").classList.remove("hidden");
+    audioManager.playSfx("WIN");
     updateResultProgressVisibility(false);
     battleState = null;
     captureTower(towerId);
   }, 700);
+}
+
+/** "Bonus del aventurero" — tarjeta opcional en el resumen de victoria que ofrece duplicar
+ *  SOLO el oro base de ESE combate viendo un anuncio (nunca XP, diamantes, objetos ni
+ *  recompensas de misión/contrato — ver PLACEMENT_CONFIG.POST_BATTLE_GOLD_BONUS). La
+ *  recompensa original ya se entregó antes de llamar a esto (player.gold += goldGain en
+ *  winBattle) — pulsar "Continuar" sin ver el anuncio no le quita nada al jugador. */
+let adGoldBonusInFlight = false;
+function setupAdGoldBonusButton(goldGain, context){
+  const wrap = $("adGoldBonusWrap");
+  if(!wrap) return;
+  if(!goldGain || goldGain <= 0){ wrap.classList.add("hidden"); return; }
+  const ui = adsService.getPlacementUiState("POST_BATTLE_GOLD_BONUS", context);
+  if(ui.state === "HIDDEN"){ wrap.classList.add("hidden"); return; }
+  wrap.classList.remove("hidden");
+  $("adGoldBonusAmount").textContent = `+${goldGain} 💰 extra`;
+  const btn = $("btnAdGoldBonus");
+  applyAdButtonUiState(btn, ui, "Ver anuncio y duplicar el oro");
+  btn.onclick = ()=> handleAdGoldBonusClick(goldGain, context);
+  adsService.preloadPlacement("POST_BATTLE_GOLD_BONUS", context);
+}
+async function handleAdGoldBonusClick(goldGain, context){
+  if(adGoldBonusInFlight) return;
+  const btn = $("btnAdGoldBonus");
+  const ui = adsService.getPlacementUiState("POST_BATTLE_GOLD_BONUS", context);
+  if(ui.state !== "READY") return;
+  adGoldBonusInFlight = true;
+  if(btn){ btn.disabled = true; const l = btn.querySelector(".ad-btn-label"); if(l) l.textContent = "Reproduciendo anuncio…"; }
+  try{
+    const res = await adsService.requestReward("POST_BATTLE_GOLD_BONUS", context);
+    if(res.ok){
+      player.gold += goldGain; // duplica EXACTAMENTE el oro base — nunca XP/diamantes/objetos
+      refreshHud();
+      saveGame();
+      await adsService.confirmRewardApplied(res.transactionId);
+      $("adGoldBonusAmount").textContent = `¡Duplicado! +${goldGain*2} 💰 en total`;
+      if(btn) btn.classList.add("hidden");
+      toast(`▶ +${goldGain} de oro extra.`);
+    } else {
+      setupAdGoldBonusButton(goldGain, context); // vuelve a pintar el estado real (sin penalizar nada)
+    }
+  } finally {
+    adGoldBonusInFlight = false;
+  }
 }
 
 /** Muestra (o esconde) el botón de duplicar la XP del combate recién ganado, gastando ORO (el
@@ -12727,6 +13133,7 @@ function winBattle(){
   if(battleState.eventId) resolveWorldEventVictory(battleState.eventId);
   clearTurnTimer();
   const mon = battleState.mon;
+  adsService.forgetBattle(mon.id); // libera el registro de "anuncio usado en este combate" (ver BATTLE_REVIVE)
   const overflowItems = []; // recompensas que no cupieron — se ofrece comprar espacio por todas al final
   logBattle(`¡Derrotaste a ${mon.tpl.name}!`);
   applyCombatWearToEquipment(mon);
@@ -12900,7 +13307,9 @@ function winBattle(){
       $("resultTitle").textContent = "¡Victoria!" + bonusTag;
       $("resultSub").innerHTML = `+${xpGain} XP · +${goldGain} 💰${crystalsFromFirstBoss?` · 💎+${crystalsFromFirstBoss} (primer jefe del día)`:""}${darkEssenceGain?` · 🖤+${darkEssenceGain} Esencia Oscura`:""}${lootMsg? "<br>"+lootMsg : ""}${bossItemMsg}${questItemMsg}`;
       setupXpBoostButton(xpGain, goldGain);
+      setupAdGoldBonusButton(goldGain, { battleId: mon.id, characterId: player.classKey });
       $("resultOverlay").classList.remove("hidden");
+      audioManager.playSfx("WIN");
       animateResultProgress({
         char: {
           beforeLevel: charBefore.level, beforeXp: charBefore.xp, beforeXpNext: charBefore.xpNext,
@@ -13013,24 +13422,100 @@ function cureBerserkerBleedOnEnemyRecovery(mon){
 }
 
 const REVIVE_CRYSTAL_COST = 5;
+
+/** "HAS SIDO DERROTADO" — pantalla con 3 opciones (spec de monetización):
+ *  ver anuncio y revivir / revivir con diamantes / volver al mapa. Una sola
+ *  resurrección TOTAL por combate (por cualquiera de los dos métodos) —
+ *  mismo límite que ya existía, solo que ahora hay una alternativa gratuita.
+ *  `onNotRevived` es la MISMA función que ya llamaban los 3 call-sites de
+ *  siempre (loseBattle/packLoseBattle) — no cambia su forma. */
+let battleReviveResolution = null;
 function offerRevive(onNotRevived){
   if(battleState && battleState.revivedOnce){ if(onNotRevived) onNotRevived(); return; }
-  if((player.crystals||0) < REVIVE_CRYSTAL_COST){ if(onNotRevived) onNotRevived(); return; }
-  showConfirm(`Te quedaste sin vida. ¿Usar ${REVIVE_CRYSTAL_COST} cristales para revivir con toda tu HP y seguir la pelea?`, ()=>{
-    player.crystals -= REVIVE_CRYSTAL_COST;
-    player.hp = player.maxHp;
-    if(battleState) battleState.revivedOnce = true;
-    refreshHud();
-    saveGame();
-    toast("💎 ¡Revivido! Sigue la pelea.");
-  }, {icon:"💎", confirmLabel:"Revivir", onCancel: onNotRevived});
+  battleReviveResolution = { onNotRevived };
+  $("battleReviveOverlay").classList.remove("hidden");
+  renderBattleReviveScreen();
+  if(battleState && battleState.mon){
+    adsService.preloadPlacement("BATTLE_REVIVE", { battleId: battleState.mon.id });
+  }
 }
+function closeBattleReviveScreen(){
+  $("battleReviveOverlay").classList.add("hidden");
+  battleReviveResolution = null;
+}
+function renderBattleReviveScreen(){
+  const diamondBtn = $("btnReviveDiamond");
+  if(diamondBtn){
+    const canDiamond = (player.crystals||0) >= REVIVE_CRYSTAL_COST;
+    diamondBtn.disabled = !canDiamond;
+    diamondBtn.classList.toggle("is-disabled", !canDiamond);
+    const label = diamondBtn.querySelector(".revive-diamond-label");
+    if(label) label.textContent = `Revivir usando ${REVIVE_CRYSTAL_COST} diamantes`;
+  }
+  const adBtn = $("btnReviveAd");
+  if(adBtn){
+    const context = battleState && battleState.mon ? { battleId: battleState.mon.id } : {};
+    const ui = adsService.getPlacementUiState("BATTLE_REVIVE", context);
+    applyAdButtonUiState(adBtn, ui, "Ver anuncio y revivir");
+  }
+}
+let reviveAdInFlight = false;
+async function handleReviveWithAd(){
+  if(!battleState || !battleState.mon || reviveAdInFlight) return;
+  const context = { battleId: battleState.mon.id, characterId: player.classKey };
+  const ui = adsService.getPlacementUiState("BATTLE_REVIVE", context);
+  if(ui.state !== "READY") return;
+  reviveAdInFlight = true;
+  const adBtn = $("btnReviveAd");
+  if(adBtn){ adBtn.disabled = true; const l = adBtn.querySelector(".ad-btn-label"); if(l) l.textContent = "Reproduciendo anuncio…"; }
+  try{
+    const res = await adsService.requestReward("BATTLE_REVIVE", context);
+    if(res.ok){
+      // La recompensa SOLO se aplica acá, tras la confirmación real del SDK — nunca por
+      // haber cerrado el anuncio ni por haberlo simplemente empezado a mostrar.
+      player.hp = player.maxHp;
+      const placementCfg = adsService.getPlacementConfig("BATTLE_REVIVE");
+      if(placementCfg && placementCfg.restoreMana) player.mp = player.maxMp;
+      if(battleState) battleState.revivedOnce = true;
+      refreshHud();
+      saveGame();
+      await adsService.confirmRewardApplied(res.transactionId);
+      toast("▶ ¡Revivido! Sigue la pelea.");
+      closeBattleReviveScreen();
+    } else {
+      // No se consume nada (ver adsService.requestReward): el jugador puede reintentar,
+      // usar diamantes, o volver al mapa — nunca lo dejamos sin opciones.
+      renderBattleReviveScreen();
+    }
+  } finally {
+    reviveAdInFlight = false;
+  }
+}
+function handleReviveWithDiamond(){
+  if((player.crystals||0) < REVIVE_CRYSTAL_COST) return;
+  player.crystals -= REVIVE_CRYSTAL_COST;
+  player.hp = player.maxHp;
+  if(battleState) battleState.revivedOnce = true;
+  refreshHud();
+  saveGame();
+  toast("💎 ¡Revivido! Sigue la pelea.");
+  closeBattleReviveScreen();
+}
+function handleReviveDecline(){
+  const resolution = battleReviveResolution;
+  closeBattleReviveScreen();
+  if(resolution && resolution.onNotRevived) resolution.onNotRevived();
+}
+$("btnReviveAd").onclick = handleReviveWithAd;
+$("btnReviveDiamond").onclick = handleReviveWithDiamond;
+$("btnReviveDecline").onclick = handleReviveDecline;
 function loseBattle(){
   if(battleState.isDungeon) return dungeonLoseFloor();
   if(battleState.isColiseo) return coliseoLoseRun();
   if(battleState.eventId) resolveWorldEventLoss(battleState.eventId);
   clearTurnTimer();
   const mon = battleState.mon;
+  if(mon) adsService.forgetBattle(mon.id); // libera el registro de "anuncio usado en este combate" (ver BATTLE_REVIVE)
   const isShadowWolf = mon && mon.tpl && mon.tpl.name === "Lobo Sombrío";
   if(isShadowWolf){
     logBattle(`🐺 ${mon.tpl.name}: "Parece que aún no estás preparado."`);
@@ -13048,6 +13533,7 @@ function loseBattle(){
       ? `"Parece que aún no estás preparado." El Lobo Sombrío te deja con vida y se escabulle — despiertas debilitado, con 30% de tu HP.`
       : "Despiertas debilitado, con 30% de tu HP. ¡Recupera fuerzas y vuelve a intentarlo!";
     $("btnBoostResultXp").classList.add("hidden");
+    $("adGoldBonusWrap").classList.add("hidden");
     $("resultOverlay").classList.remove("hidden");
     updateResultProgressVisibility(false);
     refreshHud();
@@ -13323,6 +13809,7 @@ function coliseoWinRound(){
     $("resultTitle").textContent = `Ronda ${round} superada`;
     $("resultSub").innerHTML = `+${exp} XP · +${gold} 💰${lootMsg}`;
     $("resultOverlay").classList.remove("hidden");
+    audioManager.playSfx("WIN");
     updateResultProgressVisibility(false);
     battleState = null;
     coliseoRun.round++;
@@ -13808,6 +14295,7 @@ function dungeonShowRoomReward({gold, exp, items, setPiece, title}, onContinue){
     box.appendChild(card);
   }
   $("dungeonRoomRewardOverlay").classList.remove("hidden");
+  audioManager.playSfx("WIN");
   $("btnDungeonRewardContinue").onclick = ()=>{
     $("dungeonRoomRewardOverlay").classList.add("hidden");
     if(onContinue) onContinue();
@@ -14433,6 +14921,7 @@ function executePackPlayerAction(mv){
       aoeDmgByIdx[idx] = dmg;
       logBattle(`${mv.name} golpea a ${m.tpl.name}: ${dmg} de daño.${m.curHp<=0?` ¡Cae derrotado!`:""}`);
     });
+    audioManager.playSfx("HIT");
     maybeShowCrit(totalAll, battleState.mons.reduce((s,m)=>s+m.maxHp,0));
     if(mv.selfDmg){ const sd=Math.round(player.maxHp*mv.selfDmg); player.hp=Math.max(1, player.hp-sd); logBattle(`El esfuerzo te cuesta ${sd} HP.`); }
   } else {
@@ -14446,6 +14935,7 @@ function executePackPlayerAction(mv){
       totalDmg += dmg;
       if(target.curHp<=0) break;
     }
+    audioManager.playSfx("HIT");
     const petBonus = Math.round(petDamageBonus());
     if(petBonus > 0 && target.curHp > 0){
       target.curHp = Math.max(0, target.curHp - petBonus);
@@ -14464,6 +14954,7 @@ function executePackPlayerAction(mv){
         logBattle(`${PROC_LABELS[proc.type]} ¡${target.tpl.name} queda ${STATUS_EFFECTS[proc.type].label.toLowerCase()}!`);
       }
     }
+    applyWeaponOnHitEffects(target, false);
     if(mv.drain){ const heal = Math.round(totalDmg*mv.drain); player.hp = Math.min(player.maxHp, player.hp+heal); logBattle(`Absorbes ${heal} HP.`); }
     if(mv.slow){ target.slow = mv.slow; logBattle(`¡${target.tpl.name} se vuelve más lento!`); }
     if(mv.stun && Math.random()<mv.stun){ target.stunned = true; logBattle(`¡${target.tpl.name} queda aturdido!`); }
@@ -14603,6 +15094,7 @@ function packEnemyTurn(){
         battleState.lowHpShieldUsed = true;
       }
       player.hp = Math.max(0, player.hp - dmg);
+      audioManager.playSfx("HIT");
       logBattle(`${m.tpl.name} ataca: ${dmg} de daño.`);
       if(m.tpl.debuffOnHit && Math.random() < m.tpl.debuffOnHit.chance){
         const d = m.tpl.debuffOnHit;
@@ -14643,10 +15135,15 @@ function packWinBattle(){
   }
   battleState.mons.forEach(m=>{
     registerQuestKill(m.tpl.name);
+    // Mismo evento que emite winBattle() por cada monstruo — antes solo se emitía en combate solo,
+    // así que una misión/contrato "derrota N lobos" no avanzaba nada al ganarle a una manada
+    // (aunque registerQuestKill, arriba, sí contaba bien cada uno para las misiones tutorial viejas).
+    gameEventBus.emit({ type: "ENEMY_DEFEATED", payload: { amount: 1, enemyName: m.tpl.name, isThief: !!m.isThief, isBoss: !!m.isBoss, contractTargetTag: m.contractTargetTag || undefined }, eventId: "win_enemy_"+(m.ref ? m.ref.id : m.id) });
     if(!m.ref || !m.ref.marker) return; // esbirro invocado por un jefe (o guardián de parque, que no tiene marcador propio): nunca estuvo en el mapa
     map.removeLayer(m.ref.marker);
     monsters = monsters.filter(mm=>mm.id!==m.ref.id);
   });
+  gameEventBus.emit({ type: "BATTLE_WON", payload: { amount: 1 }, eventId: "win_pack_battle_"+battleState.mons.map(m=>m.ref?m.ref.id:m.id).join("_") });
 
   let xpGain = 0, goldGain = 0;
   const charBefore = {level:player.level, xp:player.xp, xpNext:player.xpNext};
@@ -14696,6 +15193,7 @@ function packWinBattle(){
     $("resultTitle").textContent = bossEntry ? `¡Jefe derrotado! ${bossEntry.tpl.name}` : "¡Victoria! 👥 ¡manada derrotada!";
     $("resultSub").innerHTML = `+${xpGain} XP · +${goldGain} 💰${lootMsg? "<br>"+lootMsg : ""}${bossItemMsg}`;
     $("resultOverlay").classList.remove("hidden");
+    audioManager.playSfx("WIN");
     animateResultProgress({
       char: {
         beforeLevel: charBefore.level, beforeXp: charBefore.xp, beforeXpNext: charBefore.xpNext,
@@ -14822,20 +15320,96 @@ function processLevelUpQueue(){
   showLevelUpModal(item);
 }
 
+/** Tarjetas de stats del modal de subida de nivel: icono/nombre fijos por atributo, valores
+ *  antes→después sacados de item.before/after (ver applyGrowth). La tarjeta con mayor incremento
+ *  (en valor absoluto, mismo criterio que se ve a simple vista en new_elements/newmodal.png) se
+ *  marca como "Mayor mejora". */
+const LEVELUP_STAT_ROWS = [
+  {key:"maxHp", icon:"❤️", label:"HP Máx."},
+  {key:"maxMp", icon:"💧", label:"MP Máx."},
+  {key:"atk", icon:"⚔", label:"ATQ"},
+  {key:"matk", icon:"✨", label:"AT. MÁG"},
+  {key:"def", icon:"🛡", label:"DEF"},
+  {key:"spd", icon:"👟", label:"VEL"},
+];
+
+/** Cuenta ascendente animada de `from` a `to` (con decimales opcionales) — mismo criterio que
+ *  animateGoldNumber(), pero con punto de partida propio en vez de arrancar siempre de 0. */
+function animateLevelUpNumber(el, from, to, decimals, duration){
+  duration = duration || 600;
+  const startTime = performance.now();
+  function tick(now){
+    const p = Math.min(1, (now-startTime)/duration);
+    const eased = 1 - Math.pow(1-p, 3);
+    const val = from + (to-from)*eased;
+    el.textContent = decimals ? val.toFixed(decimals) : Math.round(val);
+    if(p<1) requestAnimationFrame(tick);
+  }
+  if(from===to){ el.textContent = decimals ? to.toFixed(decimals) : to; return; }
+  requestAnimationFrame(tick);
+}
+
+/** Secuencia de cierre: flash de pantalla completa, el avatar del HUD queda ~1s envuelto en una
+ *  columna de luz + círculo mágico, brillo extra en las barras de HP/MP (ya llenas por applyGrowth
+ *  vía refreshHud), y el jingle de victoria — ver .lvup-hero-fx/.lvup-bar-flash/#lvupCloseFlash en
+ *  main.css. Se llama solo al cerrar el ÚLTIMO item de la cola (ver btnLevelupClose más abajo). */
+function playLevelUpCloseFx(){
+  const flash = $("lvupCloseFlash");
+  flash.classList.remove("flashing"); void flash.offsetWidth; flash.classList.add("flashing");
+  audioManager.playSfx("WIN");
+
+  const icon = $("hudIcon");
+  icon.classList.remove("lvup-hero-fx"); void icon.offsetWidth; icon.classList.add("lvup-hero-fx");
+  setTimeout(()=> icon.classList.remove("lvup-hero-fx"), 1050);
+
+  [$("hpBarWrap"), $("mpBarWrap")].forEach(bar=>{
+    bar.classList.remove("lvup-bar-flash"); void bar.offsetWidth; bar.classList.add("lvup-bar-flash");
+    setTimeout(()=> bar.classList.remove("lvup-bar-flash"), 1050);
+  });
+}
+
 function showLevelUpModal(item){
-  $("lvBadge").textContent = "Nv. "+item.level;
+  $("lvBadge").textContent = item.level;
+
+  const rows = LEVELUP_STAT_ROWS.map(r=> ({...r, before:item.before[r.key], after:item.after[r.key]}));
+  let bestIdx = 0;
+  rows.forEach((r,i)=>{ if((r.after-r.before) > (rows[bestIdx].after-rows[bestIdx].before)) bestIdx = i; });
+
   const list = $("statDiffList");
-  const rows = [
-    ["HP máx.", item.before.maxHp, item.after.maxHp],
-    ["MP máx.", item.before.maxMp, item.after.maxMp],
-    ["ATQ", item.before.atk, item.after.atk],
-    ["AT.MÁG", item.before.matk, item.after.matk],
-    ["DEF", item.before.def, item.after.def],
-    ["VEL", item.before.spd, item.after.spd],
-  ];
-  list.innerHTML = rows.map(r=>`<div class="stat-diff"><span>${r[0]}</span><span>${r[1]} → <b>${r[2]}</b></span></div>`).join("")
-    + `<div class="stat-diff" style="color:var(--gold); font-weight:800;"><span>🧬 Puntos de atributo</span><span>+5 (usa "Atributos" en el menú)</span></div>`
-    + (item.gainedAccessorySlot ? `<div class="stat-diff" style="color:var(--accent2); font-weight:800;"><span>💍 ¡Nuevo espacio de accesorio!</span><span>Equipo</span></div>` : "");
+  list.innerHTML = "";
+  let delayMs = 650; // arranca después de que el escudo y el número de nivel ya aparecieron
+  rows.forEach((r,i)=>{
+    const decimals = (Number.isInteger(r.before) && Number.isInteger(r.after)) ? 0 : 1;
+    const diff = +(r.after-r.before).toFixed(2);
+    const isBest = i===bestIdx && diff>0;
+    const gainTxt = (diff>=0?"+":"") + (decimals ? diff.toFixed(decimals) : Math.round(diff));
+    const card = document.createElement("div");
+    card.className = "lvup-stat-card" + (isBest ? " lvup-best" : "");
+    card.style.animationDelay = delayMs+"ms";
+    card.innerHTML = `${isBest ? `<span class="lvup-best-tag">⭐⭐ Mejor</span>` : ""}
+      <div class="lvup-stat-top"><div class="lvup-stat-icon">${r.icon}</div><div class="lvup-stat-name">${r.label}</div></div>
+      <div class="lvup-stat-bottom">
+        <span class="lvup-stat-values">${decimals ? r.before.toFixed(decimals) : r.before}
+          <span class="lvup-stat-arrow">➜</span><b>${decimals ? r.before.toFixed(decimals) : r.before}</b></span>
+        <span class="lvup-stat-gain">${gainTxt}</span>
+      </div>`;
+    list.appendChild(card);
+    const afterEl = card.querySelector(".lvup-stat-values b");
+    setTimeout(()=> animateLevelUpNumber(afterEl, r.before, r.after, decimals, 550), delayMs+150);
+    delayMs += 110;
+  });
+
+  $("lvupRewardBonus").classList.toggle("hidden", !item.gainedAccessorySlot);
+
+  const beforeSnapshot = {...player, level: item.level-1,
+    maxHp:item.before.maxHp, maxMp:item.before.maxMp, atk:item.before.atk, matk:item.before.matk, def:item.before.def, spd:item.before.spd};
+  const cpBefore = computeCombatPower(beforeSnapshot, COMBAT_POWER_DIRECTOR_CONFIG);
+  const cpAfter = computeCombatPower(player, COMBAT_POWER_DIRECTOR_CONFIG);
+  const cpDiff = cpAfter - cpBefore;
+  $("lvupPowerBefore").textContent = cpBefore;
+  $("lvupPowerDiff").textContent = (cpDiff>=0?"+":"") + cpDiff;
+  $("lvupPowerAfter").textContent = cpBefore;
+  setTimeout(()=> animateLevelUpNumber($("lvupPowerAfter"), cpBefore, cpAfter, 0, 700), delayMs+150);
 
   const moveArea = $("newMoveArea");
   moveArea.innerHTML = "";
@@ -14862,11 +15436,13 @@ function showLevelUpModal(item){
   $("levelupOverlay").classList.remove("hidden");
   $("btnLevelupClose").onclick = ()=>{
     $("levelupOverlay").classList.add("hidden");
+    const isFinal = pendingLevelUps.length===0;
     if(item.newMove && player.moves.length>=4 && !player.learnedIds.has(item.newMove.id)){
       showLearnMoveChoice(item.newMove);
     } else {
       processLevelUpQueue();
     }
+    if(isFinal) playLevelUpCloseFx();
     saveGame();
   };
 }
@@ -15586,6 +16162,19 @@ function renderPvpBattleUI(){
   $("bELvl").textContent = "Nv."+pvp.opponent.level;
   renderPlayerSprite();
   $("spriteEnemy").innerHTML = combatSpriteHtml(pvp.opponent.classKey, pvp.opponent.gender, true);
+  // Mismo tratamiento que renderPlayerSprite() le da a TU sprite: pose de "presentación" 3s antes
+  // de asentarse en la pose base — por ahora solo Guerrero/Berserker tienen arte de frente propio
+  // para el rival (ver combatSpriteHtml/PVP_GUERRERO_BATTLE_SPRITES/PVP_BERSERKER_BATTLE_SPRITES).
+  const oppPresentacionSprites = pvp.opponent.classKey === "guerrero" ? PVP_GUERRERO_BATTLE_SPRITES
+    : pvp.opponent.classKey === "berserker" ? PVP_BERSERKER_BATTLE_SPRITES : null;
+  if(oppPresentacionSprites){
+    const oppImg = $("spriteEnemy").querySelector("img.battle-sprite-img");
+    if(oppImg){
+      oppImg.src = oppPresentacionSprites.presentacion;
+      clearTimeout(oppImg._presentacionTimer);
+      oppImg._presentacionTimer = setTimeout(()=>{ oppImg.src = oppPresentacionSprites.base; }, 3000);
+    }
+  }
   updatePvpBars();
   // Mismo motivo que el comentario de abajo sobre el fondo: PvP no pasa por
   // updateBattleSceneBackground(), así que el escenario activo se fija acá directo (siempre el
@@ -16009,6 +16598,7 @@ function applyPvpMove(side, other, mv, rng){
       total += dmg;
       if(pvp.hp[other] <= 0) break;
     }
+    audioManager.playSfx("HIT");
     animateSprite(elFor(other), mv.isUltimate ? "ultimate-hit" : "hitshake");
     flashSprite(elFor(other), mv.isUltimate ? "ultimate" : "red");
     maybeShowCrit(total, maxHpFor(other));
@@ -16075,6 +16665,7 @@ function finishPvpBattle(){
       : `${opponentName} te venció esta vez.`) + wagerMsg;
     $("resultOverlay").classList.remove("hidden");
     if(iWon){
+      audioManager.playSfx("WIN");
       animateResultProgress({
         char: {
           beforeLevel: charBefore.level, beforeXp: charBefore.xp, beforeXpNext: charBefore.xpNext,
@@ -16547,12 +17138,382 @@ function redeemGiftCode(){
     pushItemSafe({id:"capture_card", name:"Carta de Captura", emoji:"🎴", type:"capture_card",
       tradeable:false, value:150, desc:"Úsala en combate para intentar atrapar al enemigo (necesita poca vida)."});
     toast(`🎁 ¡Código canjeado! Recibiste 🎴 una Carta de Captura.`, 4000);
+  } else if(code.type === "material"){
+    grantMaterial(code.materialId, code.amount);
+    toast(`🎁 ¡Código canjeado! +${code.amount} ${materialEmoji(code.materialId)} ${materialDisplayName(code.materialId)}`, 4000);
   }
   $("giftCodeInput").value = "";
   refreshHud(); renderShopBuyList();
   saveGame();
 }
 $("btnRedeemGiftCode").onclick = redeemGiftCode;
+
+/* ============================================================
+   TIENDA GLOBAL — mercado entre jugadores, vía PubNub.
+   ------------------------------------------------------------
+   Mismo patrón que las torres (ver PN_TOWERS_CHANNEL/fetchTowerOwnership más arriba): un canal
+   compartido con eventos append-only (nunca se edita un mensaje ya publicado, solo se agregan
+   "listed"/"cancelled"/"sold") con storeInHistory:true — cada cliente arma su propia foto del
+   mercado leyendo el historial. No hay servidor de verdad detrás, así que una carrera entre dos
+   compradores de la MISMA publicación en el mismo instante se resuelve "mejor esfuerzo, gana el
+   primero" (por orden de timetoken de PubNub) — ver reconcileGlobalShopPurchase. Pedido explícito
+   del jugador: aceptó este límite a cambio de no necesitar backend propio.
+   Publicar aparta el objeto/material del inventario (escrow) hasta que se venda o se cancele —
+   nunca se puede vender ni usar dos veces algo que ya está publicado. */
+const PN_GLOBAL_SHOP_CHANNEL = "ronda-gps-rpg-globalshop-v1";
+const GLOBAL_SHOP_MAX_ACTIVE_LISTINGS = 10;
+const GLOBAL_SHOP_LISTING_EXPIRY_MS = 7 * 24 * 3600000; // publicaciones de más de 7 días no se muestran en "Explorar" (el vendedor igual las puede cancelar en "Mis publicaciones")
+
+let globalShopListings = {}; // listingId -> registro "listed" activo (visible para comprar)
+let globalShopClosedIds = {}; // listingId -> true una vez cancelada o vendida, para no resucitarla si el fetch la trae de nuevo
+let globalShopLoaded = false;
+let globalShopSubTab = "explore"; // "explore" | "mine" | "publish"
+let globalShopPublishKind = "item"; // "item" | "material"
+let globalShopPublishCurrency = "gold"; // "gold" | "crystals"
+
+/** Todo lo que se puede publicar como material — recursos del mundo + materiales de combate, mismo
+ *  criterio unificado que ya usan resolveMaterialQty/spendMaterial/grantMaterial. */
+function sellableMaterialKeys(){
+  return [...WORLD_RESOURCE_KEYS, ...CRAFT_MATERIALS.map(m=>m.key)];
+}
+/** Valor de referencia por unidad de un material — los del mundo no tienen `sellValue` propio (solo
+ *  los CRAFT_MATERIALS lo traen), así que quedan con una aproximación modesta y fija. Es SOLO la
+ *  base del "precio sugerido", nunca se cobra ni se obliga a nadie a respetarlo. */
+function materialUnitReferenceValue(materialId){
+  const mat = CRAFT_MATERIALS.find(m=>m.key===materialId);
+  if(mat) return mat.sellValue;
+  return materialId==="iron" ? 3 : materialId==="stone" ? 2 : 1; // wood
+}
+/** Precio sugerido (en oro) para un objeto — mismo criterio que ya usa la tienda para pagar por
+ *  objetos vendidos (item.value*0.4, ver renderShopSellList), un poco más generoso porque acá se lo
+ *  compra otro JUGADOR, no la tienda. Puramente informativo — el vendedor pone el precio que quiera. */
+function suggestedGlobalShopItemPrice(item){
+  return Math.max(1, Math.round((item.value||10) * 0.6));
+}
+function suggestedGlobalShopMaterialPrice(materialId, quantity){
+  return Math.max(1, Math.round(materialUnitReferenceValue(materialId) * Math.max(1, quantity) * 1.5));
+}
+
+function globalShopListingLabel(listing){
+  return listing.kind==="material"
+    ? `${materialEmoji(listing.materialId)} ${listing.quantity} ${materialDisplayName(listing.materialId)}`
+    : `${listing.item.emoji} ${listing.item.name}`;
+}
+function globalShopCurrencyIcon(currency){ return currency==="crystals" ? "💎" : "🪙"; }
+
+/** Trae el historial del canal y arma la foto local del mercado — se llama cada vez que se abre la
+ *  pestaña Global o "Explorar" (mismo criterio que fetchTowerOwnership: sin suscripción en vivo,
+ *  solo se refresca al volver a mirar). También procesa acá los "sold" de MIS PROPIAS publicaciones
+ *  (ver maybeCreditGlobalShopSale) — así cobro apenas alguien compra algo mío, aunque no haya
+ *  estado mirando la pantalla en ese momento. */
+function fetchGlobalShopListings(cb){
+  if(!pubnub){ globalShopLoaded = true; if(cb) cb(); return; }
+  pubnub.fetchMessages({channels:[PN_GLOBAL_SHOP_CHANNEL], count:200}).then(res=>{
+    const items = (res.channels && res.channels[PN_GLOBAL_SHOP_CHANNEL]) || [];
+    items.forEach(entry=>{
+      const m = entry.message;
+      if(!m || !m.type || !m.listingId) return;
+      if(m.type === "listed"){
+        if(!globalShopClosedIds[m.listingId]) globalShopListings[m.listingId] = m;
+      } else if(m.type === "cancelled"){
+        globalShopClosedIds[m.listingId] = true;
+        delete globalShopListings[m.listingId];
+      } else if(m.type === "sold"){
+        globalShopClosedIds[m.listingId] = true;
+        delete globalShopListings[m.listingId];
+        maybeCreditGlobalShopSale(m);
+      }
+    });
+    globalShopLoaded = true;
+    if(cb) cb();
+  }).catch(e=>{ console.warn("[TIENDA GLOBAL] no se pudo consultar el mercado:", e); globalShopLoaded = true; if(cb) cb(); });
+}
+
+/** Si el "sold" que acabamos de leer es de una publicación NUESTRA todavía sin cobrar, acredita el
+ *  precio, la saca de player.globalShopListings (ya cumplió su función, no tiene sentido dejarla
+ *  ahí mostrando un botón "Cancelar" que ya no haría nada) y avisa. Si el historial trae el mismo
+ *  evento de nuevo, o (carrera rarísima) llegaran a existir dos "sold" para la misma publicación, el
+ *  `find` ya no la encuentra la segunda vez (se sacó la primera) — no se puede cobrar dos veces. */
+function maybeCreditGlobalShopSale(soldEvent){
+  const idx = (player.globalShopListings||[]).findIndex(l=> l.id === soldEvent.listingId);
+  if(idx<0) return;
+  const mine = player.globalShopListings[idx];
+  player.globalShopListings.splice(idx,1);
+  if(mine.currency === "gold") player.gold += mine.price; else player.crystals = (player.crystals||0) + mine.price;
+  toast(`💰 ¡Vendiste ${globalShopListingLabel(mine)} por ${mine.price} ${globalShopCurrencyIcon(mine.currency)} a ${escapeHtml(soldEvent.buyerName||"otro jugador")}!`, 5200);
+  refreshHud(); renderGlobalShopMyList(); saveGame();
+}
+
+function createGlobalShopListingId(){ return "gl_"+myPlayerId+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,8); }
+
+/** Publica el registro (ya armado por listItemOnGlobalShop/listMaterialOnGlobalShop) en el canal
+ *  compartido y lo guarda en player.globalShopListings — esa lista LOCAL es la fuente de verdad
+ *  para "Mis publicaciones" (a diferencia de globalShopListings, que depende del historial de
+ *  PubNub y podría no alcanzar a traer una publicación muy vieja si el canal ya creció mucho). */
+function publishGlobalShopListing(record){
+  if(!player.globalShopListings) player.globalShopListings = [];
+  if(player.globalShopListings.length >= GLOBAL_SHOP_MAX_ACTIVE_LISTINGS){
+    toast(`Ya tenés el máximo de ${GLOBAL_SHOP_MAX_ACTIVE_LISTINGS} publicaciones activas — cancelá alguna antes de publicar otra.`, 4200);
+    return false;
+  }
+  player.globalShopListings.push(record);
+  globalShopListings[record.id] = record;
+  if(pubnub){
+    pubnub.publish({channel: PN_GLOBAL_SHOP_CHANNEL, storeInHistory:true, message: record})
+      .catch(e=> console.warn("[TIENDA GLOBAL] no se pudo publicar en el mercado:", e));
+  }
+  return true;
+}
+
+function listItemOnGlobalShop(idx, price, currency){
+  const item = player.inventory[idx];
+  if(!item) return;
+  if(item.tradeable === false){ toast(`${item.name} no se puede vender.`, 3200); return; }
+  price = Math.round(Number(price));
+  if(!price || price <= 0){ toast("Poné un precio válido.", 3000); return; }
+  const record = {
+    id: createGlobalShopListingId(), type:"listed", kind:"item",
+    sellerId: myPlayerId, sellerName: player.name,
+    item: {...item}, price, currency, createdAt: Date.now()
+  };
+  if(!publishGlobalShopListing(record)) return;
+  player.inventory.splice(idx,1);
+  refreshHud(); renderInventory(); renderGlobalShopMyList(); renderGlobalShopPublishForm();
+  toast(`🌐 ¡Publicaste ${item.emoji} ${item.name} por ${price} ${globalShopCurrencyIcon(currency)}!`, 4200);
+  saveGame();
+}
+
+function listMaterialOnGlobalShop(materialId, quantity, price, currency){
+  quantity = Math.round(Number(quantity)); price = Math.round(Number(price));
+  if(!quantity || quantity <= 0 || !price || price <= 0){ toast("Poné cantidad y precio válidos.", 3000); return; }
+  if(resolveMaterialQty(materialId) < quantity){ toast(`No tenés ${quantity} de ${materialDisplayName(materialId)}.`, 3200); return; }
+  const record = {
+    id: createGlobalShopListingId(), type:"listed", kind:"material",
+    sellerId: myPlayerId, sellerName: player.name,
+    materialId, quantity, price, currency, createdAt: Date.now()
+  };
+  if(!publishGlobalShopListing(record)) return;
+  spendMaterial(materialId, quantity);
+  refreshHud(); renderGlobalShopMyList(); renderGlobalShopPublishForm();
+  toast(`🌐 ¡Publicaste ${quantity} ${materialEmoji(materialId)} ${materialDisplayName(materialId)} por ${price} ${globalShopCurrencyIcon(currency)}!`, 4200);
+  saveGame();
+}
+
+/** Cancela una publicación PROPIA (busca en player.globalShopListings, nunca en la de otro) y
+ *  devuelve el objeto/material — si el inventario está lleno para recibir un objeto de vuelta, NO
+ *  se cancela (se avisa y el jugador puede liberar espacio e intentar de nuevo), para no perderlo.
+ *  Si ya se vendió, maybeCreditGlobalShopSale ya la sacó de player.globalShopListings — el `idx<0`
+ *  de arriba cubre ese caso solo, no hace falta un chequeo aparte. */
+function cancelGlobalShopListing(listingId){
+  const idx = (player.globalShopListings||[]).findIndex(l=> l.id===listingId);
+  if(idx<0) return;
+  const listing = player.globalShopListings[idx];
+  if(listing.kind === "material"){
+    grantMaterial(listing.materialId, listing.quantity);
+  } else if(!pushItemSafe({...listing.item}, true)){
+    toast("🎒 Tu inventario está lleno — no se pudo devolver el objeto. Liberá espacio e intentá cancelar de nuevo.", 4400);
+    return;
+  }
+  player.globalShopListings.splice(idx,1);
+  globalShopClosedIds[listingId] = true;
+  delete globalShopListings[listingId];
+  if(pubnub){
+    pubnub.publish({channel: PN_GLOBAL_SHOP_CHANNEL, storeInHistory:true, message:{type:"cancelled", listingId, at:Date.now()}})
+      .catch(e=> console.warn("[TIENDA GLOBAL] no se pudo publicar la cancelación:", e));
+  }
+  refreshHud(); renderInventory(); renderGlobalShopMyList();
+  toast("Publicación cancelada — recuperaste lo que ofrecías.", 3200);
+  saveGame();
+}
+
+/** Compra una publicación de OTRO jugador. Entrega optimista (mismo criterio que el resto del
+ *  multijugador de este juego, ver towers/gifts): se cobra y se entrega al toque, sin esperar
+ *  confirmación de red — si después resulta que alguien más ya se la había llevado un instante
+ *  antes (carrera), reconcileGlobalShopPurchase la deshace sola y devuelve lo pagado. */
+function buyGlobalShopListing(listingId){
+  const listing = globalShopListings[listingId];
+  if(!listing){ toast("⚠️ Esa publicación ya no está disponible.", 3200); return; }
+  if(listing.sellerId === myPlayerId){ toast("No podés comprar tu propia publicación.", 3000); return; }
+  const price = listing.price;
+  const haveEnough = listing.currency==="gold" ? (player.gold||0) >= price : (player.crystals||0) >= price;
+  if(!haveEnough){ toast(`Te faltan ${globalShopCurrencyIcon(listing.currency)}${price}.`, 3200); return; }
+  if(listing.kind === "material"){
+    grantMaterial(listing.materialId, listing.quantity);
+  } else {
+    if(!hasInventorySpace(listing.item.id)){ toast("🎒 Tu inventario está lleno.", 3200); return; }
+    pushItemSafe({...listing.item, _globalShopPurchaseId: listingId});
+  }
+  if(listing.currency === "gold") player.gold -= price; else player.crystals -= price;
+  delete globalShopListings[listingId];
+  globalShopClosedIds[listingId] = true;
+  refreshHud(); renderGlobalShopExplore();
+  toast(`✅ ¡Compraste ${globalShopListingLabel(listing)}!`, 4000);
+  saveGame();
+  if(!pubnub) return; // sin conexión la compra queda solo local — no hay forma de avisarle al vendedor, mismo límite que el resto del multijugador de este juego
+  const soldEvent = { type:"sold", listingId, buyerId: myPlayerId, buyerName: player.name, at: Date.now() };
+  pubnub.publish({channel: PN_GLOBAL_SHOP_CHANNEL, storeInHistory:true, message: soldEvent}).then(res=>{
+    reconcileGlobalShopPurchase(listing, res && res.timetoken);
+  }).catch(e=> console.warn("[TIENDA GLOBAL] no se pudo publicar la compra:", e));
+}
+
+/** Verifica, después de publicar MI "sold", si de verdad fui el primero — trae el historial reciente
+ *  y compara timetokens de PubNub (orden real de llegada) entre todos los "sold" que haya para esta
+ *  MISMA publicación. Si alguien más ganó la carrera, deshace mi compra (saca el objeto/material que
+ *  me había entregado, usando el marcador `_globalShopPurchaseId` para no tocar por error otra copia
+ *  que ya tuviera del mismo objeto) y me devuelve lo que pagué. Caso rarísimo: dos jugadores
+ *  comprando la MISMA publicación en la misma ventana de un par de segundos. */
+function reconcileGlobalShopPurchase(listing, myTimetoken){
+  if(!pubnub || !myTimetoken) return;
+  pubnub.fetchMessages({channels:[PN_GLOBAL_SHOP_CHANNEL], count:50}).then(res=>{
+    const items = (res.channels && res.channels[PN_GLOBAL_SHOP_CHANNEL]) || [];
+    const soldEvents = items.filter(entry=> entry.message && entry.message.type==="sold" && entry.message.listingId===listing.id);
+    if(soldEvents.length <= 1) return; // nadie más compitió por esta publicación
+    soldEvents.sort((a,b)=> BigInt(a.timetoken) < BigInt(b.timetoken) ? -1 : BigInt(a.timetoken) > BigInt(b.timetoken) ? 1 : 0);
+    const winner = soldEvents[0].message;
+    if(winner.buyerId === myPlayerId) return; // gané la carrera, todo bien
+    if(listing.kind === "material"){
+      spendMaterial(listing.materialId, listing.quantity);
+    } else {
+      const invIdx = player.inventory.findIndex(it=> it._globalShopPurchaseId === listing.id);
+      if(invIdx>=0) player.inventory.splice(invIdx,1);
+    }
+    if(listing.currency === "gold") player.gold += listing.price; else player.crystals = (player.crystals||0) + listing.price;
+    toast(`⚠️ Esa publicación ya se la había llevado otro jugador un instante antes que vos — te devolvimos ${globalShopCurrencyIcon(listing.currency)}${listing.price}.`, 5800);
+    refreshHud(); renderInventory(); saveGame();
+  }).catch(e=> console.warn("[TIENDA GLOBAL] no se pudo verificar la compra:", e));
+}
+
+function renderGlobalShopExplore(){
+  const list = $("shopGlobalExploreList");
+  const now = Date.now();
+  const active = Object.values(globalShopListings)
+    .filter(l=> l.sellerId !== myPlayerId && (now - l.createdAt) < GLOBAL_SHOP_LISTING_EXPIRY_MS)
+    .sort((a,b)=> b.createdAt - a.createdAt);
+  list.innerHTML = "";
+  $("shopGlobalExploreEmpty").classList.toggle("hidden", active.length>0);
+  active.forEach(listing=>{
+    const row = document.createElement("div");
+    row.className = "cm-item";
+    const canAfford = listing.currency==="gold" ? (player.gold||0) >= listing.price : (player.crystals||0) >= listing.price;
+    const icon = listing.kind==="material" ? materialEmoji(listing.materialId) : listing.item.emoji;
+    row.innerHTML = `<div style="flex:1;">
+        <span>${icon} ${globalShopListingLabel(listing)}</span>
+        <small style="display:block; color:var(--dim); font-size:10.5px;">Vende ${escapeHtml(listing.sellerName||"un jugador")}</small>
+      </div>
+      <button ${canAfford?"":"disabled"}>${listing.price} ${globalShopCurrencyIcon(listing.currency)}</button>`;
+    row.querySelector("button").onclick = ()=> buyGlobalShopListing(listing.id);
+    list.appendChild(row);
+  });
+}
+
+function renderGlobalShopMyList(){
+  const list = $("shopGlobalMyList");
+  const mine = player.globalShopListings || [];
+  list.innerHTML = "";
+  $("shopGlobalMineEmpty").classList.toggle("hidden", mine.length>0);
+  $("shopGlobalMaxListings").textContent = GLOBAL_SHOP_MAX_ACTIVE_LISTINGS;
+  mine.forEach(listing=>{
+    const row = document.createElement("div");
+    row.className = "cm-item";
+    const icon = listing.kind==="material" ? materialEmoji(listing.materialId) : listing.item.emoji;
+    row.innerHTML = `<div style="flex:1;">
+        <span>${icon} ${globalShopListingLabel(listing)}</span>
+        <small style="display:block; color:var(--dim); font-size:10.5px;">Pedís ${listing.price} ${globalShopCurrencyIcon(listing.currency)}</small>
+      </div>
+      <button>Cancelar</button>`;
+    row.querySelector("button").onclick = ()=> cancelGlobalShopListing(listing.id);
+    list.appendChild(row);
+  });
+}
+
+function renderGlobalShopPublishForm(){
+  const itemSelect = $("shopGlobalPublishItemSelect");
+  const matSelect = $("shopGlobalPublishMaterialSelect");
+  const tradeable = player.inventory.filter(it=> it.tradeable !== false);
+  itemSelect.innerHTML = tradeable.length
+    ? tradeable.map(it=> `<option value="${player.inventory.indexOf(it)}">${it.emoji} ${escapeHtml(it.name)}</option>`).join("")
+    : `<option value="">No tenés objetos vendibles en el inventario</option>`;
+  matSelect.innerHTML = sellableMaterialKeys().map(k=> `<option value="${k}">${materialEmoji(k)} ${materialDisplayName(k)} (tenés ${resolveMaterialQty(k)})</option>`).join("");
+  updateGlobalShopSuggestedPrice();
+}
+
+function updateGlobalShopSuggestedPrice(){
+  const el = $("shopGlobalSuggestedPrice");
+  if(globalShopPublishKind === "item"){
+    const idx = Number($("shopGlobalPublishItemSelect").value);
+    const item = player.inventory[idx];
+    el.textContent = item ? `Precio sugerido: ~${suggestedGlobalShopItemPrice(item)} 🪙 (no es obligatorio — poné el que quieras)` : "";
+  } else {
+    const materialId = $("shopGlobalPublishMaterialSelect").value;
+    const qty = Math.max(1, Number($("shopGlobalPublishQty").value)||1);
+    el.textContent = materialId ? `Precio sugerido: ~${suggestedGlobalShopMaterialPrice(materialId, qty)} 🪙 (no es obligatorio — poné el que quieras)` : "";
+  }
+}
+
+function switchGlobalShopSubTab(tab){
+  globalShopSubTab = tab;
+  $("btnGlobalSubExplore").classList.toggle("active", tab==="explore");
+  $("btnGlobalSubMine").classList.toggle("active", tab==="mine");
+  $("btnGlobalSubPublish").classList.toggle("active", tab==="publish");
+  $("shopGlobalExploreWrap").classList.toggle("hidden", tab!=="explore");
+  $("shopGlobalMineWrap").classList.toggle("hidden", tab!=="mine");
+  $("shopGlobalPublishWrap").classList.toggle("hidden", tab!=="publish");
+  if(tab==="explore") fetchGlobalShopListings(renderGlobalShopExplore);
+  // "Mis publicaciones" también necesita consultar el historial (no solo pintar lo que ya sabíamos):
+  // es la única forma de enterarse de que algo se vendió y cobrar — si el jugador nunca entra a
+  // "Explorar" (solo mira sus propias publicaciones), antes se quedaba sin cobrar para siempre.
+  else if(tab==="mine") fetchGlobalShopListings(renderGlobalShopMyList);
+  else renderGlobalShopPublishForm();
+}
+$("btnGlobalSubExplore").onclick = ()=> switchGlobalShopSubTab("explore");
+$("btnGlobalSubMine").onclick = ()=> switchGlobalShopSubTab("mine");
+$("btnGlobalSubPublish").onclick = ()=> switchGlobalShopSubTab("publish");
+
+$("btnGlobalPublishKindItem").onclick = ()=>{
+  globalShopPublishKind = "item";
+  $("btnGlobalPublishKindItem").classList.add("active");
+  $("btnGlobalPublishKindMaterial").classList.remove("active");
+  $("shopGlobalPublishItemWrap").classList.remove("hidden");
+  $("shopGlobalPublishMaterialWrap").classList.add("hidden");
+  updateGlobalShopSuggestedPrice();
+};
+$("btnGlobalPublishKindMaterial").onclick = ()=>{
+  globalShopPublishKind = "material";
+  $("btnGlobalPublishKindMaterial").classList.add("active");
+  $("btnGlobalPublishKindItem").classList.remove("active");
+  $("shopGlobalPublishItemWrap").classList.add("hidden");
+  $("shopGlobalPublishMaterialWrap").classList.remove("hidden");
+  updateGlobalShopSuggestedPrice();
+};
+$("shopGlobalPublishItemSelect").onchange = updateGlobalShopSuggestedPrice;
+$("shopGlobalPublishMaterialSelect").onchange = updateGlobalShopSuggestedPrice;
+$("shopGlobalPublishQty").addEventListener("input", updateGlobalShopSuggestedPrice);
+
+$("btnGlobalCurrencyGold").onclick = ()=>{
+  globalShopPublishCurrency = "gold";
+  $("btnGlobalCurrencyGold").classList.add("active");
+  $("btnGlobalCurrencyCrystals").classList.remove("active");
+};
+$("btnGlobalCurrencyCrystals").onclick = ()=>{
+  globalShopPublishCurrency = "crystals";
+  $("btnGlobalCurrencyCrystals").classList.add("active");
+  $("btnGlobalCurrencyGold").classList.remove("active");
+};
+
+$("btnGlobalPublishSubmit").onclick = ()=>{
+  const price = $("shopGlobalPublishPrice").value;
+  if(globalShopPublishKind === "item"){
+    const idx = Number($("shopGlobalPublishItemSelect").value);
+    if(Number.isNaN(idx) || !player.inventory[idx]){ toast("Elegí un objeto para publicar.", 3000); return; }
+    listItemOnGlobalShop(idx, price, globalShopPublishCurrency);
+  } else {
+    const materialId = $("shopGlobalPublishMaterialSelect").value;
+    const qty = $("shopGlobalPublishQty").value;
+    listMaterialOnGlobalShop(materialId, qty, price, globalShopPublishCurrency);
+  }
+  $("shopGlobalPublishPrice").value = "";
+  $("shopGlobalPublishQty").value = "";
+};
 
 function openShop(){
   closeFabMenu();
@@ -16565,8 +17526,11 @@ function openShop(){
   $("shopTabs").classList.remove("hidden");
   $("shopBuyList").classList.remove("hidden");
   $("shopSellList").classList.add("hidden");
+  $("shopGlobalPanel").classList.add("hidden");
+  $("giftCodeRow").classList.remove("hidden");
   $("btnShopModeBuy").classList.add("active");
   $("btnShopModeSell").classList.remove("active");
+  $("btnShopModeGlobal").classList.remove("active");
   if(player.hasBase){
     $("btnBuyBase").textContent = "Ya tienes una";
     $("btnBuyBase").disabled = true;
@@ -16594,19 +17558,71 @@ $("btnShopModeBuy").onclick = ()=>{
   shopMode = 'buy';
   $("btnShopModeBuy").classList.add("active");
   $("btnShopModeSell").classList.remove("active");
+  $("btnShopModeGlobal").classList.remove("active");
   $("shopTabs").classList.remove("hidden");
+  $("shopFilterBar").classList.remove("hidden");
+  $("giftCodeRow").classList.remove("hidden");
   $("shopBuyList").classList.remove("hidden");
   $("shopSellList").classList.add("hidden");
+  $("shopGlobalPanel").classList.add("hidden");
   updateBaseAndPickaxeCardsVisibility();
 };
 $("btnShopModeSell").onclick = ()=>{
   shopMode = 'sell';
   $("btnShopModeSell").classList.add("active");
   $("btnShopModeBuy").classList.remove("active");
-  $("shopTabs").classList.add("hidden");
+  $("btnShopModeGlobal").classList.remove("active");
+  $("shopFilterBar").classList.add("hidden");
+  $("giftCodeRow").classList.add("hidden");
+  $("shopCategoriesPanel").classList.add("hidden");
+  $("shopFiltersPanel").classList.add("hidden");
   $("shopBuyList").classList.add("hidden");
   $("shopSellList").classList.remove("hidden");
+  $("shopGlobalPanel").classList.add("hidden");
   updateBaseAndPickaxeCardsVisibility();
+};
+$("btnShopModeGlobal").onclick = ()=>{
+  shopMode = 'global';
+  $("btnShopModeGlobal").classList.add("active");
+  $("btnShopModeBuy").classList.remove("active");
+  $("btnShopModeSell").classList.remove("active");
+  $("shopTabs").classList.add("hidden");
+  $("shopFilterBar").classList.add("hidden");
+  $("giftCodeRow").classList.add("hidden");
+  $("shopCategoriesPanel").classList.add("hidden");
+  $("shopFiltersPanel").classList.add("hidden");
+  $("shopPager").classList.add("hidden");
+  $("shopBuyList").classList.add("hidden");
+  $("shopSellList").classList.add("hidden");
+  $("shopGlobalPanel").classList.remove("hidden");
+  updateBaseAndPickaxeCardsVisibility();
+  switchGlobalShopSubTab("explore");
+};
+/** Categorías y Filtros son paneles desplegables, mutuamente excluyentes (abrir uno cierra el otro) —
+ *  ver new_elements/shop.png de referencia. */
+$("btnShopCategoriesToggle").onclick = ()=>{
+  $("shopFiltersPanel").classList.add("hidden");
+  $("shopCategoriesPanel").classList.toggle("hidden");
+};
+$("btnCloseShopCategoriesPanel").onclick = ()=> $("shopCategoriesPanel").classList.add("hidden");
+$("btnShopFiltersToggle").onclick = ()=>{
+  $("shopCategoriesPanel").classList.add("hidden");
+  $("shopFiltersPanel").classList.toggle("hidden");
+};
+$("btnCloseShopFiltersPanel").onclick = ()=> $("shopFiltersPanel").classList.add("hidden");
+$("shopSearchInput").addEventListener("input", (e)=>{
+  shopSearchQuery = e.target.value; shopPage = 0; renderShopBuyList();
+});
+$("shopRarityFilterSelect").onchange = (e)=>{
+  shopRarityFilter = e.target.value; shopPage = 0; renderShopBuyList();
+  $("shopFilterDot").classList.toggle("hidden", shopRarityFilter==="all");
+};
+$("shopSortSelect").onchange = (e)=>{ shopSortMode = e.target.value; shopPage = 0; renderShopBuyList(); };
+$("btnShopViewToggle").onclick = ()=>{
+  shopViewMode = shopViewMode==="grid" ? "list" : "grid";
+  $("btnShopViewToggle").classList.toggle("active", shopViewMode==="list");
+  $("btnShopViewToggle").title = shopViewMode==="list" ? "Cambiar a vista de cuadrícula" : "Cambiar a vista de lista";
+  renderShopBuyList();
 };
 
 /** Base Personal y los Picos son tarjetas fijas propias (no ítems de ITEM_TABLE), pero viven
@@ -16632,9 +17648,12 @@ function renderShopTabs(){
     if(cat.requiresPet && !hasPets) return; // solo se ve si ya tienes al menos una mascota
     if(classBlocked(cat)) return; // solo se ve para las clases que pueden usarlo
     const btn = document.createElement("button");
-    btn.className = "shop-tab" + (cat.key===shopActiveCategory ? " active" : "");
-    btn.textContent = cat.label;
-    btn.onclick = ()=>{ shopActiveCategory = cat.key; shopPage = 0; renderShopTabs(); renderShopBuyList(); };
+    btn.className = "shop-cat-tile" + (cat.key===shopActiveCategory ? " active" : "");
+    btn.innerHTML = `<span class="scc-icon">${cat.icon||"🎴"}</span><span class="scc-label">${cat.label}</span>`;
+    btn.onclick = ()=>{
+      shopActiveCategory = cat.key; shopPage = 0; renderShopTabs(); renderShopBuyList();
+      $("shopCategoriesPanel").classList.add("hidden");
+    };
     wrap.appendChild(btn);
   });
   updateBaseAndPickaxeCardsVisibility();
@@ -16679,6 +17698,7 @@ function buildShopCard(item, isBuy){
             for(let i=0;i<qty;i++){ if(!pushItemSafe({...item})) break; bought++; }
             if(bought<=0) return;
             player.gold -= goldCost*bought;
+            audioManager.playSfx("GOLD");
             if(matCost){
               player.wood -= matCost.wood*bought; player.stone -= matCost.stone*bought; player.iron -= matCost.iron*bought;
               player.eliteWeaponsBought = (player.eliteWeaponsBought||0) + bought;
@@ -16701,6 +17721,7 @@ function buildShopCard(item, isBuy){
           const idx = player.inventory.findIndex(x=>x.id===item.id);
           if(idx<0) return;
           player.gold += sellPrice;
+          audioManager.playSfx("GOLD");
           player.inventory.splice(idx,1);
           refreshHud(); saveGame();
           toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
@@ -16723,8 +17744,8 @@ function buildShopCard(item, isBuy){
       ? `<button disabled style="opacity:.55;">🔒 Nv.${item.reqLevel}<br><small style="font-weight:600;">💰${shopPrice(item)}</small></button>`
       : `<button ${canAfford?"":"disabled"}>💰${shopPrice(item)}</button>`;
     card.innerHTML = `${meta.sparkles}<div class="sc-emoji">${iconFor(item)}</div>
-       <div class="sc-name">${item.name}${meta.tag}</div>
-       <div class="sc-desc">${item.desc}${preview}${cmpLine}</div>
+       <div class="sc-info"><div class="sc-name">${item.name}${meta.tag}</div>
+       <div class="sc-desc">${item.desc}${preview}${cmpLine}</div></div>
        ${actionHtml}`;
     if(!locked){
       card.querySelector("button").onclick = ()=>{
@@ -16734,6 +17755,7 @@ function buildShopCard(item, isBuy){
           for(let i=0;i<qty;i++){ if(!pushItemSafe({...item})) break; bought++; }
           if(bought<=0) return;
           player.gold -= shopPrice(item)*bought;
+          audioManager.playSfx("GOLD");
           refreshHud(); saveGame();
           toast(`Compraste ${bought>1?`${bought}x `:""}${item.emoji} ${item.name}.`);
           renderShopBuyList(); renderShopSellList();
@@ -16745,14 +17767,15 @@ function buildShopCard(item, isBuy){
     const qtyTag = count>1 ? ` <b style="color:var(--accent);">x${count}</b>` : "";
     const sellPrice = Math.round((item.value||10)*0.4);
     card.innerHTML = `${meta.sparkles}<div class="sc-emoji">${iconFor(item)}</div>
-       <div class="sc-name">${item.name}${qtyTag}${meta.tag}</div>
-       <div class="sc-desc">${item.desc}</div>
+       <div class="sc-info"><div class="sc-name">${item.name}${qtyTag}${meta.tag}</div>
+       <div class="sc-desc">${item.desc}</div></div>
        <button>+💰${sellPrice}</button>`;
     card.querySelector("button").onclick = ()=>{
       showConfirm(`¿Vender <b>${item.name}</b> por 💰${sellPrice}?`, ()=>{
         const idx = player.inventory.findIndex(x=>x.id===item.id);
         if(idx<0) return;
         player.gold += sellPrice;
+        audioManager.playSfx("GOLD");
         player.inventory.splice(idx,1);
         refreshHud(); saveGame();
         toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
@@ -16763,12 +17786,26 @@ function buildShopCard(item, isBuy){
   return card;
 }
 
+/** Aplica el filtro de rareza + el orden elegido (ver #shopFilterBar) — la rareza "hereda" el
+ *  precio/nombre real de cada objeto vía shopPrice(), nada de esto inventa datos nuevos. */
+function applyShopFilterAndSort(items){
+  let out = shopRarityFilter==="all" ? items : items.filter(it=> it.rarity===shopRarityFilter);
+  if(shopSearchQuery.trim()){
+    const q = shopSearchQuery.trim().toLowerCase();
+    out = out.filter(it=> it.name.toLowerCase().includes(q));
+  }
+  if(shopSortMode==="price_asc") out = [...out].sort((a,b)=> shopPrice(a)-shopPrice(b));
+  else if(shopSortMode==="price_desc") out = [...out].sort((a,b)=> shopPrice(b)-shopPrice(a));
+  else if(shopSortMode==="name") out = [...out].sort((a,b)=> a.name.localeCompare(b.name));
+  return out;
+}
 function renderShopBuyList(){
   const list = $("shopBuyList");
   list.innerHTML = "";
+  list.classList.toggle("shop-grid-list", shopViewMode==="list");
   $("shopGoldDisplay").textContent = player.gold;
   const cat = SHOP_CATEGORIES.find(c=>c.key===shopActiveCategory);
-  const items = shopFullCatalog().filter(cat.test);
+  const items = applyShopFilterAndSort(shopFullCatalog().filter(cat.test));
   const pager = $("shopPager");
   if(items.length===0){
     const note = document.createElement("div");
@@ -16814,6 +17851,7 @@ function buildMaterialSellCard(mat){
       if(((player.craftMats && player.craftMats[mat.key]) || 0) <= 0) return;
       player.craftMats[mat.key] -= 1;
       player.gold += mat.sellValue;
+      audioManager.playSfx("GOLD");
       refreshHud(); saveGame();
       toast(`Vendiste ${mat.emoji} ${mat.label} por 💰${mat.sellValue}.`);
       renderShopSellList();
@@ -17073,20 +18111,36 @@ function openUpgradeEquipPicker(){
   }
   slots.forEach(s=>{
     const lvl = s.item.upgradeLevel||0;
-    const maxed = lvl >= EQUIP_UPGRADE_MAX;
+    // Pedido explícito: a partir de +5 ya no hay tope — se puede seguir mejorando, pero cada nivel
+    // extra además pide diamantes (ver upgradeDiamondCost/EQUIP_UPGRADE_DIAMOND_STEP en items.js);
+    // y a partir de EQUIP_UPGRADE_RISK_START_LEVEL cada intento arriesga la pieza (ver
+    // upgradeRiskChance) — se avisa con un showConfirm antes de gastar nada, no directo al toque.
+    const diamondCost = upgradeDiamondCost(s.item);
+    const riskChance = upgradeRiskChance(s.item);
+    const canAffordGold = (player.gold||0) >= upgradeCost(s.item);
+    const canAffordDiamonds = diamondCost === 0 || (player.crystals||0) >= diamondCost;
+    const disabled = !canAffordGold || !canAffordDiamonds;
+    const costLabel = "🔧 💰"+upgradeCost(s.item) + (diamondCost>0 ? ` 💎${diamondCost}` : "")
+      + (riskChance>0 ? ` ⚠️${Math.round(riskChance*100)}%` : "");
     const row = document.createElement("div");
     row.className = "cm-item";
     row.innerHTML = `<div style="flex:1;">
         <span>${s.item.emoji} ${s.label}: ${s.item.name}${lvl>0?` <b style="color:var(--gold);">+${lvl}</b>`:""}</span>
         <small style="display:block; color:var(--dim); font-size:10.5px;">${s.item.desc}</small>
       </div>
-      <button ${maxed?"disabled":""}>${maxed?"MÁX":"🔧 💰"+upgradeCost(s.item)}</button>`;
-    if(!maxed){
-      row.querySelector("button").onclick = ()=>{
-        upgradeEquippedItem(s.slotKey, s.accIdx);
-        openUpgradeEquipPicker(); // refresca la lista con el nuevo nivel/costo
-      };
-    }
+      <button ${disabled?"disabled":""}>${costLabel}</button>`;
+    row.querySelector("button").onclick = ()=>{
+      const doUpgrade = ()=>{ upgradeEquippedItem(s.slotKey, s.accIdx); openUpgradeEquipPicker(); };
+      if(riskChance > 0){
+        showConfirm(
+          `⚠️ ${s.item.name} está más allá de +${EQUIP_UPGRADE_MAX + EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS} — esta mejora es arriesgada: <b>${Math.round(riskChance*100)}%</b> de probabilidad de que no la resista y vuelva a +0 (perdés todos los niveles ganados, aunque la pieza en sí no se destruye). El oro y los diamantes se gastan igual, falle o no.<br><br>¿Querés intentarlo de todos modos?`,
+          doUpgrade,
+          {icon:"⚠️", title:"Mejora arriesgada", confirmLabel:"Arriesgarme", cancelLabel:"Mejor no"}
+        );
+      } else {
+        doUpgrade();
+      }
+    };
     list.appendChild(row);
   });
 }
@@ -17438,9 +18492,12 @@ function renderPartyOverlay(){
   const list = $("partyList");
   list.innerHTML = "";
   if(!party){
-    list.innerHTML = `<div class="empty-note">No estás en ningún grupo todavía. Créalo y luego invita a jugadores cercanos desde su menú.</div>`;
+    // TEMPORAL, pedido explícito: ocultar/deshabilitar la creación de grupos por ahora — el botón
+    // se queda siempre oculto acá (nunca se llega a $("btnCreateParty").onclick). Para reactivarlo,
+    // volver a mostrar el botón como antes (classList.remove("hidden")) y restaurar el mensaje.
+    list.innerHTML = `<div class="empty-note">La creación de grupos está deshabilitada por ahora.</div>`;
     $("btnLeaveParty").classList.add("hidden");
-    $("btnCreateParty").classList.remove("hidden");
+    $("btnCreateParty").classList.add("hidden");
     return;
   }
   $("btnCreateParty").classList.add("hidden");
@@ -18007,6 +19064,7 @@ function resolveGroupTurn(aliveIds){
         let base = Math.max(1, mon.atk*power - defEff*0.5);
         let dmg = Math.round(base * (0.85 + rng()*0.3));
         t.hp = Math.max(0, t.hp - dmg);
+        audioManager.playSfx("HIT");
         logBattle(`${mon.name} ataca a ${targetLabel}: ${dmg} de daño.`);
         updateGroupBattleBars();
         renderPartyStatusRow();
@@ -18053,6 +19111,7 @@ function resolveGroupTurn(aliveIds){
           }
         } else if(act.mv.type !== "buff"){
           const monDmg = monHpBefore - mon.hp;
+          if(monDmg > 0) audioManager.playSfx("HIT");
           if(act.mv.isUltimate){
             if(isMe) animateSprite("spritePlayer","ultimate-strike"); else animateAllyMini(act.id, "ultimate-strike");
             animateSprite("spriteEnemy","ultimate-hit");
@@ -18193,6 +19252,7 @@ function finishGroupBattle(won){
     $("resultSub").innerHTML = won ? `+${rewardXp} XP · +${rewardGold} 💰${bossItemMsg}` : "Tu grupo cayó ante el enemigo reforzado.";
     $("resultOverlay").classList.remove("hidden");
     if(won){
+      audioManager.playSfx("WIN");
       animateResultProgress({
         char: {
           beforeLevel: charBefore.level, beforeXp: charBefore.xp, beforeXpNext: charBefore.xpNext,
@@ -18224,6 +19284,7 @@ function forceCloseGroupBattleFromPeer(msg){
     $("resultTitle").textContent = won ? (msg.isBoss ? `¡Jefe derrotado en grupo! ${msg.monName}` : "¡Victoria de grupo!") : "Derrota de grupo";
     $("resultSub").innerHTML = won ? `+${msg.rewardXp||0} XP · +${msg.rewardGold||0} 💰` : "Tu grupo cayó ante el enemigo reforzado.";
     $("resultOverlay").classList.remove("hidden");
+    if(won) audioManager.playSfx("WIN");
     updateResultProgressVisibility(false);
     saveGame();
     groupBattle = null;

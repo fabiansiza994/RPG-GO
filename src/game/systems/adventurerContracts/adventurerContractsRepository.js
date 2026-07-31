@@ -49,7 +49,8 @@ function isValidContract(c){
   return !!c && typeof c.id === "string" && typeof c.status === "string" && Array.isArray(c.objectives);
 }
 
-export function createAdventurerContractsRepository(storage){
+export function createAdventurerContractsRepository(storage, options = {}){
+  const { onDiscarded } = options; // opcional: (reason)=>void — para avisar en pantalla, no solo en consola (ver adventurerContractsService.js)
   async function load(){
     let raw;
     try{
@@ -64,14 +65,17 @@ export function createAdventurerContractsRepository(storage){
       parsed = JSON.parse(raw);
     }catch(e){
       console.warn("[CONTRATO DEL AVENTURERO] el guardado local no es JSON válido — se descarta y se arranca de cero. El resto del guardado del jugador NO se toca.", e);
+      if(onDiscarded) onDiscarded("invalid_json");
       return freshRoot();
     }
     if(!isValidRoot(parsed)){
       console.warn("[CONTRATO DEL AVENTURERO] el guardado local tiene una forma inesperada (versión distinta o corrupto) — se descarta y se arranca de cero.");
+      if(onDiscarded) onDiscarded("invalid_schema");
       return freshRoot();
     }
     if(parsed.currentContract && !isValidContract(parsed.currentContract)){
       console.warn("[CONTRATO DEL AVENTURERO] el contrato guardado está corrupto — se invalida SOLO el contrato; reputación e historial se conservan.");
+      if(onDiscarded) onDiscarded("invalid_contract_only");
       parsed.currentContract = null;
     }
     return parsed;

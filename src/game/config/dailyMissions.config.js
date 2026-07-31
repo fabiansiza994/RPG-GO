@@ -33,11 +33,13 @@ export const CATEGORY_TARGET_COUNTS = Object.freeze({
   varied: 2,
 });
 
-/** Rango de oro/experiencia por dificultad, y probabilidad+rareza de material extra. */
+/** Rango de oro/experiencia por dificultad, y probabilidad+rareza de material extra.
+ *  Pedido explícito: que completar misiones se sienta como la mejor forma de subir de nivel — la
+ *  XP de estos rangos (y de FINAL_REWARD más abajo) se multiplicó x4 respecto al diseño original. */
 export const REWARD_RANGES = Object.freeze({
-  EASY:     { goldMin: 80,  goldMax: 150, xpMin: 30,  xpMax: 60,  materialChance: 0,    materialRarity: null },
-  NORMAL:   { goldMin: 150, goldMax: 300, xpMin: 60,  xpMax: 120, materialChance: 0.35, materialRarity: "common" },
-  ADVANCED: { goldMin: 300, goldMax: 600, xpMin: 120, xpMax: 250, materialChance: 0.55, materialRarity: "uncommon" },
+  EASY:     { goldMin: 80,  goldMax: 150, xpMin: 120, xpMax: 240,  materialChance: 0,    materialRarity: null },
+  NORMAL:   { goldMin: 150, goldMax: 300, xpMin: 240, xpMax: 480, materialChance: 0.35, materialRarity: "common" },
+  ADVANCED: { goldMin: 300, goldMax: 600, xpMin: 480, xpMax: 1000, materialChance: 0.55, materialRarity: "uncommon" },
 });
 
 /** Materiales que se pueden entregar como "material poco común/común" de recompensa —
@@ -51,7 +53,7 @@ export const REWARD_MATERIAL_POOL = Object.freeze({
 /** Recompensa final del cofre diario (por completar y reclamar las 10 misiones). */
 export const FINAL_REWARD = Object.freeze({
   gold: 500,
-  experience: 200,
+  experience: 800,
   diamonds: 2,
   materialRarity: "uncommon",
 });

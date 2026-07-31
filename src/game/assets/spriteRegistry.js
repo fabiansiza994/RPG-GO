@@ -312,6 +312,33 @@ export const BERSERKER_BATTLE_SPRITES = {
   defend: `/assets/sprites/berserker-battle/defensa.png?v=${BERSERKER_SPRITE_V}`,
 };
 
+/** Arte de frente del rival de PvP — Guerrero/Berserker (por ahora, las únicas dos clases con este
+ *  set dedicado). GUERRERO_BATTLE_SPRITES/BERSERKER_BATTLE_SPRITES arriba están dibujados de
+ *  espalda/costado (es la vista de TU PROPIO personaje) — antes, para mostrar al rival en un duelo
+ *  PvP, se usaba esa misma imagen espejada con CSS (scaleX(-1)), un truco que nunca se veía del
+ *  todo bien porque espejar una pose de espalda no la convierte en una pose de frente real. Estas
+ *  imágenes SÍ están dibujadas de frente a propósito, así que van SIN espejar — ver combatSpriteHtml
+ *  en main.js (el mirror=true de esa función identifica exactamente el caso "rival de PvP", los
+ *  únicos dos call sites que lo pasan). */
+const PVP_GUERRERO_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+export const PVP_GUERRERO_BATTLE_SPRITES = {
+  presentacion: `/assets/sprites/pvp_guerrero/pvp_guerrero_presentacion.png?v=${PVP_GUERRERO_SPRITE_V}`,
+  base: `/assets/sprites/pvp_guerrero/pvp_guerrero_guardia_base.png?v=${PVP_GUERRERO_SPRITE_V}`,
+  attackWindup: `/assets/sprites/pvp_guerrero/pvp_guerrero_inicio_ataque.png?v=${PVP_GUERRERO_SPRITE_V}`,
+  attackSwing: `/assets/sprites/pvp_guerrero/pvp_guerrero_ataque_sin_golpe.png?v=${PVP_GUERRERO_SPRITE_V}`,
+  attackFin: `/assets/sprites/pvp_guerrero/pvp_guerrero_fin_ataque.png?v=${PVP_GUERRERO_SPRITE_V}`,
+  defend: `/assets/sprites/pvp_guerrero/pvp_guerrero_defensa.png?v=${PVP_GUERRERO_SPRITE_V}`,
+};
+const PVP_BERSERKER_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+export const PVP_BERSERKER_BATTLE_SPRITES = {
+  presentacion: `/assets/sprites/pvp_berserk/pvp_berserk_presentacion.png?v=${PVP_BERSERKER_SPRITE_V}`,
+  base: `/assets/sprites/pvp_berserk/pvp_berserk_guardia_base.png?v=${PVP_BERSERKER_SPRITE_V}`,
+  attackWindup: `/assets/sprites/pvp_berserk/pvp_berserk_inicio_ataque.png?v=${PVP_BERSERKER_SPRITE_V}`,
+  attackSwing: `/assets/sprites/pvp_berserk/pvp_berserk_ataque_sin_golpe.png?v=${PVP_BERSERKER_SPRITE_V}`,
+  attackFin: `/assets/sprites/pvp_berserk/pvp_berserk_ataque_fin.png?v=${PVP_BERSERKER_SPRITE_V}`,
+  defend: `/assets/sprites/pvp_berserk/pvp_berserk_defensa.png?v=${PVP_BERSERKER_SPRITE_V}`,
+};
+
 /** Arquero: a diferencia de Guerrero/Berserker (que saltan/deslizan hasta el enemigo) y Mago (que
  *  lanza el hechizo desde su lugar con una sola pose), el Arquero también se queda quieto pero pasa
  *  por VARIAS poses en orden — pedido explícito, en este orden exacto: base → attack1 (saca la

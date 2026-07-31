@@ -27,8 +27,9 @@ export function createAdventurerContractsService({
   onTurnInRequired,
   onContractReadyToClaim,
   onContractExpired,
+  onCorruptedState, // opcional: (reason)=>void — el guardado local no se pudo leer y se reinició (total o solo el contrato activo)
 } = {}){
-  const repository = createAdventurerContractsRepository(storage || createInMemoryStorage());
+  const repository = createAdventurerContractsRepository(storage || createInMemoryStorage(), { onDiscarded: onCorruptedState });
   let root = null;
   let initPromise = null;
   let tickTimer = null;
