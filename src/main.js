@@ -17,9 +17,13 @@ import {
 import { Capacitor } from "@capacitor/core";
 import { App } from "@capacitor/app";
 import { isGpsSupported, gpsGetCurrentPosition, gpsWatchPosition, gpsClearWatch } from "./game/systems/nativeGeolocation.js";
-import { writeAndShareTextFile, pickAndReadTextFile } from "./game/systems/saveTransfer.js";
+import { writeAndShareTextFile, pickAndReadTextFile, writeLocalBackupFile, listLocalBackupFiles, readLocalBackupFile, deleteLocalBackupFile } from "./game/systems/saveTransfer.js";
+import { isBackupFolderSupported, pickBackupFolder, isBackupFolderValid, writeFileToBackupFolder, listBackupFolderFiles, readBackupFolderFile, deleteBackupFolderFile } from "./game/systems/backupFolder.js";
 import { INVENTORY_CAPACITY_TIERS, INVENTORY_TIER_COST } from "./game/config/inventoryCapacity.js";
-import { CRAFT_MATERIALS, BLACKSMITH_RECIPES } from "./game/config/blacksmith.js";
+import {
+  CRAFT_MATERIALS, BLACKSMITH_RECIPES,
+  CRAFT_DURATION_MIN_BY_RARITY, CRAFT_DEFAULT_DURATION_MIN, CRAFT_RUSH_MIN_PER_DIAMOND,
+} from "./game/config/blacksmith.js";
 import { CITY_REGISTRY, DEFAULT_CITY_KEY, SHRINE_TYPES, POI_TYPES, getCityPOIs } from "./game/config/world.js";
 import {
   DYNAMIC_ENTITY_STATE, DYNAMIC_ENTITY_TYPES, buildCandidateLocations, pickValidCandidateLocation,
@@ -88,6 +92,10 @@ import {
   EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS,
   EQUIP_UPGRADE_RISK_START_CHANCE,
   EQUIP_UPGRADE_RISK_STEP,
+  EQUIP_UPGRADE_DURATION_BASE_MIN,
+  EQUIP_UPGRADE_DURATION_STEP_MIN,
+  EQUIP_UPGRADE_RUSH_GOLD_PER_MIN,
+  EQUIP_UPGRADE_RUSH_MIN_PER_DIAMOND,
   ATTR_DEFS,
   SHOP_CATEGORIES,
   SHOP_PREVIEW_LEVEL_CAP,
@@ -1685,13 +1693,30 @@ function spendMaterial(matKey, amount){
 function canAffordRecipe(recipe){
   return recipe.materials.every(m=> resolveMaterialQty(m.key) >= m.amount);
 }
-/** Fabrica una receta del Herrero: cobra los materiales, entrega el arma (exactamente igual que
- *  cualquier otro objeto de equipo — findItemById ya sabe resolver BLACKSMITH_RECIPES por id) y
- *  guarda. No hace nada "a medias": si falta un solo material, o el arma no es de tu clase, o no
- *  hay espacio en el inventario, avisa y no cobra nada. */
+/** Cuánto tarda en completarse la fabricación de esta receta (ver CRAFT_DURATION_MIN_BY_RARITY en
+ *  blacksmith.js — por rareza, con un default para cualquier rareza no listada). */
+function forgeCraftDurationMs(recipe){
+  const min = CRAFT_DURATION_MIN_BY_RARITY[recipe.rarity] || CRAFT_DEFAULT_DURATION_MIN;
+  return min*60000;
+}
+/** ¿Hay una fabricación en curso (los minutos de forgeCraftDurationMs todavía no pasaron)? Solo se
+ *  puede fabricar UNA cosa a la vez — mismo criterio que la construcción de base/Edificio. */
+function isForgeCrafting(){
+  return !!(player.forgeCraft && Date.now() < player.forgeCraft.endsAt);
+}
+function forgeCraftMsLeft(){
+  return player.forgeCraft ? Math.max(0, player.forgeCraft.endsAt - Date.now()) : 0;
+}
+/** Arranca a fabricar una receta del Herrero: cobra los materiales de una y la deja "en el yunque"
+ *  por forgeCraftDurationMs (ver player.forgeCraft) — el arma se entrega sola cuando el tiempo se
+ *  cumple (ver checkForgeCraftTimers), o se puede adelantar con diamantes/anuncio (ver
+ *  rushForgeCraftWithDiamonds/handleForgeCraftAdRush). No hace nada "a medias": si falta un solo
+ *  material, el arma no es de tu clase, ya hay algo fabricándose, o no hay espacio en el
+ *  inventario, avisa y no cobra nada. */
 function craftWeapon(recipeId){
   const recipe = BLACKSMITH_RECIPES.find(r=>r.id===recipeId);
   if(!recipe) return;
+  if(isForgeCrafting()){ toast("🔨 Ya tienes un arma en el yunque — espera a que termine (o adelántala).", 3800); return; }
   if(recipe.classKey && recipe.classKey !== player.classKey){
     toast(`${recipe.name} es exclusiva de ${(CLASSES[recipe.classKey]||{}).name || recipe.classKey}.`);
     return;
@@ -1699,12 +1724,90 @@ function craftWeapon(recipeId){
   if(!canAffordRecipe(recipe)){ toast("🔨 Te faltan materiales para forjar esto.", 3200); return; }
   if(!hasInventorySpace(recipe.id)){ toast("🎒 Tu inventario está lleno — libera espacio antes de forjar.", 3600); return; }
   recipe.materials.forEach(m=> spendMaterial(m.key, m.amount));
+  const durationMs = forgeCraftDurationMs(recipe);
+  player.forgeCraft = { recipeId: recipe.id, startedAt: Date.now(), endsAt: Date.now()+durationMs };
+  refreshHud();
+  saveGame();
+  renderForge();
+  toast(`🔨 Empezaste a forjar ${recipe.emoji} ${recipe.name} — listo en ${formatTimeLeft(durationMs)}.`, 3800);
+}
+/** Entrega el arma cuando su fabricación ya se cumplió — si el inventario está lleno, NO se pierde
+ *  el arma (a diferencia de un drop normal): se queda "en espera", y se reintenta en el próximo
+ *  chequeo (ver checkForgeCraftTimers) hasta que el jugador libere espacio. */
+function completeForgeCraft(){
+  const pending = player.forgeCraft;
+  if(!pending) return;
+  const recipe = BLACKSMITH_RECIPES.find(r=>r.id===pending.recipeId);
+  if(!recipe){ player.forgeCraft = null; saveGame(); return; }
+  if(!hasInventorySpace(recipe.id)){
+    if(!pending.fullNotified){
+      pending.fullNotified = true;
+      toast("🎒 Tu arma fabricada está lista, pero tu inventario está lleno — libera espacio para recibirla.", 4400);
+      saveGame();
+    }
+    return;
+  }
   const { materials, ...itemTemplate } = recipe; // `materials` es el costo de la receta, no parte del objeto final
   pushItemSafe({...itemTemplate});
+  player.forgeCraft = null;
   refreshHud();
   saveGame();
   renderForge();
   toast(`🔨 ¡Forjaste ${recipe.emoji} ${recipe.name}!`, 3800);
+}
+/** Revisa (cada 30s, y al iniciar sesión) si tu fabricación ya se cumplió — mismo patrón que
+ *  checkConstructionTimers, nunca hace falta tener la Forja abierta para que el arma quede lista. */
+function checkForgeCraftTimers(){
+  if(!player || !player.forgeCraft) return;
+  if(Date.now() >= player.forgeCraft.endsAt) completeForgeCraft();
+}
+/** Resta minutos al timer de fabricación en curso (usado tanto por el anuncio recompensado como,
+ *  indirectamente, por rushForgeCraftWithDiamonds al llevarlo directo a 0). */
+function applyForgeCraftTimeReduction(minutes){
+  if(!player.forgeCraft) return;
+  player.forgeCraft.endsAt = Math.max(Date.now(), player.forgeCraft.endsAt - minutes*60000);
+  checkForgeCraftTimers();
+  refreshHud();
+  saveGame();
+  renderForge();
+}
+/** Paga diamantes para adelantar la fabricación en curso a que esté lista ya mismo — el costo baja
+ *  a medida que quede menos tiempo (Math.ceil(minutosRestantes / CRAFT_RUSH_MIN_PER_DIAMOND)). */
+function rushForgeCraftWithDiamonds(){
+  if(!isForgeCrafting()) return;
+  const minLeft = Math.ceil(forgeCraftMsLeft()/60000);
+  const cost = Math.max(1, Math.ceil(minLeft / CRAFT_RUSH_MIN_PER_DIAMOND));
+  if((player.crystals||0) < cost){ toast(`💎 Te faltan diamantes (necesitas ${cost}).`, 3200); return; }
+  player.crystals -= cost;
+  player.forgeCraft.endsAt = Date.now();
+  checkForgeCraftTimers();
+  refreshHud();
+  saveGame();
+  renderForge();
+}
+let forgeCraftAdInFlight = false;
+/** Ve un anuncio recompensado para adelantar la fabricación en curso — resta PLACEMENT_CONFIG
+ *  .BLACKSMITH_TIME_REDUCTION.rewardAmount minutos (mismo placement que usan las mejoras de
+ *  equipo, ver applyTimeReductionToEquipUpgrade), sujeto a los límites diarios/de sesión de
+ *  adsService. */
+async function handleForgeCraftAdRush(){
+  if(forgeCraftAdInFlight || !isForgeCrafting()) return;
+  const ui = adsService.getPlacementUiState("BLACKSMITH_TIME_REDUCTION", {kind:"craft"});
+  if(ui.state !== "READY") return;
+  forgeCraftAdInFlight = true;
+  renderForge();
+  try{
+    const res = await adsService.requestReward("BLACKSMITH_TIME_REDUCTION", {kind:"craft"});
+    if(res.ok){
+      const minutes = res.rewardAmount || 15;
+      applyForgeCraftTimeReduction(minutes);
+      await adsService.confirmRewardApplied(res.transactionId);
+      toast(`📺 ¡Adelantaste ${minutes} minutos de fabricación!`, 3400);
+    }
+  } finally {
+    forgeCraftAdInFlight = false;
+    renderForge();
+  }
 }
 /** Botín de materiales de fabricación al ganar un combate — aparte del oro/ítems de siempre, si el
  *  monstruo derrotado tiene un material temático asociado (ver CRAFT_MATERIALS), hay chance de que
@@ -1818,10 +1921,11 @@ function renderPlayerSprite(){
   // iniciar la escena de batalla se ve la pose de "presentación" 3s antes de asentarse en la pose
   // base — renderPlayerSprite() se llama una sola vez por cada inicio de combate (solo/manada/PvP/
   // grupo), así que este es el único lugar que hace falta tocar para que se vea en todos ellos.
-  const presentacionSprites = player.classKey === "guerrero" ? GUERRERO_BATTLE_SPRITES
-    : player.classKey === "mago" ? MAGO_BATTLE_SPRITES
-    : player.classKey === "berserker" ? BERSERKER_BATTLE_SPRITES
-    : player.classKey === "arquero" ? ARQUERO_BATTLE_SPRITES : null;
+  const g0 = player.gender === "f" ? "f" : "m";
+  const presentacionSprites = player.classKey === "guerrero" ? GUERRERO_BATTLE_SPRITES[g0]
+    : player.classKey === "mago" ? MAGO_BATTLE_SPRITES[g0]
+    : player.classKey === "berserker" ? BERSERKER_BATTLE_SPRITES[g0]
+    : player.classKey === "arquero" ? ARQUERO_BATTLE_SPRITES[g0] : null;
   if(presentacionSprites){
     const img = $("spritePlayer").querySelector("img.battle-sprite-img");
     if(img){
@@ -1851,22 +1955,22 @@ function combatSpriteHtml(classKey, gender, mirror){
   // El Guerrero (cualquier género — todavía solo llegó un set de arte, no dos) usa su propio
   // registro con presentación + secuencia de golpe en vez del par genérico base/attack.
   if(classKey === "guerrero"){
-    return `<img src="${GUERRERO_BATTLE_SPRITES.base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-guerrero-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
+    return `<img src="${GUERRERO_BATTLE_SPRITES[g].base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-guerrero-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
   }
   // Mismo criterio para el Mago: presentación + pose de conjuro + barrera propias en vez del par
   // genérico base/attack.
   if(classKey === "mago"){
-    return `<img src="${MAGO_BATTLE_SPRITES.base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-mago-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
+    return `<img src="${MAGO_BATTLE_SPRITES[g].base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-mago-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
   }
   // Mismo criterio para el Berserker: presentación + secuencia de slash propias en vez del par
   // genérico base/attack.
   if(classKey === "berserker"){
-    return `<img src="${BERSERKER_BATTLE_SPRITES.base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-berserker-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
+    return `<img src="${BERSERKER_BATTLE_SPRITES[g].base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-berserker-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
   }
   // Mismo criterio para el Arquero: presentación + secuencia de tiro con arco (varias poses, ver
   // playArqueroAttackSequence) propias en vez del par genérico base/attack.
   if(classKey === "arquero"){
-    return `<img src="${ARQUERO_BATTLE_SPRITES.base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-arquero-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
+    return `<img src="${ARQUERO_BATTLE_SPRITES[g].base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-arquero-battle="1" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
   }
   const spr = (CLASS_BATTLE_SPRITES[classKey]||{})[g];
   if(spr) return `<img src="${spr.base}" class="battle-sprite-img" data-classkey="${classKey}" data-gender="${g}" data-mirrored="${mirror?1:0}" alt=""${mirrorStyle}>`;
@@ -1906,18 +2010,19 @@ function playGuerreroAttackSequence(img){
   // esta secuencia (por ejemplo justo durante la pausa del golpe) y pisar la pose con "base" sin
   // que tenga nada que ver con el ataque.
   clearTimeout(img._presentacionTimer);
+  const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = GUERRERO_BATTLE_SPRITES.attack1;
-  img._seqTimer1 = setTimeout(()=>{ img.src = GUERRERO_BATTLE_SPRITES.attack2; }, GUERRERO_ATTACK_TRAVEL_MS*0.5);
+  img.src = sprites.attack1;
+  img._seqTimer1 = setTimeout(()=>{ img.src = sprites.attack2; }, GUERRERO_ATTACK_TRAVEL_MS*0.5);
   // Pedido explícito: dos variantes del golpe final que se intercalan en CADA ataque (no una al
   // azar que podría repetirse dos veces seguidas) — se guarda el turno en el propio <img> para que
   // se acuerde de un golpe al siguiente durante todo el combate.
   img._attackFinToggle = !img._attackFinToggle;
-  const finPose = img._attackFinToggle ? GUERRERO_BATTLE_SPRITES.attackFin2 : GUERRERO_BATTLE_SPRITES.attackFin;
+  const finPose = img._attackFinToggle ? sprites.attackFin2 : sprites.attackFin;
   img._seqTimer2 = setTimeout(()=>{ img.src = finPose; }, GUERRERO_ATTACK_TRAVEL_MS); // llega y golpea acá
-  img._seqTimer3 = setTimeout(()=>{ img.src = GUERRERO_BATTLE_SPRITES.attack1; }, GUERRERO_ATTACK_TRAVEL_MS + GUERRERO_ATTACK_HOLD_MS); // arranca la vuelta
+  img._seqTimer3 = setTimeout(()=>{ img.src = sprites.attack1; }, GUERRERO_ATTACK_TRAVEL_MS + GUERRERO_ATTACK_HOLD_MS); // arranca la vuelta
   img._resetTimer = setTimeout(()=>{
-    img.src = GUERRERO_BATTLE_SPRITES.base; // recién ACÁ, al llegar de verdad a su lugar
+    img.src = sprites.base; // recién ACÁ, al llegar de verdad a su lugar
     img.classList.remove("attacking");
   }, GUERRERO_ATTACK_TOTAL_MS);
 
@@ -1977,22 +2082,23 @@ function playGuerreroUltimateSequence(img){
   clearTimeout(img._ultGlowOffTimer);
   const container = img.parentElement;
   if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.classList.remove("guerrero-ultimate-glow");
-  img.src = GUERRERO_BATTLE_SPRITES.attack1;
+  img.src = sprites.attack1;
 
   img._seqTimer1 = setTimeout(()=>{
-    img.src = GUERRERO_BATTLE_SPRITES.attack2; // pose del punto más alto del salto
+    img.src = sprites.attack2; // pose del punto más alto del salto
     img.classList.add("guerrero-ultimate-glow");
   }, GUERRERO_ULTIMATE_ASCENT_MS);
   img._seqTimer2 = setTimeout(()=>{
     img.classList.remove("guerrero-ultimate-glow"); // termina el resplandor, arranca la caída en cámara lenta
   }, GUERRERO_ULTIMATE_ASCENT_MS + GUERRERO_ULTIMATE_FREEZE_MS);
   img._attackFinToggle = !img._attackFinToggle; // mismas dos variantes del golpe final, intercaladas
-  const finPose = img._attackFinToggle ? GUERRERO_BATTLE_SPRITES.attackFin2 : GUERRERO_BATTLE_SPRITES.attackFin;
+  const finPose = img._attackFinToggle ? sprites.attackFin2 : sprites.attackFin;
   img._seqTimer3 = setTimeout(()=>{ img.src = finPose; }, GUERRERO_ULTIMATE_LANDING_MS); // llega y golpea acá
   img._resetTimer = setTimeout(()=>{
-    img.src = GUERRERO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, GUERRERO_ULTIMATE_TOTAL_MS);
 
@@ -2068,10 +2174,11 @@ function playGuerreroCastSequence(img, isAoe){
   clearTimeout(img._presentacionTimer); // mismo motivo que en playGuerreroAttackSequence
   const container = img.parentElement;
   if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel()); // corta un salto de golpe anterior si quedó a medio camino
+  const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = GUERRERO_BATTLE_SPRITES.shout;
+  img.src = sprites.shout;
   img._resetTimer = setTimeout(()=>{
-    img.src = GUERRERO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, isAoe ? GUERRERO_AOE_TOTAL_MS : GUERRERO_CAST_TOTAL_MS);
 }
@@ -2090,10 +2197,11 @@ function playGuerreroBuffSequence(img, kind){
   clearTimeout(img._presentacionTimer);
   const container = img.parentElement;
   if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = GUERRERO_BATTLE_SPRITES.shout;
+  img.src = sprites.shout;
   img._resetTimer = setTimeout(()=>{
-    img.src = GUERRERO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, GUERRERO_BUFF_TOTAL_MS);
   if(container){
@@ -2153,10 +2261,11 @@ function playGuerreroDefendPose(){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
   if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = GUERRERO_BATTLE_SPRITES.defend;
+  img.src = sprites.defend;
   img._resetTimer = setTimeout(()=>{
-    img.src = GUERRERO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, GUERRERO_DEFEND_HOLD_MS);
 }
@@ -2180,10 +2289,11 @@ function playMagoCastSequence(img){
   clearTimeout(img._presentacionTimer);
   const container = img.parentElement;
   if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = MAGO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = MAGO_BATTLE_SPRITES.attack;
+  img.src = sprites.attack;
   img._resetTimer = setTimeout(()=>{
-    img.src = MAGO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, MAGO_CAST_TOTAL_MS);
 }
@@ -2205,10 +2315,11 @@ function playMagoDefendPose(){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
   if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = MAGO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = MAGO_BATTLE_SPRITES.defend;
+  img.src = sprites.defend;
   img._resetTimer = setTimeout(()=>{
-    img.src = MAGO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, MAGO_DEFEND_HOLD_MS);
 }
@@ -2222,23 +2333,32 @@ const BERSERKER_ATTACK_TOTAL_MS = BERSERKER_ATTACK_TRAVEL_MS*2 + BERSERKER_ATTAC
 
 /** Secuencia de golpe del Berserker: se DESLIZA por el piso (translateX puro, sin arco vertical)
  *  desde su lugar hasta cerca del enemigo mostrando ataque1 (espada más abajo, recién arrancando el
- *  slash), justo AL LLEGAR alterna entre las dos variantes del golpe de llegada (ataque-fin/
- *  ataque-fin2 — misma sangre/polvo barridos, mismo patrón de alternancia que el Guerrero), sostiene
- *  el golpe, y recién ahí desliza de vuelta hasta su lugar, donde se asienta en la pose base. */
+ *  slash). La versión MASCULINA, al llegar, alterna entre las dos variantes del golpe de llegada
+ *  (ataque-fin/ataque-fin2, mismo patrón de alternancia que el Guerrero). La versión FEMENINA
+ *  (confirmado — flujo distinto a propósito, no le falta arte) es una secuencia lineal única sin
+ *  alternancia: ataque1 → ataque2 → ataque-fin. Ambas sostienen el golpe y recién ahí deslizan de
+ *  vuelta hasta su lugar, donde se asientan en la pose base. */
 function playBerserkerAttackSequence(img){
   clearTimeout(img._resetTimer);
   clearTimeout(img._seqTimer1);
   clearTimeout(img._seqTimer2);
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
+  const sprites = BERSERKER_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = BERSERKER_BATTLE_SPRITES.attack1;
-  img._attackFinToggle = !img._attackFinToggle; // mismas dos variantes intercaladas que el Guerrero
-  const finPose = img._attackFinToggle ? BERSERKER_BATTLE_SPRITES.attackFin2 : BERSERKER_BATTLE_SPRITES.attackFin;
-  img._seqTimer1 = setTimeout(()=>{ img.src = finPose; }, BERSERKER_ATTACK_TRAVEL_MS); // llega y golpea acá
-  img._seqTimer2 = setTimeout(()=>{ img.src = BERSERKER_BATTLE_SPRITES.attack1; }, BERSERKER_ATTACK_TRAVEL_MS + BERSERKER_ATTACK_HOLD_MS); // arranca la vuelta
+  img.src = sprites.attack1;
+  if(sprites.attack2){
+    // Flujo femenino: lineal, sin variantes alternadas.
+    img._seqTimer1 = setTimeout(()=>{ img.src = sprites.attack2; }, BERSERKER_ATTACK_TRAVEL_MS*0.5);
+    img._seqTimer2 = setTimeout(()=>{ img.src = sprites.attackFin; }, BERSERKER_ATTACK_TRAVEL_MS); // llega y golpea acá
+  } else {
+    img._attackFinToggle = !img._attackFinToggle; // mismas dos variantes intercaladas que el Guerrero
+    const finPose = img._attackFinToggle ? sprites.attackFin2 : sprites.attackFin;
+    img._seqTimer2 = setTimeout(()=>{ img.src = finPose; }, BERSERKER_ATTACK_TRAVEL_MS); // llega y golpea acá
+  }
+  img._seqTimer3 = setTimeout(()=>{ img.src = sprites.attack1; }, BERSERKER_ATTACK_TRAVEL_MS + BERSERKER_ATTACK_HOLD_MS); // arranca la vuelta
   img._resetTimer = setTimeout(()=>{
-    img.src = BERSERKER_BATTLE_SPRITES.base; // recién ACÁ, al llegar de verdad a su lugar
+    img.src = sprites.base; // recién ACÁ, al llegar de verdad a su lugar
     img.classList.remove("attacking");
   }, BERSERKER_ATTACK_TOTAL_MS);
 
@@ -2285,10 +2405,11 @@ function playBerserkerDefendPose(){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
   if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = BERSERKER_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = BERSERKER_BATTLE_SPRITES.defend;
+  img.src = sprites.defend;
   img._resetTimer = setTimeout(()=>{
-    img.src = BERSERKER_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, BERSERKER_DEFEND_HOLD_MS);
 }
@@ -2337,7 +2458,7 @@ function fireArqueroArrowProjectile(charged){
   const dx = endX - startX, dy = endY - startY;
   const rotateDeg = (Math.atan2(dy, dx) * 180/Math.PI) - ARQUERO_ARROW_BAKED_ANGLE_DEG;
 
-  fx.src = ARQUERO_BATTLE_SPRITES.arrow;
+  fx.src = ARQUERO_BATTLE_SPRITES[player.gender === "f" ? "f" : "m"].arrow;
   fx.classList.toggle("arquero-arrow-charged", !!charged);
   fx.classList.remove("hidden");
   if(fx.getAnimations) fx.getAnimations().forEach(a=> a.cancel());
@@ -2354,10 +2475,15 @@ function fireArqueroArrowProjectile(charged){
   fx._hideTimer = setTimeout(()=> fx.classList.add("hidden"), ARQUERO_ARROW_FLIGHT_MS);
 }
 
-/** Secuencia de tiro del Arquero: se queda en su lugar pasando por las 3 poses en el orden exacto
- *  pedido (sacar flecha → apuntar → soltar), y justo cuando suelta se dispara el proyectil real
- *  (fireArqueroArrowProjectile) hacia el enemigo. `charged` (movimiento definitivo) agrega un aura
- *  dorada sobre el propio personaje además de en la punta de la flecha. */
+/** Secuencia de tiro del Arquero. Versión MASCULINA: 3 poses en el orden exacto pedido (sacar
+ *  flecha → apuntar → soltar). Versión FEMENINA (confirmado — flujo más corto a propósito, no le
+ *  falta arte): solo 2 poses, sin la pose intermedia de arco tensado (`attackAim` no existe en su
+ *  set) — se queda en `attack1` hasta el instante de soltar y ahí pasa directo a `attackFin`. En
+ *  ambos casos, justo cuando "suelta" se dispara el proyectil real (fireArqueroArrowProjectile)
+ *  hacia el enemigo, en el mismo instante (`ARQUERO_ATTACK_NOCK_MS + ARQUERO_ATTACK_AIM_MS`) para
+ *  ambos géneros, así el daño diferido (`ARQUERO_ARROW_IMPACT_MS`) no se desincroniza. `charged`
+ *  (movimiento definitivo) agrega un aura dorada sobre el propio personaje además de en la punta
+ *  de la flecha. */
 function playArqueroAttackSequence(img, charged){
   clearTimeout(img._resetTimer);
   clearTimeout(img._seqTimer1);
@@ -2366,16 +2492,19 @@ function playArqueroAttackSequence(img, charged){
   clearTimeout(img._presentacionTimer);
   const container = img.parentElement;
   if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = ARQUERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.classList.toggle("arquero-charged-glow", !!charged);
-  img.src = ARQUERO_BATTLE_SPRITES.attack1;
-  img._seqTimer1 = setTimeout(()=>{ img.src = ARQUERO_BATTLE_SPRITES.attackAim; }, ARQUERO_ATTACK_NOCK_MS);
+  img.src = sprites.attack1;
+  if(sprites.attackAim){
+    img._seqTimer1 = setTimeout(()=>{ img.src = sprites.attackAim; }, ARQUERO_ATTACK_NOCK_MS);
+  }
   img._seqTimer2 = setTimeout(()=>{
-    img.src = ARQUERO_BATTLE_SPRITES.attackRelease;
+    img.src = sprites.attackRelease || sprites.attackFin;
     fireArqueroArrowProjectile(charged);
   }, ARQUERO_ATTACK_NOCK_MS + ARQUERO_ATTACK_AIM_MS);
   img._resetTimer = setTimeout(()=>{
-    img.src = ARQUERO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
     img.classList.remove("arquero-charged-glow");
   }, ARQUERO_ATTACK_TOTAL_MS);
@@ -2397,10 +2526,11 @@ function playArqueroDefendPose(){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
   if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  const sprites = ARQUERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
-  img.src = ARQUERO_BATTLE_SPRITES.defend;
+  img.src = sprites.defend;
   img._resetTimer = setTimeout(()=>{
-    img.src = ARQUERO_BATTLE_SPRITES.base;
+    img.src = sprites.base;
     img.classList.remove("attacking");
   }, ARQUERO_DEFEND_HOLD_MS);
 }
@@ -3858,46 +3988,33 @@ async function migrateLocalSavesToRemote(){
 const SAVE_TRANSFER_FORMAT_VERSION = 1;
 
 /** Junta player_account + cada player_<classKey> que exista (nube o local — AppStorage.get ya
- *  enruta solo según haya sesión activa, igual que en cualquier otro lugar del juego) en un único
- *  archivo descargable/compartible. Pensado para el caso "jugué de invitado en el navegador y
- *  ahora quiero esa partida dentro de la app" — ver importSave más abajo. */
-async function exportSave(){
-  if(!AppStorage) return;
+ *  enruta solo según haya sesión activa, igual que en cualquier otro lugar del juego) en el mismo
+ *  formato de payload que usan tanto exportSave() (manual) como maybeRunDailyAutoBackup() (automático)
+ *  — un archivo generado por cualquiera de los dos se puede restaurar con el mismo código de import.
+ *  Devuelve null si todavía no hay ninguna partida guardada. */
+async function buildSaveExportPayload(){
+  if(!AppStorage) return null;
+  const keys = {};
   try{
-    const keys = {};
+    const res = await AppStorage.get('player_account', false);
+    if(res && res.value) keys.player_account = res.value;
+  }catch(e){ /* sin cuenta guardada todavía */ }
+  for(const classKey of Object.keys(CLASSES)){
     try{
-      const res = await AppStorage.get('player_account', false);
-      if(res && res.value) keys.player_account = res.value;
-    }catch(e){ /* sin cuenta guardada todavía */ }
-    for(const classKey of Object.keys(CLASSES)){
-      try{
-        const res = await AppStorage.get('player_'+classKey, false);
-        if(res && res.value) keys['player_'+classKey] = res.value;
-      }catch(e){ /* este héroe nunca se jugó */ }
-    }
-    if(Object.keys(keys).length === 0){ toast("No hay ninguna partida guardada todavía para exportar."); return; }
-    const payload = {app:"RPG GO", formatVersion: SAVE_TRANSFER_FORMAT_VERSION, exportedAt: new Date().toISOString(), keys};
-    const filename = `rpggo-save-${new Date().toISOString().slice(0,10)}.json`;
-    await writeAndShareTextFile(filename, JSON.stringify(payload, null, 2));
-    toast("Partida exportada.");
-  }catch(e){
-    console.error("[exportSave]", e);
-    toast("No se pudo exportar la partida.");
+      const res = await AppStorage.get('player_'+classKey, false);
+      if(res && res.value) keys['player_'+classKey] = res.value;
+    }catch(e){ /* este héroe nunca se jugó */ }
   }
+  if(Object.keys(keys).length === 0) return null;
+  return {app:"RPG GO", formatVersion: SAVE_TRANSFER_FORMAT_VERSION, exportedAt: new Date().toISOString(), keys};
 }
 
-/** Lee un archivo generado por exportSave() y sobreescribe las claves correspondientes vía
- *  AppStorage (respeta la sesión activa igual que el resto del juego: si hay cuenta logueada,
- *  importa a la nube; si no, queda local). Pide confirmación antes de tocar nada, porque pisa
- *  cualquier progreso que ya hubiera para esas mismas claves. Recarga la página al terminar para
- *  que todo el estado en memoria se reconstruya limpio desde lo recién importado, en vez de arriesgar
- *  variables globales desincronizadas a mitad de una partida ya en curso. */
-async function importSave(){
-  if(!AppStorage) return;
-  const text = await pickAndReadTextFile();
-  if(!text) return; // el usuario canceló el selector
-  let payload;
-  try{ payload = JSON.parse(text); }catch(e){ toast("Ese archivo no es un guardado válido de RPG GO."); return; }
+/** Pide confirmación y aplica un payload de guardado (mismo formato de buildSaveExportPayload) vía
+ *  AppStorage, sobreescribiendo las claves correspondientes. Compartido por importSave() (archivo
+ *  elegido a mano) y restoreAutoBackup() (uno de los backups automáticos). Recarga la página al
+ *  terminar para que todo el estado en memoria se reconstruya limpio, en vez de arriesgar variables
+ *  globales desincronizadas a mitad de una partida ya en curso. */
+function confirmAndApplySavePayload(payload, confirmMessage){
   if(!payload || payload.formatVersion !== SAVE_TRANSFER_FORMAT_VERSION || !payload.keys || typeof payload.keys !== "object"){
     toast("Ese archivo no es un guardado válido de RPG GO.");
     return;
@@ -3905,19 +4022,244 @@ async function importSave(){
   const entries = Object.entries(payload.keys).filter(([k])=> k==="player_account" || PLAYER_SAVE_KEY_RE.test(k));
   if(entries.length === 0){ toast("El archivo no tiene ninguna partida adentro."); return; }
   showConfirm(
-    `Vas a importar ${entries.length} guardado(s). Esto va a <b>sobrescribir</b> tu progreso actual para esos mismos personajes. ¿Importar igual?`,
+    confirmMessage(entries.length),
     async ()=>{
       try{
         for(const [key, value] of entries) await AppStorage.set(key, value, false);
         toast("Partida importada — reiniciando...", 2500);
         setTimeout(()=> location.reload(), 1200);
       }catch(e){
-        console.error("[importSave]", e);
+        console.error("[confirmAndApplySavePayload]", e);
         toast("No se pudo importar la partida.");
       }
     },
     {icon:"⚠️", title:"Importar partida", confirmLabel:"Importar", cancelLabel:"Cancelar"}
   );
+}
+
+/** Pensado para el caso "jugué de invitado en el navegador y ahora quiero esa partida dentro de la
+ *  app": arma el payload y lo comparte/descarga como archivo real (ver writeAndShareTextFile). Si el
+ *  jugador ya configuró una carpeta de backups (ver §Backup automático más abajo), el mismo archivo
+ *  queda ADEMÁS guardado ahí en silencio — pedido explícito: "que el export manual quede ahí
+ *  también", sin dejar de ofrecer el panel de compartir de siempre. */
+async function exportSave(){
+  try{
+    const payload = await buildSaveExportPayload();
+    if(!payload){ toast("No hay ninguna partida guardada todavía para exportar."); return; }
+    const filename = `rpggo-save-${new Date().toISOString().slice(0,10)}.json`;
+    const json = JSON.stringify(payload, null, 2);
+    await writeAndShareTextFile(filename, json);
+    const folder = getConfiguredBackupFolder();
+    if(folder && await isBackupFolderValid(folder.uri)) await writeFileToBackupFolder(folder.uri, filename, json);
+    toast("Partida exportada.");
+  }catch(e){
+    console.error("[exportSave]", e);
+    toast("No se pudo exportar la partida.");
+  }
+}
+
+/** Lee un archivo generado por exportSave() (o por un backup automático — mismo formato) elegido a
+ *  mano por el jugador, y lo aplica vía confirmAndApplySavePayload(). */
+async function importSave(){
+  if(!AppStorage) return;
+  const text = await pickAndReadTextFile();
+  if(!text) return; // el usuario canceló el selector
+  let payload;
+  try{ payload = JSON.parse(text); }catch(e){ toast("Ese archivo no es un guardado válido de RPG GO."); return; }
+  confirmAndApplySavePayload(payload, (n)=> `Vas a importar ${n} guardado(s). Esto va a <b>sobrescribir</b> tu progreso actual para esos mismos personajes. ¿Importar igual?`);
+}
+
+// ---------- Backup automático diario ----------
+// Mantiene hasta AUTO_BACKUP_MAX_COUNT copias (una por día calendario, hora del dispositivo),
+// reemplazando la más vieja al superar el límite. Mismo formato que exportSave() — un archivo de
+// acá se puede restaurar con el mismo código de import. No reemplaza el autoguardado normal (que
+// sigue guardando en cada acción crítica): esto es una copia de seguridad aparte, pensada para
+// recuperar la partida si el guardado real se corrompe, el jugador cambia de celular, o REINSTALA
+// la app. Nunca interrumpe el juego ni pide nada durante el backup en sí — si falla, solo log.
+//
+// Dónde vive el backup, en orden de preferencia:
+// 1) La carpeta que el jugador eligió a mano (ver getConfiguredBackupFolder/backupFolder.js) — vive
+//    en almacenamiento compartido de verdad (Storage Access Framework), así que SOBREVIVE a una
+//    desinstalación de la app. Es la única forma real de lograr eso en Android moderno.
+// 2) Si no hay carpeta configurada (el jugador nunca la eligió, o dijo "ahora no"): cae al
+//    almacenamiento interno silencioso de siempre (Directory.Data vía saveTransfer.js) — sigue
+//    siendo útil contra un guardado corrupto, pero SE PIERDE si se desinstala la app.
+const AUTO_BACKUP_MAX_COUNT = 5;
+const AUTO_BACKUP_LAST_DATE_KEY = "rpgGo.autoBackup.lastDate"; // clave propia, no choca con player_<clase> (ver PLAYER_SAVE_KEY_RE)
+const AUTO_BACKUP_FILENAME_RE = /^autobackup-(\d{4}-\d{2}-\d{2})\.json$/;
+const SAVE_EXPORT_FILENAME_RE = /^rpggo-save-(\d{4}-\d{2}-\d{2})\.json$/; // exportSave() — se detecta también al escanear la carpeta al reinstalar
+
+function autoBackupFilenameFor(dateStr){ return `autobackup-${dateStr}.json`; }
+
+const BACKUP_FOLDER_URI_KEY = "rpgGo.backupFolder.uri";
+const BACKUP_FOLDER_NAME_KEY = "rpgGo.backupFolder.name";
+const BACKUP_FOLDER_ASKED_KEY = "rpgGo.backupFolder.askedOnce";
+
+function getConfiguredBackupFolder(){
+  const uri = localStorage.getItem(BACKUP_FOLDER_URI_KEY);
+  if(!uri) return null;
+  return {uri, name: localStorage.getItem(BACKUP_FOLDER_NAME_KEY) || uri};
+}
+function setConfiguredBackupFolder(folder){
+  if(folder){
+    localStorage.setItem(BACKUP_FOLDER_URI_KEY, folder.uri);
+    localStorage.setItem(BACKUP_FOLDER_NAME_KEY, folder.name || folder.uri);
+  } else {
+    localStorage.removeItem(BACKUP_FOLDER_URI_KEY);
+    localStorage.removeItem(BACKUP_FOLDER_NAME_KEY);
+  }
+}
+
+/** Escribe un backup con el nombre dado en la carpeta elegida por el jugador si hay una configurada
+ *  y sigue siendo válida (el permiso no se revocó); si no, cae al almacenamiento interno. */
+async function writeBackupFile(filename, contents){
+  const folder = getConfiguredBackupFolder();
+  if(folder && await isBackupFolderValid(folder.uri)){
+    if(await writeFileToBackupFolder(folder.uri, filename, contents)) return;
+  }
+  await writeLocalBackupFile(filename, contents);
+}
+
+/** Lista los backups disponibles (autobackup-* Y rpggo-save-*, para que un reinstall detecte
+ *  también un export manual viejo) — más reciente primero. Cada entrada trae lo necesario para
+ *  leerla/borrarla después con readBackupEntry/deleteBackupEntry sin que quien llama necesite saber
+ *  si viene de la carpeta elegida o del almacenamiento interno. */
+async function listAvailableBackups(){
+  const folder = getConfiguredBackupFolder();
+  if(folder && await isBackupFolderValid(folder.uri)){
+    const files = await listBackupFolderFiles(folder.uri);
+    return files
+      .filter(f=> AUTO_BACKUP_FILENAME_RE.test(f.name) || SAVE_EXPORT_FILENAME_RE.test(f.name))
+      .sort((a,b)=> (b.lastModified||0) - (a.lastModified||0))
+      .map(f=> ({source:"folder", name:f.name, ref:f.uri}));
+  }
+  const names = (await listLocalBackupFiles()).filter(n=> AUTO_BACKUP_FILENAME_RE.test(n) || SAVE_EXPORT_FILENAME_RE.test(n));
+  return names.sort().reverse().map(n=> ({source:"internal", name:n, ref:n})); // nombre = fecha => orden alfabético = orden cronológico
+}
+async function readBackupEntry(entry){
+  return entry.source === "folder" ? await readBackupFolderFile(entry.ref) : await readLocalBackupFile(entry.ref);
+}
+async function deleteBackupEntry(entry){
+  return entry.source === "folder" ? await deleteBackupFolderFile(entry.ref) : await deleteLocalBackupFile(entry.ref);
+}
+
+/** Como máximo un backup por día calendario — se llama al abrir la app y cada vez que vuelve a
+ *  primer plano (ver visibilitychange más abajo). No hay forma de correr esto a una hora fija con
+ *  la app cerrada sin un plugin nativo de tareas en segundo plano, que este proyecto no tiene
+ *  instalado — por eso es "oportunista" (apenas se abre/reanuda ese día) en vez de puntual a
+ *  medianoche. En la práctica alcanza con abrir el juego una vez al día para tener copia diaria. */
+async function maybeRunDailyAutoBackup(){
+  try{
+    const today = new Date().toISOString().slice(0,10); // fecha local YYYY-MM-DD
+    if(localStorage.getItem(AUTO_BACKUP_LAST_DATE_KEY) === today) return; // ya se hizo hoy
+    const payload = await buildSaveExportPayload();
+    if(!payload) return; // todavía no hay ninguna partida guardada
+    await writeBackupFile(autoBackupFilenameFor(today), JSON.stringify(payload));
+    localStorage.setItem(AUTO_BACKUP_LAST_DATE_KEY, today);
+    // Rotación: solo cuenta los propios autobackup-*, nunca borra un export manual (rpggo-save-*).
+    const entries = (await listAvailableBackups()).filter(e=> AUTO_BACKUP_FILENAME_RE.test(e.name));
+    while(entries.length > AUTO_BACKUP_MAX_COUNT) await deleteBackupEntry(entries.pop()); // listAvailableBackups ya viene ordenado más reciente primero
+  }catch(e){
+    console.error("[autoBackup]", e); // nunca crítico — es un extra, no bloquea nada del juego real
+  }
+}
+setTimeout(maybeRunDailyAutoBackup, 20000); // después del chequeo de versión (15s), para no competir con la carga inicial
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) maybeRunDailyAutoBackup(); });
+
+/** Pantalla de "Copias automáticas" (ver btnAutoBackups en index.html): lista los backups
+ *  existentes (más reciente primero) con un botón "Restaurar" cada uno — hace falta una pantalla
+ *  propia porque ninguna de las dos fuentes es explorable con el selector de archivos del sistema
+ *  (Directory.Data es privado de la app; la carpeta SAF sí sería explorable, pero acceder a un
+ *  archivo puntual desde ahí requiere la misma URI que ya tenemos acá, no el picker genérico). */
+async function openAutoBackupList(){
+  const overlay = $("autoBackupOverlay"), list = $("autoBackupList");
+  if(!overlay || !list) return;
+  overlay.classList.remove("hidden");
+  list.innerHTML = `<p class="sub">Cargando...</p>`;
+  const entries = await listAvailableBackups();
+  if(entries.length === 0){
+    list.innerHTML = `<p class="sub">Todavía no hay copias automáticas — se genera una por día apenas juegues con una partida guardada.</p>`;
+    return;
+  }
+  list.innerHTML = entries.map(entry=>{
+    const dateStr = (entry.name.match(AUTO_BACKUP_FILENAME_RE)||entry.name.match(SAVE_EXPORT_FILENAME_RE)||[])[1] || entry.name;
+    const kind = AUTO_BACKUP_FILENAME_RE.test(entry.name) ? "Automática" : "Exportada a mano";
+    return `<div class="cs-account-row">
+      <span>${dateStr} <span class="sub">(${kind})</span></span>
+      <button class="cs-account-btn" data-restore-backup="1" type="button">Restaurar</button>
+    </div>`;
+  }).join("");
+  list.querySelectorAll("[data-restore-backup]").forEach((btn, i)=>{
+    btn.onclick = ()=> restoreBackupEntry(entries[i]);
+  });
+}
+
+/** Lee un backup (de cualquiera de las dos fuentes) y lo aplica vía confirmAndApplySavePayload() —
+ *  mismo flujo de confirmación + recarga que importSave(). */
+async function restoreBackupEntry(entry){
+  const text = await readBackupEntry(entry);
+  if(!text){ toast("No se pudo leer esa copia."); return; }
+  let payload;
+  try{ payload = JSON.parse(text); }catch(e){ toast("Esa copia no es un guardado válido."); return; }
+  const dateStr = (entry.name.match(AUTO_BACKUP_FILENAME_RE)||entry.name.match(SAVE_EXPORT_FILENAME_RE)||[])[1] || entry.name;
+  confirmAndApplySavePayload(payload, (n)=> `Vas a restaurar la copia del ${dateStr} (${n} guardado(s)). Esto va a <b>sobrescribir</b> tu progreso actual para esos mismos personajes. ¿Restaurar igual?`);
+}
+
+// ---------- Carpeta de backups elegida por el usuario (sobrevive a una desinstalación) ----------
+
+/** Primera vez que se abre la app en esta instalación (solo nativo/Android) — ofrece elegir una
+ *  carpeta de backups que sobreviva una desinstalación (ver BackupFolderPlugin.java). Se pregunta
+ *  UNA sola vez por instalación, pase lo que pase con la respuesta — después solo se puede
+ *  elegir/cambiar a mano desde Ajustes (ver wireSaveTransferRow). Si el jugador elige una carpeta,
+ *  se escanea de inmediato por si ya tiene backups de una instalación anterior (mismo dispositivo,
+ *  reinstalando la app tras haber usado esa misma carpeta) y se ofrece continuar con esa partida. */
+async function maybeOfferBackupFolderSetup(){
+  if(!isBackupFolderSupported()) return;
+  if(localStorage.getItem(BACKUP_FOLDER_ASKED_KEY)) return;
+  localStorage.setItem(BACKUP_FOLDER_ASKED_KEY, "1");
+  showConfirm(
+    "¿Querés elegir una carpeta en tu celular para guardar copias de seguridad de tu partida? Así, si alguna vez desinstalás la app, tu progreso no se pierde. Podés cambiarla después en Ajustes.",
+    async ()=>{
+      const folder = await pickBackupFolder();
+      if(!folder) return; // canceló el selector
+      setConfiguredBackupFolder(folder);
+      toast(`Carpeta de backups configurada: ${folder.name}`, 3000);
+      await maybeOfferRestoreFromBackupFolder();
+    },
+    {icon:"📁", title:"Copias de seguridad", confirmLabel:"Elegir carpeta", cancelLabel:"Ahora no"}
+  );
+}
+
+/** Tras elegir/cambiar la carpeta, revisa si ya tiene algún backup (típicamente: la misma carpeta
+ *  usada en una instalación anterior de la app) y ofrece continuar con el más reciente. No hace
+ *  nada si la carpeta está vacía (instalación realmente nueva). */
+async function maybeOfferRestoreFromBackupFolder(){
+  const entries = await listAvailableBackups();
+  if(entries.length === 0) return;
+  const newest = entries[0];
+  const text = await readBackupEntry(newest);
+  if(!text) return;
+  let payload;
+  try{ payload = JSON.parse(text); }catch(e){ return; }
+  const dateStr = (newest.name.match(AUTO_BACKUP_FILENAME_RE)||newest.name.match(SAVE_EXPORT_FILENAME_RE)||[])[1] || newest.name;
+  confirmAndApplySavePayload(payload, (n)=> `Se encontró una partida guardada en esta carpeta (${dateStr}, ${n} guardado(s)). ¿Continuar con esta partida?`);
+}
+
+/** Botón "Elegir/Cambiar carpeta" en Ajustes — a diferencia de maybeOfferBackupFolderSetup(), esto
+ *  se puede llamar en cualquier momento, cuantas veces se quiera. */
+async function changeBackupFolder(){
+  const folder = await pickBackupFolder();
+  if(!folder) return;
+  setConfiguredBackupFolder(folder);
+  toast(`Carpeta de backups configurada: ${folder.name}`, 3000);
+  refreshAutoBackupFolderRow();
+  await maybeOfferRestoreFromBackupFolder();
+}
+function refreshAutoBackupFolderRow(){
+  const btn = $("btnChangeBackupFolder");
+  if(!btn) return;
+  const folder = getConfiguredBackupFolder();
+  btn.textContent = folder ? `📁 ${folder.name}` : "📁 Elegir carpeta";
 }
 
 /* ---------- Toast ---------- */
@@ -4760,6 +5102,7 @@ async function saveGame(){
       base: player.base || null, baseStorage: player.baseStorage || [], baseExtraSlots: player.baseExtraSlots||0, hasBase: player.hasBase||false, baseEverPlaced: player.baseEverPlaced||false,
       isBuilding: player.isBuilding||false, buildingLastCollectAt: player.buildingLastCollectAt||null,
       buildingUpgradeEndsAt: player.buildingUpgradeEndsAt||null,
+      forgeCraft: player.forgeCraft||null, equipUpgrade: player.equipUpgrade||null,
       shadowWolfNightKey: player.shadowWolfNightKey||null, shadowWolfEscapes: player.shadowWolfEscapes||0,
       dynamicEntities: player.dynamicEntities||[],
       worldEvents: player.worldEvents||[], lastEventResolvedAt: player.lastEventResolvedAt||null,
@@ -4893,6 +5236,7 @@ function freshAccountData(name){
     gold: 20, crystals: 0, darkEssence: 0, lastBossCrystalDay: null, inventoryCapacityTier: 0,
     base: null, baseStorage: [], baseExtraSlots: 0, hasBase: false, baseEverPlaced: false,
     isBuilding: false, buildingLastCollectAt: null, buildingUpgradeEndsAt: null,
+    forgeCraft: null, equipUpgrade: null,
     shadowWolfNightKey: null, shadowWolfEscapes: 0,
     dynamicEntities: [], worldEvents: [], lastEventResolvedAt: null, lastRegionId: null,
     lastDailyBonus: null, totalDistanceM: 0, medals: [], zoneDistanceM: {},
@@ -4954,6 +5298,7 @@ function rebuildPlayer(accountData, heroData){
     base: accountData.base || null, baseStorage: accountData.baseStorage || [], baseExtraSlots: accountData.baseExtraSlots||0, hasBase: accountData.hasBase||false, baseEverPlaced: accountData.baseEverPlaced||false,
     isBuilding: accountData.isBuilding||false, buildingLastCollectAt: accountData.buildingLastCollectAt||null,
     buildingUpgradeEndsAt: accountData.buildingUpgradeEndsAt||null,
+    forgeCraft: accountData.forgeCraft||null, equipUpgrade: accountData.equipUpgrade||null,
     shadowWolfNightKey: accountData.shadowWolfNightKey||null, shadowWolfEscapes: accountData.shadowWolfEscapes||0,
     eliteWeaponsBought: heroData.eliteWeaponsBought||0,
     dynamicEntities: accountData.dynamicEntities||[],
@@ -5887,7 +6232,14 @@ function initMap(savedPos){
   setInterval(()=> runIfNotInBattle(collectTowerGold), 5*60000); // revisa el oro acumulado de tus torres cada 5 minutos
   setInterval(()=> runIfNotInBattle(collectBuildingGold), 5*60000); // igual para el oro del Edificio
   checkConstructionTimers();
-  setInterval(()=> runIfNotInBattle(checkConstructionTimers), 30000); // revisa cada 30s si tu base/Edificio ya terminaron de construirse
+  checkForgeCraftTimers();
+  checkEquipUpgradeTimers();
+  setInterval(()=> runIfNotInBattle(()=>{
+    checkConstructionTimers();
+    checkForgeCraftTimers();
+    checkEquipUpgradeTimers();
+    refreshTimerCardsIfOpen(); // repinta la Forja/el picker de mejoras si están abiertos, para que la cuenta regresiva no se quede congelada
+  }), 30000); // revisa cada 30s si tu base/Edificio/fabricación/mejora ya terminaron
   setInterval(()=> saveGame(), 15000); // autoguardado periódico — a propósito NO se pausa en combate, por seguridad de datos
   setInterval(()=> runIfNotInBattle(maybeSpawnThief), 90000);
   setInterval(()=> runIfNotInBattle(maybeSpawnChest), 45000);
@@ -8337,13 +8689,52 @@ function materialLabelFor(key){
   if(worldMat) return {emoji:worldMat.emoji, label:worldMat.label};
   return {emoji:"❔", label:key};
 }
+/** Tarjeta de progreso de la fabricación en curso (si hay una) — barra + cuenta regresiva +
+ *  botones para adelantarla con diamantes o viendo un anuncio (pedido explícito: nada de oro acá,
+ *  ver CRAFT_DURATION_MIN_BY_RARITY en blacksmith.js). */
+function buildForgeCraftProgressRow(){
+  const pending = player.forgeCraft;
+  const recipe = BLACKSMITH_RECIPES.find(r=>r.id===pending.recipeId);
+  const durationMs = Math.max(1, pending.endsAt - pending.startedAt);
+  const pct = Math.max(0, Math.min(100, Math.round(((Date.now()-pending.startedAt)/durationMs)*100)));
+  const msLeft = forgeCraftMsLeft();
+  const minLeft = Math.ceil(msLeft/60000);
+  const diamondCost = Math.max(1, Math.ceil(minLeft / CRAFT_RUSH_MIN_PER_DIAMOND));
+  const adUi = adsService.getPlacementUiState("BLACKSMITH_TIME_REDUCTION", {kind:"craft"});
+  const adLabel = adUi.state==="READY" ? "Ver anuncio (-15m)"
+    : adUi.state==="LOADING" || adUi.state==="NOT_LOADED" ? "Preparando anuncio…"
+    : adUi.state==="LIMIT_REACHED" ? "Disponible mañana"
+    : adUi.state==="COOLDOWN" ? "Disponible más tarde" : "Anuncio no disponible";
+  const row = document.createElement("div");
+  row.className = "inv-item forge-timer-card";
+  row.style.flexDirection = "column";
+  row.style.alignItems = "stretch";
+  row.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; width:100%;">
+      <div class="ie">${recipe?recipe.emoji:"🔨"}</div>
+      <div class="it" style="flex:1;">
+        Forjando ${recipe?recipe.name:"arma"}…
+        <div style="font-size:11px; color:var(--gold); margin-top:2px;">⏳ ${msLeft>0?formatTimeLeft(msLeft):"¡Listo!"}</div>
+      </div>
+    </div>
+    <div class="durability-bar-wrap"><div class="durability-bar-fill forge-timer-bar" style="width:${pct}%"></div></div>
+    <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
+      <button data-act="rush-diamond" style="width:auto; padding:6px 10px;">💎 Terminar ya (${diamondCost})</button>
+      <button data-act="rush-ad" ${adUi.state!=="READY"?"disabled":""} style="width:auto; padding:6px 10px;">📺 ${adLabel}</button>
+    </div>`;
+  row.querySelector('[data-act="rush-diamond"]').onclick = ()=> rushForgeCraftWithDiamonds();
+  row.querySelector('[data-act="rush-ad"]').onclick = ()=> handleForgeCraftAdRush();
+  return row;
+}
 /** Pestaña "Fabricar" — una fila por receta (ver BLACKSMITH_RECIPES), con cada material mostrado
  *  como "tengo/necesito" y en rojo el que falta. El botón "Forjar" se deshabilita si falta algún
- *  material o si el arma no es de tu clase — craftWeapon() vuelve a chequear todo igual (nunca
- *  confía solo en el estado del botón). */
+ *  material, si el arma no es de tu clase, o si ya hay algo en el yunque (ver isForgeCrafting) —
+ *  craftWeapon() vuelve a chequear todo igual (nunca confía solo en el estado del botón). */
 function renderForgeCraftTab(){
   const list = $("forgeList");
   list.innerHTML = "";
+  const busy = isForgeCrafting();
+  if(busy) list.appendChild(buildForgeCraftProgressRow());
   BLACKSMITH_RECIPES.forEach(recipe=>{
     const afford = canAffordRecipe(recipe);
     const wrongClass = recipe.classKey && recipe.classKey !== player.classKey;
@@ -8364,7 +8755,7 @@ function renderForgeCraftTab(){
           ${recipe.name}${wrongClass?` <small style="color:var(--danger);">(Solo ${(CLASSES[recipe.classKey]||{}).name||recipe.classKey})</small>`:""}
           <div style="font-size:10.5px; color:var(--dim); margin-top:2px;">${recipe.desc}</div>
         </div>
-        <button data-act="craft" ${(!afford||wrongClass)?"disabled":""} style="width:auto; padding:6px 12px;">Forjar</button>
+        <button data-act="craft" ${(!afford||wrongClass||busy)?"disabled":""} style="width:auto; padding:6px 12px;">Forjar</button>
       </div>
       <div class="forge-mats-row">${matsHtml}</div>`;
     row.querySelector('[data-act="craft"]').onclick = ()=> craftWeapon(recipe.id);
@@ -10367,11 +10758,15 @@ function enterInvSelectMode(it, card){
   $("invList").querySelectorAll(".inv-card-v2").forEach(c=> c.classList.add("selectable"));
   $("invMassActions").classList.remove("hidden");
 }
-/** ¿Este objeto (o uno igual a él) ya está puesto en algún hueco de equipo ahora mismo? */
+/** ¿Esta instancia EXACTA de objeto es la que está puesta ahora mismo? Comparación por
+ *  REFERENCIA, no por id — a propósito: si tenés dos copias del mismo arma (una puesta, otra de
+ *  repuesto en la mochila), comparar por id marcaría a las DOS como "puesto" (la Forja mostraba
+ *  "Espada del Temerario (puesto)" dos veces, y el ribbon "EQUIPADO" aparecía también en la de
+ *  repuesto). Cada copia vive como su propio objeto en player.inventory/player.equipment — nunca
+ *  se fusionan — así que la referencia es lo único que identifica a la que de verdad está puesta. */
 function isItemCurrentlyEquipped(item){
-  if(item.slot === "accessory") return (player.equipment.accessory||[]).some(e=> e && e.id===item.id);
-  const eq = player.equipment[item.slot];
-  return !!(eq && eq.id === item.id);
+  if(item.slot === "accessory") return (player.equipment.accessory||[]).some(e=> e === item);
+  return player.equipment[item.slot] === item;
 }
 
 // Pedido explícito: buscador/orden/"solo equipados" escondidos detrás de un botón "Filtros" (en
@@ -11048,7 +11443,48 @@ function applyUpgradeToItem(item, level){
   item.bonuses = scaled;
   item.desc = bonusDesc(scaled) + item.descSuffix;
 }
+/** Cuánto tarda en completarse el PRÓXIMO nivel de mejora — pedido explícito: "al menos 15 minutos
+ *  por mejora", subiendo por nivel para que los tramos tardíos (que ya cuestan diamantes) también
+ *  pesen más en tiempo. Ver EQUIP_UPGRADE_DURATION_BASE_MIN/_STEP_MIN en items.js. */
+function upgradeDurationMs(item){
+  const nextLevel = (item.upgradeLevel||0) + 1;
+  const min = EQUIP_UPGRADE_DURATION_BASE_MIN + EQUIP_UPGRADE_DURATION_STEP_MIN*(nextLevel-1);
+  return min*60000;
+}
+/** ¿Hay una mejora en curso? Solo se puede mejorar UNA pieza a la vez (mismo criterio que la
+ *  fabricación de la Forja y la construcción de base/Edificio). */
+function isEquipUpgrading(){
+  return !!(player.equipUpgrade && Date.now() < player.equipUpgrade.endsAt);
+}
+function equipUpgradeMsLeft(){
+  return player.equipUpgrade ? Math.max(0, player.equipUpgrade.endsAt - Date.now()) : 0;
+}
+/** ¿Este slot puntual (o este accesorio puntual) es el que está mejorándose ahora mismo? Se usa
+ *  para bloquear equipar/quitar esa pieza mientras dura la mejora — ver equipItem/unequipSlot. */
+function isSlotUpgrading(slot, accIdx){
+  const p = player.equipUpgrade;
+  if(!p || !isEquipUpgrading()) return false;
+  return p.slotKey===slot && (slot!=="accessory" || p.accIdx===accIdx);
+}
+/** ¿El nivel que se está esperando ahora mismo todavía se puede acelerar con oro? Misma frontera
+ *  que ya separa "paga con oro" de "paga con diamantes" en upgradeCost/upgradeDiamondCost —
+ *  pedido explícito: "acelerar con oro las primeras, después diamante o anuncios". */
+function isEquipUpgradeGoldRushEligible(){
+  return !!(player.equipUpgrade && (player.equipUpgrade.fromLevel+1) <= EQUIP_UPGRADE_MAX);
+}
+/** Si la Forja/picker de mejoras está abierta, la refresca — los timers pueden completarse o
+ *  acelerarse desde fuera de esa pantalla (poller de 30s), así que nunca hay que asumir que sigue
+ *  abierta para volver a dibujarla. */
+function refreshUpgradePickerIfOpen(){
+  const el = $("upgradeEquipPickOverlay");
+  if(el && !el.classList.contains("hidden")) openUpgradeEquipPicker();
+}
+/** Arranca la mejora de la pieza equipada en `slot`/`accIdx`: cobra oro/diamantes de una (el riesgo
+ *  de que falle también queda "congelado" en ese momento — ver pending.riskChance) y la deja
+ *  "en la fragua" por upgradeDurationMs (ver player.equipUpgrade). El resultado (éxito o fallo) se
+ *  resuelve solo al cumplirse el tiempo — ver completeEquipUpgrade. */
 function upgradeEquippedItem(slot, accIdx){
+  if(isEquipUpgrading()){ toast("🔧 Ya tienes una mejora en curso — espera a que termine (o adelántala).", 3800); return; }
   const item = slot==="accessory" ? player.equipment.accessory[accIdx] : player.equipment[slot];
   if(!item) return;
   const level = item.upgradeLevel||0;
@@ -11061,18 +11497,116 @@ function upgradeEquippedItem(slot, accIdx){
   // le da peso real al riesgo a partir de EQUIP_UPGRADE_RISK_START_LEVEL.
   player.gold -= cost;
   if(diamondCost > 0) player.crystals -= diamondCost;
+  const durationMs = upgradeDurationMs(item);
+  player.equipUpgrade = {
+    slotKey: slot, accIdx: slot==="accessory" ? accIdx : null,
+    itemName: item.name, itemEmoji: item.emoji,
+    fromLevel: level, riskChance,
+    startedAt: Date.now(), endsAt: Date.now()+durationMs,
+  };
+  refreshHud();
+  saveGame();
+  toast(`🔧 Empezaste a mejorar ${item.emoji} ${item.name} — listo en ${formatTimeLeft(durationMs)}.`, 3800);
+}
+/** Resuelve el resultado de la mejora en curso cuando su tiempo ya se cumplió — éxito o fallo
+ *  (según pending.riskChance, congelado desde que arrancó), exactamente como antes hacía
+ *  upgradeEquippedItem de una sola vez. */
+function completeEquipUpgrade(){
+  const pending = player.equipUpgrade;
+  if(!pending) return;
+  const item = pending.slotKey==="accessory" ? player.equipment.accessory[pending.accIdx] : player.equipment[pending.slotKey];
+  player.equipUpgrade = null;
+  if(!item){ saveGame(); refreshUpgradePickerIfOpen(); return; } // no debería pasar: equipItem/unequipSlot bloquean tocar el slot mientras mejora
   unapplyBonuses(item.bonuses);
-  if(riskChance > 0 && Math.random() < riskChance){
+  if(pending.riskChance > 0 && Math.random() < pending.riskChance){
     // Falla: la pieza NO se destruye, pero pierde TODOS los niveles de mejora ganados hasta ahora.
     applyUpgradeToItem(item, 0);
     applyBonuses(item.bonuses);
     refreshHud(); renderEquipPanel(); saveGame();
     toast(`💥 ¡${item.name} no resistió la mejora y volvió a +0!`, 4200);
   } else {
-    applyUpgradeToItem(item, level+1);
+    applyUpgradeToItem(item, pending.fromLevel+1);
     applyBonuses(item.bonuses);
     refreshHud(); renderEquipPanel(); saveGame();
-    toast(`🔧 ¡${item.name} mejorado a +${level+1}!`);
+    toast(`🔧 ¡${item.name} mejorado a +${pending.fromLevel+1}!`);
+  }
+  refreshUpgradePickerIfOpen();
+}
+/** Revisa (cada 30s, y al iniciar sesión) si tu mejora ya se cumplió — nunca hace falta tener el
+ *  picker de mejoras abierto para que se resuelva sola. */
+function checkEquipUpgradeTimers(){
+  if(!player || !player.equipUpgrade) return;
+  if(Date.now() >= player.equipUpgrade.endsAt) completeEquipUpgrade();
+}
+/** Repinta la pestaña Fabricar de la Forja y/o el picker de mejoras si están abiertos — para que su
+ *  cuenta regresiva y el estado del botón de anuncio no se queden congelados mientras el jugador
+ *  se queda mirando la pantalla (ver el setInterval de 30s en initMap). */
+function refreshTimerCardsIfOpen(){
+  // Ojo: llama renderForgeCraftTab() directo, NO renderForge() — renderForge() emite
+  // BLACKSMITH_VISITED cada vez (usado por "entregar" en contratos de aventurero), y este refresh
+  // periódico no debería contar como una nueva visita solo por tener la pantalla abierta y quieta.
+  const forgeEl = $("forgeOverlay");
+  if(forgeEl && !forgeEl.classList.contains("hidden") && forgeActiveTab==="craft") renderForgeCraftTab();
+  refreshUpgradePickerIfOpen();
+}
+function applyEquipUpgradeTimeReduction(minutes){
+  if(!player.equipUpgrade) return;
+  player.equipUpgrade.endsAt = Math.max(Date.now(), player.equipUpgrade.endsAt - minutes*60000);
+  checkEquipUpgradeTimers();
+  refreshHud();
+  saveGame();
+  refreshUpgradePickerIfOpen();
+}
+/** Paga oro para adelantar la mejora en curso a que esté lista ya mismo — SOLO mientras el nivel
+ *  esperado siga dentro de EQUIP_UPGRADE_MAX (ver isEquipUpgradeGoldRushEligible); más allá de eso
+ *  hay que usar diamantes o un anuncio. */
+function rushEquipUpgradeWithGold(){
+  if(!isEquipUpgrading()) return;
+  if(!isEquipUpgradeGoldRushEligible()){ toast(`Esta mejora ya pasó +${EQUIP_UPGRADE_MAX} — solo se puede adelantar con 💎 o anuncio.`, 3800); return; }
+  const minLeft = Math.ceil(equipUpgradeMsLeft()/60000);
+  const cost = minLeft * EQUIP_UPGRADE_RUSH_GOLD_PER_MIN;
+  if((player.gold||0) < cost){ toast(`🪙 Te faltan oro (necesitas ${cost}).`, 3200); return; }
+  player.gold -= cost;
+  player.equipUpgrade.endsAt = Date.now();
+  checkEquipUpgradeTimers();
+  refreshHud();
+  saveGame();
+  refreshUpgradePickerIfOpen();
+}
+/** Paga diamantes para adelantar la mejora en curso — disponible siempre (a diferencia del oro),
+ *  el costo baja a medida que quede menos tiempo. */
+function rushEquipUpgradeWithDiamonds(){
+  if(!isEquipUpgrading()) return;
+  const minLeft = Math.ceil(equipUpgradeMsLeft()/60000);
+  const cost = Math.max(1, Math.ceil(minLeft / EQUIP_UPGRADE_RUSH_MIN_PER_DIAMOND));
+  if((player.crystals||0) < cost){ toast(`💎 Te faltan diamantes (necesitas ${cost}).`, 3200); return; }
+  player.crystals -= cost;
+  player.equipUpgrade.endsAt = Date.now();
+  checkEquipUpgradeTimers();
+  refreshHud();
+  saveGame();
+  refreshUpgradePickerIfOpen();
+}
+let equipUpgradeAdInFlight = false;
+/** Ve un anuncio recompensado para adelantar la mejora en curso — mismo placement que la Forja
+ *  (BLACKSMITH_TIME_REDUCTION), resta rewardAmount minutos por anuncio. */
+async function handleEquipUpgradeAdRush(){
+  if(equipUpgradeAdInFlight || !isEquipUpgrading()) return;
+  const ui = adsService.getPlacementUiState("BLACKSMITH_TIME_REDUCTION", {kind:"upgrade"});
+  if(ui.state !== "READY") return;
+  equipUpgradeAdInFlight = true;
+  refreshUpgradePickerIfOpen();
+  try{
+    const res = await adsService.requestReward("BLACKSMITH_TIME_REDUCTION", {kind:"upgrade"});
+    if(res.ok){
+      const minutes = res.rewardAmount || 15;
+      applyEquipUpgradeTimeReduction(minutes);
+      await adsService.confirmRewardApplied(res.transactionId);
+      toast(`📺 ¡Adelantaste ${minutes} minutos de mejora!`, 3400);
+    }
+  } finally {
+    equipUpgradeAdInFlight = false;
+    refreshUpgradePickerIfOpen();
   }
 }
 
@@ -11095,6 +11629,7 @@ function equipItem(idx, accessorySlotIdx){
       targetIdx = arr.findIndex(a=>!a); // primer espacio vacío
       if(targetIdx === -1) targetIdx = 0; // si están todos llenos, reemplaza el primero
     }
+    if(isSlotUpgrading("accessory", targetIdx)){ toast("🔧 Ese accesorio se está mejorando — espera a que termine.", 3600); return; }
     const current = arr[targetIdx];
     if(current){
       if(current.type==="book") forgetBookMove(current); else unapplyBonuses(current.bonuses);
@@ -11103,6 +11638,7 @@ function equipItem(idx, accessorySlotIdx){
     if(item.type==="book") learnBookMove(item); else applyBonuses(item.bonuses);
     arr[targetIdx] = item;
   } else {
+    if(isSlotUpgrading(slot, null)){ toast("🔧 Esa pieza se está mejorando — espera a que termine.", 3600); return; }
     const current = player.equipment[slot];
     if(current){ unapplyBonuses(effectiveBonuses(current)); current._damagedPenaltyApplied = false; player.inventory.push({...current}); }
     applyBonuses(item.bonuses);
@@ -11150,6 +11686,7 @@ function forgetBookMove(item){
 
 /** Quita lo que hay en un slot y lo regresa al inventario. slotOrIdx: nombre de slot, o índice si es accesorio. */
 function unequipSlot(slot, accessorySlotIdx){
+  if(isSlotUpgrading(slot, accessorySlotIdx)){ toast("🔧 Esa pieza se está mejorando — espera a que termine.", 3600); return; }
   if(slot === "accessory"){
     const arr = player.equipment.accessory;
     const current = arr[accessorySlotIdx];
@@ -15196,6 +15733,15 @@ function startPackBattle(packMons, opts){
     packBuffUsed: false, // ver triggerPackBuffAbility/packEnemyTurn — como mucho UNA vez por combate
     log:[]
   };
+  // Barra de defensa del jugador — antes SOLO se armaba en startBattle() (combate 1 vs 1), así que
+  // en manada nunca aparecía (aunque packEnemyTurn hoy también sabe pedir el gesto de defensa en
+  // golpes fuertes, ver isStrongAttack/canBlock ahí). Mismo criterio que startBattle: se llena
+  // fresca en cada combate nuevo, nunca se recarga durante ESTE.
+  if(classHasDefendPose(player.classKey)){
+    battleState.defenseBarCharges = defenseBarCharges();
+    battleState.defenseBarMax = battleState.defenseBarCharges;
+    battleState.defenseBar = battleState.defenseBarMax;
+  }
   updateBattleSceneBackground();
   updateBattleRainFx();
   $("battleWrap").classList.remove("group-mode");
@@ -15633,41 +16179,92 @@ function packEnemyTurn(){
     // aviso de "va a atacar": un "!" arriba de ESTE miembro de la manada un instante antes de que
     // se resuelva el golpe — en una manada de varios enemigos no siempre es obvio cuál está
     // actuando en ese momento, esto lo deja claro antes de que aparezca el daño.
+    const spdMod = m.slow ? (1-m.slow) : 1;
+    const power = 0.9 + Math.random()*0.5;
+    // Golpes fuertes también se pueden esquivar/bloquear con el mismo QTE que el combate 1 vs 1
+    // (ver enemyTurn/triggerDodgeQTE) — antes la manada pegaba siempre directo, sin QTE ni barra de
+    // defensa (pedido explícito: que la barra de defensa funcione igual en los dos modos).
+    const isStrongAttack = power >= 1.25;
+    const isBlockDefender = classHasDefendPose(player.classKey);
+    const canBlock = !isBlockDefender || battleState.defenseBar > 0;
     showPackAttackTelegraph(idx);
+    if(isStrongAttack && canBlock){
+      setTimeout(()=>{
+        hidePackAttackTelegraph(idx);
+        triggerDodgeQTE(m, (dodged)=>{
+          const outcome = dodged ? (isBlockDefender ? "blocked" : "dodged") : "hit";
+          resolvePackDirectAttack(m, idx, power, spdMod, outcome);
+          updateBattleBars(); refreshHud();
+          setTimeout(attackNext, 500);
+        }, isBlockDefender);
+      }, 480);
+      return;
+    }
+    if(isStrongAttack && isBlockDefender && !canBlock){
+      logBattle(`🛡️ Tu barra de defensa está agotada — ya no puedes bloquear golpes fuertes en este combate.`);
+    }
     setTimeout(()=>{
       hidePackAttackTelegraph(idx);
-      const spdMod = m.slow ? (1-m.slow) : 1;
-      const power = 0.9 + Math.random()*0.5;
-      let dmg = calcDamage(m.atk*spdMod, effectiveDef(), power, 0.08);
-      if(player.lowHpShield && !battleState.lowHpShieldUsed && (player.hp/player.maxHp) <= 0.3){
-        const reduced = Math.round(dmg * (1-player.lowHpShield));
-        logBattle(`🧣 ¡Tu capa te protege! Absorbe ${dmg-reduced} de daño.`);
-        dmg = reduced;
-        battleState.lowHpShieldUsed = true;
-      }
-      player.hp = Math.max(0, player.hp - dmg);
-      audioManager.playSfx("HIT");
-      logBattle(`${m.tpl.name} ataca: ${dmg} de daño.`);
-      if(m.tpl.debuffOnHit && Math.random() < m.tpl.debuffOnHit.chance){
-        const d = m.tpl.debuffOnHit;
-        battleState.playerBuffs[d.stat] = Math.max(0.25, battleState.playerBuffs[d.stat]*(1-d.amount));
-        const label = d.stat==="def"?"DEF":d.stat==="atk"?"ATQ":"VEL";
-        logBattle(`¡${m.tpl.name} debilita tu ${label}!`);
-      }
-      animatePackMon(idx, "attacke");
-      if(m.tpl.name === "Lobo Umbrío") triggerPackLoboAttackPose(idx);
-      if(m.tpl.name === "Demonio Menor") triggerPackDemonioAttackPose(idx);
-      if(m.tpl.name === "Cuervo Corrupto") triggerPackCuervoAttackPose(idx);
-      if(m.tpl.name === "Rata Mutante") triggerPackRataMutantePose(idx, "attack", 700);
-      animateSprite("spritePlayer","hitshake");
-      flashSprite("spritePlayer","red");
-      maybeShowCrit(dmg, player.maxHp);
-      spawnFloatingNumber("spritePlayer", "-"+dmg, (dmg >= player.maxHp*0.5) ? "crit" : "damage");
+      resolvePackDirectAttack(m, idx, power, spdMod, "hit");
       updateBattleBars(); refreshHud();
       setTimeout(attackNext, 500); // pausa tras el golpe antes de pasar al siguiente atacante
     }, 480); // ventana en la que se ve el "!" antes de que el golpe se resuelva
   }
   attackNext();
+}
+/** Resuelve el golpe de UN miembro de la manada contra el jugador — mismo criterio que
+ *  resolveEnemyDirectAttack (combate 1 vs 1: dodged no toca nada, blocked gasta una carga de la
+ *  barra de defensa en vez de vida, hit aplica el daño de siempre), pero con las animaciones de
+ *  manada (por índice dentro de #packStageRow) en vez de las de #spriteEnemy solo. */
+function resolvePackDirectAttack(m, idx, power, spdMod, outcome){
+  if(outcome === "dodged"){
+    animatePackMon(idx, "attacke");
+    showBattlePopup("¡Esquivado!", "miss");
+    logBattle(`💨 ¡Esquivaste el golpe de ${m.tpl.name} deslizando a tiempo!`);
+    return;
+  }
+  let dmg = calcDamage(m.atk*spdMod, effectiveDef(), power, 0.08);
+  audioManager.playSfx("HIT"); // cubre "blocked" y "hit" — "dodged" ya cortó con el return de arriba
+  if(outcome === "blocked"){
+    battleState.defenseBar = Math.max(0, battleState.defenseBar - 1);
+    const blockGesture = player.classKey === "mago" ? "la barrera mágica"
+      : player.classKey === "berserker" ? "el filo de la espada"
+      : player.classKey === "arquero" ? "el arco" : "el escudo";
+    animatePackMon(idx, "attacke");
+    setTimeout(()=>{
+      playPlayerDefendPose();
+      flashSprite("spritePlayer","purple");
+      showBattlePopup("¡Bloqueado!", "blocked");
+    }, BLOCK_REACT_MS);
+    logBattle(`🛡️ ¡Bloqueaste el golpe de ${m.tpl.name} con ${blockGesture}! Te quedan ${battleState.defenseBar}/${battleState.defenseBarMax} bloqueos.`);
+    if(battleState.defenseBar <= 0){
+      logBattle(`⚠️ Tu barra de defensa se agotó — ya no podrás bloquear golpes fuertes en este combate.`);
+    }
+    return;
+  }
+  if(player.lowHpShield && !battleState.lowHpShieldUsed && (player.hp/player.maxHp) <= 0.3){
+    const reduced = Math.round(dmg * (1-player.lowHpShield));
+    logBattle(`🧣 ¡Tu capa te protege! Absorbe ${dmg-reduced} de daño.`);
+    dmg = reduced;
+    battleState.lowHpShieldUsed = true;
+  }
+  player.hp = Math.max(0, player.hp - dmg);
+  logBattle(`${m.tpl.name} ataca: ${dmg} de daño.`);
+  if(m.tpl.debuffOnHit && Math.random() < m.tpl.debuffOnHit.chance){
+    const d = m.tpl.debuffOnHit;
+    battleState.playerBuffs[d.stat] = Math.max(0.25, battleState.playerBuffs[d.stat]*(1-d.amount));
+    const label = d.stat==="def"?"DEF":d.stat==="atk"?"ATQ":"VEL";
+    logBattle(`¡${m.tpl.name} debilita tu ${label}!`);
+  }
+  animatePackMon(idx, "attacke");
+  if(m.tpl.name === "Lobo Umbrío") triggerPackLoboAttackPose(idx);
+  if(m.tpl.name === "Demonio Menor") triggerPackDemonioAttackPose(idx);
+  if(m.tpl.name === "Cuervo Corrupto") triggerPackCuervoAttackPose(idx);
+  if(m.tpl.name === "Rata Mutante") triggerPackRataMutantePose(idx, "attack", 700);
+  animateSprite("spritePlayer","hitshake");
+  flashSprite("spritePlayer","red");
+  maybeShowCrit(dmg, player.maxHp);
+  spawnFloatingNumber("spritePlayer", "-"+dmg, (dmg >= player.maxHp*0.5) ? "crit" : "damage");
 }
 
 function packWinBattle(){
@@ -17407,13 +18004,18 @@ $("btnFleeCorner").onclick = ()=>{
 };
 
 /** Orden fijo de las 8 cuñas del menú radial (mismo orden horario de siempre, arrancando arriba).
- *  `content` es el sufijo de su .wheel-slice-content-N. Mascotas/Bases son "condicionales": solo
- *  entran en el reparto si el jugador ya las desbloqueó — ver layoutWheelMenu(). Ajustes (⚙️) NO
- *  es una cuña — pedido explícito: vive como botón flotante aparte, fuera del anillo (ver
+ *  `content` es el sufijo de su .wheel-slice-content-N. Mascotas/Bases/Grupo son "condicionales":
+ *  solo entran en el reparto si `unlocked[requires]` da true — ver layoutWheelMenu(). Ajustes (⚙️)
+ *  NO es una cuña — pedido explícito: vive como botón flotante aparte, fuera del anillo (ver
  *  #btnSettingsCorner en index.html/main.css y openSettingsScreen() más abajo). */
+/** El Grupo (batalla en grupo multijugador) todavía no está habilitado para jugadores — pedido
+ *  explícito: sacarlo del menú radial por ahora, sin borrar el botón/overlay/lógica (para poder
+ *  reactivarlo más adelante con solo volver esto a `true`). Usa el mismo mecanismo condicional que
+ *  ya tienen Mascotas/Bases (ver requires/unlocked en layoutWheelMenu) en vez de un caso especial. */
+const WHEEL_GROUP_SLICE_ENABLED = false;
 const WHEEL_SLOT_ORDER = [
   {btn:"btnFriends", content:0},
-  {btn:"btnParty", content:1},
+  {btn:"btnParty", content:1, requires:"group"},
   {btn:"btnAttrs", content:2},
   {btn:"btnBases", content:3, requires:"base"},
   {btn:"btnForge", content:4},
@@ -17439,7 +18041,7 @@ function wheelPolarPct(radius, deg){
 function layoutWheelMenu(){
   const hasPets = !!(player.pets && player.pets.length > 0);
   const hasBase = !!player.baseEverPlaced;
-  const unlocked = {pets:hasPets, base:hasBase};
+  const unlocked = {pets:hasPets, base:hasBase, group:WHEEL_GROUP_SLICE_ENABLED};
   const visible = WHEEL_SLOT_ORDER.filter(slot=> !slot.requires || unlocked[slot.requires]);
   const N = visible.length;
   const step = 360/N;
@@ -18644,11 +19246,53 @@ function openUpgradeStationModal(station){
   $("btnUpgStationClose").onclick = ()=> $("upgradeStationOverlay").classList.add("hidden");
 }
 
+/** Tarjeta de progreso de la mejora en curso (si hay una) — barra + cuenta regresiva + botones
+ *  para adelantarla. Con oro SOLO mientras el nivel esperado siga dentro de EQUIP_UPGRADE_MAX
+ *  (pedido explícito: "acelerar con oro las primeras"); más allá de eso, diamantes o anuncio. */
+function buildEquipUpgradeProgressRow(){
+  const pending = player.equipUpgrade;
+  const durationMs = Math.max(1, pending.endsAt - pending.startedAt);
+  const pct = Math.max(0, Math.min(100, Math.round(((Date.now()-pending.startedAt)/durationMs)*100)));
+  const msLeft = equipUpgradeMsLeft();
+  const minLeft = Math.ceil(msLeft/60000);
+  const goldEligible = isEquipUpgradeGoldRushEligible();
+  const goldCost = minLeft * EQUIP_UPGRADE_RUSH_GOLD_PER_MIN;
+  const diamondCost = Math.max(1, Math.ceil(minLeft / EQUIP_UPGRADE_RUSH_MIN_PER_DIAMOND));
+  const adUi = adsService.getPlacementUiState("BLACKSMITH_TIME_REDUCTION", {kind:"upgrade"});
+  const adLabel = adUi.state==="READY" ? "Ver anuncio (-15m)"
+    : adUi.state==="LOADING" || adUi.state==="NOT_LOADED" ? "Preparando anuncio…"
+    : adUi.state==="LIMIT_REACHED" ? "Disponible mañana"
+    : adUi.state==="COOLDOWN" ? "Disponible más tarde" : "Anuncio no disponible";
+  const row = document.createElement("div");
+  row.className = "cm-item forge-timer-card";
+  row.style.flexDirection = "column";
+  row.style.alignItems = "stretch";
+  row.innerHTML = `
+    <div style="display:flex; align-items:center; gap:10px; width:100%;">
+      <div class="ie">${pending.itemEmoji||"🔧"}</div>
+      <div style="flex:1;">
+        Mejorando ${pending.itemName||"equipo"} a <b style="color:var(--gold);">+${pending.fromLevel+1}</b>
+        <div style="font-size:11px; color:var(--gold); margin-top:2px;">⏳ ${msLeft>0?formatTimeLeft(msLeft):"¡Listo!"}</div>
+      </div>
+    </div>
+    <div class="durability-bar-wrap"><div class="durability-bar-fill forge-timer-bar" style="width:${pct}%"></div></div>
+    <div style="display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;">
+      ${goldEligible?`<button data-act="rush-gold" style="width:auto; padding:6px 10px;">🪙 Terminar ya (${goldCost})</button>`:""}
+      <button data-act="rush-diamond" style="width:auto; padding:6px 10px;">💎 Terminar ya (${diamondCost})</button>
+      <button data-act="rush-ad" ${adUi.state!=="READY"?"disabled":""} style="width:auto; padding:6px 10px;">📺 ${adLabel}</button>
+    </div>`;
+  if(goldEligible) row.querySelector('[data-act="rush-gold"]').onclick = ()=> rushEquipUpgradeWithGold();
+  row.querySelector('[data-act="rush-diamond"]').onclick = ()=> rushEquipUpgradeWithDiamonds();
+  row.querySelector('[data-act="rush-ad"]').onclick = ()=> handleEquipUpgradeAdRush();
+  return row;
+}
 /** Lista cada pieza equipada con su nivel de mejora actual y su costo para subir uno más. */
 function openUpgradeEquipPicker(){
   const list = $("upgradeEquipPickList");
   list.innerHTML = "";
   $("upgradeEquipPickOverlay").classList.remove("hidden");
+  const busy = isEquipUpgrading();
+  if(busy) list.appendChild(buildEquipUpgradeProgressRow());
   const slots = [];
   EQUIP_SLOTS.forEach(slotDef=>{
     if(slotDef.key === "accessory"){
@@ -18658,7 +19302,7 @@ function openUpgradeEquipPicker(){
     }
   });
   if(slots.length===0){
-    list.innerHTML = `<div class="empty-note">No tienes nada equipado todavía — equipa algo primero desde tu inventario.</div>`;
+    if(!busy) list.innerHTML = `<div class="empty-note">No tienes nada equipado todavía — equipa algo primero desde tu inventario.</div>`;
     return;
   }
   slots.forEach(s=>{
@@ -18671,9 +19315,9 @@ function openUpgradeEquipPicker(){
     const riskChance = upgradeRiskChance(s.item);
     const canAffordGold = (player.gold||0) >= upgradeCost(s.item);
     const canAffordDiamonds = diamondCost === 0 || (player.crystals||0) >= diamondCost;
-    const disabled = !canAffordGold || !canAffordDiamonds;
+    const disabled = busy || !canAffordGold || !canAffordDiamonds;
     const costLabel = "🔧 💰"+upgradeCost(s.item) + (diamondCost>0 ? ` 💎${diamondCost}` : "")
-      + (riskChance>0 ? ` ⚠️${Math.round(riskChance*100)}%` : "");
+      + (riskChance>0 ? ` ⚠️${Math.round(riskChance*100)}%` : "") + ` · ⏳${formatTimeLeft(upgradeDurationMs(s.item))}`;
     const row = document.createElement("div");
     row.className = "cm-item";
     row.innerHTML = `<div style="flex:1;">
@@ -19942,6 +20586,7 @@ function enterGameFlow(){
   $("classOverlay").classList.remove("hidden");
   buildClassGrid();
   initContinueScreen();
+  setTimeout(maybeOfferBackupFolderSetup, 600); // pequeño delay para no pisar la animación de entrada a esta pantalla
 }
 /** Abre #authOverlay para cualquiera de los dos casos: puerta inicial (allowGuest:true, ver
  *  initAuthGate) o vincular cuenta a mitad de partida desde la ficha de personaje
@@ -20004,6 +20649,15 @@ function refreshAccountRow(){
 function wireSaveTransferRow(){
   $("btnExportSave").onclick = exportSave;
   $("btnImportSave").onclick = importSave;
+  $("btnAutoBackups").onclick = openAutoBackupList;
+  $("btnCloseAutoBackups").onclick = ()=> $("autoBackupOverlay").classList.add("hidden");
+  const folderRow = $("csBackupFolderRow");
+  if(folderRow){
+    // Solo tiene sentido en la app empaquetada — en web no hay Storage Access Framework.
+    folderRow.classList.toggle("hidden", !isBackupFolderSupported());
+    $("btnChangeBackupFolder").onclick = changeBackupFolder;
+    refreshAutoBackupFolderRow();
+  }
 }
 function wireAccountRow(){
   refreshAccountRow();

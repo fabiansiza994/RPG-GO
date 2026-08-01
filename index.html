@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Ronda — RPG de Mapa Real</title>
 <!-- PWA: instalable a pantalla completa (sin la barra de direcciones) vía "Agregar a pantalla de
      inicio" — ver public/manifest.webmanifest. Las meta tags de abajo son el equivalente para iOS
@@ -1103,6 +1103,14 @@
       <button class="cs-account-btn" id="btnExportSave" type="button">⬇️ Exportar</button>
       <button class="cs-account-btn" id="btnImportSave" type="button">⬆️ Importar</button>
     </div>
+    <div class="cs-account-row" id="csAutoBackupRow" title="Copias automáticas diarias guardadas en este dispositivo">
+      <span>Copias automáticas</span>
+      <button class="cs-account-btn" id="btnAutoBackups" type="button">🕐 Ver copias</button>
+    </div>
+    <div class="cs-account-row hidden" id="csBackupFolderRow" title="Carpeta del celular donde se guardan las copias automáticas — sobrevive si desinstalás la app">
+      <span>Carpeta de backups</span>
+      <button class="cs-account-btn" id="btnChangeBackupFolder" type="button">📁 Elegir carpeta</button>
+    </div>
     <div class="cs-account-row hidden" id="csAdsPrivacyRow" title="Cambiar tu elección de consentimiento de anuncios">
       <span>Privacidad</span>
       <button class="cs-account-btn" id="btnAdsPrivacyOptions" type="button">Opciones de privacidad de anuncios</button>
@@ -1126,6 +1134,16 @@
       </div>
     </div>
     <button class="ghostbtn" id="btnCloseSettings" style="margin-top:14px;">Cerrar</button>
+  </div>
+</div>
+
+<!-- COPIAS AUTOMÁTICAS (backup diario silencioso, guardado localmente en el dispositivo) -->
+<div class="overlay hidden" id="autoBackupOverlay">
+  <div class="sheet">
+    <h1 class="title">🕐 Copias automáticas</h1>
+    <p class="sub">Se genera una copia por día mientras juegues, guardada en este dispositivo (hasta 5 — la más vieja se reemplaza sola). Restaurar una sobrescribe tu progreso actual.</p>
+    <div id="autoBackupList"></div>
+    <button class="ghostbtn" id="btnCloseAutoBackups" style="margin-top:14px;">Cerrar</button>
   </div>
 </div>
 

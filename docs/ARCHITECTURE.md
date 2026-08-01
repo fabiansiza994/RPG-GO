@@ -7,14 +7,23 @@ rpg-go/
 ├─ index.html
 ├─ package.json
 ├─ vite.config.js
+├─ capacitor.config.json          (empaquetado Android — appId com.rpggo.app, ver §9)
+├─ ADS_RELEASE_CHECKLIST.md       (checklist manual antes de publicar un build de producción con ads)
+├─ android/                       (proyecto nativo Capacitor — ver §9; incluye BackupFolderPlugin.java,
+│                                   plugin propio no-npm, registrado a mano en MainActivity.java)
 ├─ public/
 │  ├─ maplibre-leaflet-shim.js   (traductor Leaflet -> MapLibre, ver ARCHITECTURE §2)
 │  ├─ maplibre-gl.js / .css      (MapLibre empaquetado localmente, sin depender de un CDN)
 │  ├─ map-base-style.json        (estilo vectorial del mapa, OpenFreeMap)
+│  ├─ sounds/                    (música + efectos, ver audioManager.js)
+│  ├─ assets/backgrounds/        (fondos de batalla con perspectiva, ver battleScenes.js)
 │  └─ assets/
 │     └─ sprites/
-│        ├─ class-battle/
-│        ├─ class-walk/
+│        ├─ class-battle/                (Guerrero/Mago/Arquero genérico — CLASS_BATTLE_SPRITES)
+│        ├─ <clase>-battle/, <clase>-battle-f/  (arte propio por clase con secuencia de golpe/grito/
+│        │    defensa dedicada — las 4 clases ya tienen set femenino completo)
+│        ├─ class-walk/, class-walk-f/, class-walk-<clase>/, class-walk-<clase>-f/  (sprite
+│        │    direccional del personaje en el mapa GPS, por clase y género)
 │        ├─ demonio-menor/
 │        ├─ dragon-menor/
 │        ├─ golem-roca/
@@ -35,6 +44,8 @@ rpg-go/
       │  │                   POI_TYPES + getCityPOIs() — Capa 1 del Mapa Vivo)
       │  ├─ enemies.js     (incluye LOBO_SOMBRIO_TEMPLATE)
       │  ├─ items.js       (incluye ROTATING_WEAPON_POOL con procs de estado)
+      │  ├─ blacksmith.js  (reparación/mejora en la Forja)
+      │  ├─ inventoryCapacity.js
       │  ├─ progression.js
       │  ├─ pets.js
       │  ├─ multiplayer.js
@@ -43,7 +54,17 @@ rpg-go/
       │  ├─ regions.js     (Mapa Vivo, Capa 5b — nombres/íconos/jefe por bioma)
       │  ├─ osm.js         (Mapa Vivo, Capa 6 — GameFeature, tabla OSM→GameFeature, config de consulta/cache)
       │  ├─ combatPower.js       (Capa 7 — pesos del cálculo de Combat Power)
-      │  └─ difficultyProfiles.js (Capa 7 — variantes de dificultad, multiplicador de recompensa, CP recomendado por región)
+      │  ├─ difficultyProfiles.js (Capa 7 — variantes de dificultad, multiplicador de recompensa, CP recomendado por región)
+      │  ├─ dungeons.js          (mazmorras — DUNGEON_REGISTRY, ver §9)
+      │  ├─ dangerZones.js       (zonas peligrosas por manzana real OSM, ver §9)
+      │  ├─ battleScenes.js      (perspectiva de escenarios de batalla, ver §9)
+      │  ├─ ads.config.js               (publicidad/AdMob, ver §9)
+      │  ├─ dailyMissions.config.js     (misiones diarias, ver §9)
+      │  ├─ adventurerContracts.config.js (Contrato del Aventurero, ver §9)
+      │  ├─ fortuneHall.config.js       (Salón de la Fortuna, ver §9)
+      │  ├─ notifications.config.js     (recordatorio local de misiones diarias)
+      │  ├─ cloudShadows.config.js      (sombras de nube, ver §9)
+      │  └─ audio.config.js             (música/efectos, ver §9)
       ├─ scenes/      (vacío, sin usar todavía)
       └─ systems/
          ├─ dynamicWorld.js     (Mapa Vivo, Capa 2 — entidades temporales, Mercader Ambulante)
@@ -60,7 +81,20 @@ rpg-go/
          ├─ difficultyDirector.js    (Capa 7 — sortea variante de dificultad + CP objetivo)
          ├─ powerScaling.js          (Capa 7 — CP objetivo → nivel concreto de enemigo)
          ├─ enemyPowerGenerator.js   (Capa 7 — API interna única, compone las tres anteriores)
-         └─ rewardDifficulty.js      (Capa 7 — multiplicador de recompensa por variante, arquitectura lista sin conectar)
+         ├─ rewardDifficulty.js      (Capa 7 — multiplicador de recompensa por variante, arquitectura lista sin conectar)
+         ├─ dangerZoneOsmCache.js / dangerZonePolygonizer.js (zonas peligrosas, ver §9)
+         ├─ battlePerspective.js  (posicionamiento/escala de sprites en escenarios de batalla, ver §9)
+         ├─ nativeGeolocation.js  (GPS nativo Capacitor vs navigator.geolocation, ver §9)
+         ├─ saveTransfer.js       (exportar/importar/compartir el save como archivo, ver §9)
+         ├─ backupFolder.js       (carpeta de backups elegida por el usuario vía SAF, sobrevive
+         │    desinstalación — capa fina sobre BackupFolderPlugin.java, ver §9)
+         ├─ eventBus/gameEventBus.js  (pub/sub genérico de acciones del jugador, ver §9)
+         ├─ audio/audioManager.js
+         ├─ notifications/dailyRewardNotifications.js
+         ├─ ads/            (AdsService + provider/consent/frequency/repository/analytics — ver §9)
+         ├─ dailyMissions/  (motor + repositorio + servicio — ver §9)
+         ├─ adventurerContracts/ (motor + repositorio + servicio — ver §9)
+         └─ fortuneHall/    (motor + repositorio + servicio + minijuegos — ver §9)
 ```
 
 ## 2) Responsabilidad por módulo
@@ -201,3 +235,9 @@ Nota: el Mundo Dinámico (Mercader Ambulante) y los Eventos Aleatorios son **loc
 - El proyecto depende de overlays en un HTML único (sin routing/componentización).
 - El shim de Leaflet→MapLibre cubre solo los métodos que el juego usa hoy; cualquier llamada nueva a una API de Leaflet no traducida ahí fallará en silencio o con error de "no es una función".
 - El juego ya **consulta datos reales de OpenStreetMap** (Mapa Vivo Capa 6 — ver `OSM_INTEGRATION.md`) vía Overpass API, cacheados por posición/radio/TTL alrededor del jugador. La clasificación de bioma/región de las capas 4/5b sigue usando sus reglas de respaldo por nombre de zona sin cambios (no se tocaron); la Capa 6 deja una API interna (`geoWorldAdapter.js`) lista para que una tarea futura las combine.
+
+## 9) Sistemas adicionales (live-ops, mundo, presentación, empaquetado)
+
+Ver `PROJECT_CONTEXT.md §10` para la descripción completa (qué hace cada uno, estado, flags de desarrollo pendientes) de: event bus (`systems/eventBus/`), publicidad/AdMob (`systems/ads/`), misiones diarias (`systems/dailyMissions/`), Contrato del Aventurero (`systems/adventurerContracts/`), Salón de la Fortuna (`systems/fortuneHall/`), notificaciones locales (`systems/notifications/`), mazmorras (`config/dungeons.js`), zonas peligrosas (`config/dangerZones.js` + `systems/dangerZone*.js`), escenarios de batalla con perspectiva (`config/battleScenes.js` + `systems/battlePerspective.js`), sombras de nube (`systems/cloudShadows/`), audio (`systems/audio/`), transferencia de guardado (`systems/saveTransfer.js`), geolocalización nativa (`systems/nativeGeolocation.js`) y empaquetado Android/Capacitor (`android/`, `capacitor.config.json`).
+
+Todos siguen el mismo patrón arquitectónico ya establecido por el Mapa Vivo: `config/*.config.js` con datos puros, un motor de dominio puro (recibe todo por parámetro), un repositorio con storage inyectable (testeable con storage en memoria), y un servicio que coordina ambos y es la única puerta de entrada que `main.js` debe usar — el servicio nunca aplica la recompensa/cambio al `player` directamente, solo la calcula; aplicarla y llamar a `saveGame()` es responsabilidad de `main.js`. Cobertura de test real en los 4 sistemas de mayor complejidad (ads, misiones diarias, Contrato del Aventurero, Salón de la Fortuna) — ver `TODO.md §9` para el detalle de qué está en verde y qué falta antes de un release de producción.

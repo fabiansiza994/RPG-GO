@@ -68,6 +68,28 @@ La carpeta `dist/` será creada automáticamente.
 
 ---
 
+## Correr las pruebas
+
+```bash
+npm test
+```
+
+---
+
+## Empaquetado Android (Capacitor)
+
+El juego también se empaqueta como app Android nativa vía Capacitor (`android/`, `capacitor.config.json`):
+
+```bash
+npm run build
+npx cap sync android
+cd android && ./gradlew assembleRelease
+```
+
+Requiere JDK 21 y el keystore de release (`android/keystore.properties`, gitignored). Antes de publicar un build con publicidad real, revisar `ADS_RELEASE_CHECKLIST.md`.
+
+---
+
 # 📁 Estructura
 
 ```

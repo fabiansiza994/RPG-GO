@@ -125,6 +125,12 @@ export const spriteRegistry = {
 				left: "/assets/sprites/class-walk/left.png",
 				right: "/assets/sprites/class-walk/right.png",
 			},
+			f: {
+				down: "/assets/sprites/class-walk-f/down.png",
+				up: "/assets/sprites/class-walk-f/up.png",
+				left: "/assets/sprites/class-walk-f/left.png",
+				right: "/assets/sprites/class-walk-f/right.png",
+			},
 		},
 		berserker: {
 			m: {
@@ -132,6 +138,12 @@ export const spriteRegistry = {
 				up: "/assets/sprites/class-walk-berserker/up.png",
 				left: "/assets/sprites/class-walk-berserker/left.png",
 				right: "/assets/sprites/class-walk-berserker/right.png",
+			},
+			f: {
+				down: "/assets/sprites/class-walk-berserker-f/down.png",
+				up: "/assets/sprites/class-walk-berserker-f/up.png",
+				left: "/assets/sprites/class-walk-berserker-f/left.png",
+				right: "/assets/sprites/class-walk-berserker-f/right.png",
 			},
 		},
 		arquero: {
@@ -141,6 +153,12 @@ export const spriteRegistry = {
 				left: "/assets/sprites/class-walk-arquero/left.png",
 				right: "/assets/sprites/class-walk-arquero/right.png",
 			},
+			f: {
+				down: "/assets/sprites/class-walk-arquero-f/down.png",
+				up: "/assets/sprites/class-walk-arquero-f/up.png",
+				left: "/assets/sprites/class-walk-arquero-f/left.png",
+				right: "/assets/sprites/class-walk-arquero-f/right.png",
+			},
 		},
 		mago: {
 			m: {
@@ -148,6 +166,12 @@ export const spriteRegistry = {
 				up: "/assets/sprites/class-walk-mago/up.png",
 				left: "/assets/sprites/class-walk-mago/left.png",
 				right: "/assets/sprites/class-walk-mago/right.png",
+			},
+			f: {
+				down: "/assets/sprites/class-walk-mago-f/down.png",
+				up: "/assets/sprites/class-walk-mago-f/up.png",
+				left: "/assets/sprites/class-walk-mago-f/left.png",
+				right: "/assets/sprites/class-walk-mago-f/right.png",
 			},
 		},
 	},
@@ -278,26 +302,48 @@ export const SABUESO_OSCURO_SPRITES = {
 // cambia en cada build) para forzar una descarga nueva cada vez que se publica una versión nueva.
 const GUERRERO_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
 export const GUERRERO_BATTLE_SPRITES = {
-  presentacion: `/assets/sprites/guerrero-battle/presentacion.png?v=${GUERRERO_SPRITE_V}`,
-  base: `/assets/sprites/guerrero-battle/base.png?v=${GUERRERO_SPRITE_V}`,
-  attack1: `/assets/sprites/guerrero-battle/ataque1.png?v=${GUERRERO_SPRITE_V}`,
-  attack2: `/assets/sprites/guerrero-battle/ataque2.png?v=${GUERRERO_SPRITE_V}`,
-  attackFin: `/assets/sprites/guerrero-battle/ataque-fin.png?v=${GUERRERO_SPRITE_V}`,
-  attackFin2: `/assets/sprites/guerrero-battle/ataque-fin2.png?v=${GUERRERO_SPRITE_V}`,
-  shout: `/assets/sprites/guerrero-battle/grito.png?v=${GUERRERO_SPRITE_V}`,
-  defend: `/assets/sprites/guerrero-battle/defensa.png?v=${GUERRERO_SPRITE_V}`,
+  m: {
+    presentacion: `/assets/sprites/guerrero-battle/presentacion.png?v=${GUERRERO_SPRITE_V}`,
+    base: `/assets/sprites/guerrero-battle/base.png?v=${GUERRERO_SPRITE_V}`,
+    attack1: `/assets/sprites/guerrero-battle/ataque1.png?v=${GUERRERO_SPRITE_V}`,
+    attack2: `/assets/sprites/guerrero-battle/ataque2.png?v=${GUERRERO_SPRITE_V}`,
+    attackFin: `/assets/sprites/guerrero-battle/ataque-fin.png?v=${GUERRERO_SPRITE_V}`,
+    attackFin2: `/assets/sprites/guerrero-battle/ataque-fin2.png?v=${GUERRERO_SPRITE_V}`,
+    shout: `/assets/sprites/guerrero-battle/grito.png?v=${GUERRERO_SPRITE_V}`,
+    defend: `/assets/sprites/guerrero-battle/defensa.png?v=${GUERRERO_SPRITE_V}`,
+  },
+  f: {
+    presentacion: `/assets/sprites/guerrero-battle-f/presentacion.png?v=${GUERRERO_SPRITE_V}`,
+    base: `/assets/sprites/guerrero-battle-f/base.png?v=${GUERRERO_SPRITE_V}`,
+    attack1: `/assets/sprites/guerrero-battle-f/ataque1.png?v=${GUERRERO_SPRITE_V}`,
+    attack2: `/assets/sprites/guerrero-battle-f/ataque2.png?v=${GUERRERO_SPRITE_V}`,
+    attackFin: `/assets/sprites/guerrero-battle-f/ataque-fin.png?v=${GUERRERO_SPRITE_V}`,
+    attackFin2: `/assets/sprites/guerrero-battle-f/ataque-fin2.png?v=${GUERRERO_SPRITE_V}`,
+    shout: `/assets/sprites/guerrero-battle-f/grito.png?v=${GUERRERO_SPRITE_V}`,
+    defend: `/assets/sprites/guerrero-battle-f/defensa.png?v=${GUERRERO_SPRITE_V}`,
+  },
 };
 
 /** Mismo criterio que GUERRERO_BATTLE_SPRITES — el Mago solo tiene una pose de acción (el bastón en
  *  alto con el estallido morado, usada tanto para ataques como para potenciar/curar) y una de
  *  defensa (la barrera mágica), sin secuencia de salto — es un lanzador de hechizos, no pelea cuerpo
- *  a cuerpo. Ver combatSpriteHtml/renderPlayerSprite/playMagoCastSequence/playMagoDefendPose. */
+ *  a cuerpo. Ver combatSpriteHtml/renderPlayerSprite/playMagoCastSequence/playMagoDefendPose.
+ *  Tiene set propio por género (m/f), igual que GUERRERO_BATTLE_SPRITES/ARQUERO_BATTLE_SPRITES —
+ *  Berserker es por ahora el único que sigue con un único set (masculino) para esta escena. */
 const MAGO_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
 export const MAGO_BATTLE_SPRITES = {
-  presentacion: `/assets/sprites/mago-battle/presentacion.png?v=${MAGO_SPRITE_V}`,
-  base: `/assets/sprites/mago-battle/base.png?v=${MAGO_SPRITE_V}`,
-  attack: `/assets/sprites/mago-battle/ataque.png?v=${MAGO_SPRITE_V}`,
-  defend: `/assets/sprites/mago-battle/defensa.png?v=${MAGO_SPRITE_V}`,
+  m: {
+    presentacion: `/assets/sprites/mago-battle/presentacion.png?v=${MAGO_SPRITE_V}`,
+    base: `/assets/sprites/mago-battle/base.png?v=${MAGO_SPRITE_V}`,
+    attack: `/assets/sprites/mago-battle/ataque.png?v=${MAGO_SPRITE_V}`,
+    defend: `/assets/sprites/mago-battle/defensa.png?v=${MAGO_SPRITE_V}`,
+  },
+  f: {
+    presentacion: `/assets/sprites/mago-battle-f/presentacion.png?v=${MAGO_SPRITE_V}`,
+    base: `/assets/sprites/mago-battle-f/base.png?v=${MAGO_SPRITE_V}`,
+    attack: `/assets/sprites/mago-battle-f/ataque.png?v=${MAGO_SPRITE_V}`,
+    defend: `/assets/sprites/mago-battle-f/defensa.png?v=${MAGO_SPRITE_V}`,
+  },
 };
 
 /** Mismo criterio que GUERRERO_BATTLE_SPRITES, pero pedido explícito: el golpe del Berserker NO es
@@ -305,15 +351,30 @@ export const MAGO_BATTLE_SPRITES = {
  *  vertical. ataque1 es la pose de transición (espada más abajo, recién arrancando el slash);
  *  ataque-fin/ataque-fin2 son las DOS variantes del golpe de llegada que se intercalan en cada
  *  ataque (mismo patrón que el Guerrero), ambas con la espada ya barrida y el efecto de sangre/
- *  polvo. Ver playBerserkerAttackSequence/playBerserkerDefendPose en main.js. */
+ *  polvo. Ver playBerserkerAttackSequence/playBerserkerDefendPose en main.js.
+ *  Tiene set propio por género (m/f) — pero a diferencia del resto de clases, el flujo de la versión
+ *  femenina es distinto (confirmado): NO alterna dos variantes de golpe de llegada, es una secuencia
+ *  lineal única ataque1 → ataque2 → ataque-fin (mismo patrón de 3 poses que el Guerrero, sin el
+ *  "punto más alto del salto" porque el Berserker no salta). `playBerserkerAttackSequence` en
+ *  main.js decide qué flujo correr mirando si `sprites.attack2` existe. */
 const BERSERKER_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
 export const BERSERKER_BATTLE_SPRITES = {
-  presentacion: `/assets/sprites/berserker-battle/presentacion.png?v=${BERSERKER_SPRITE_V}`,
-  base: `/assets/sprites/berserker-battle/base.png?v=${BERSERKER_SPRITE_V}`,
-  attack1: `/assets/sprites/berserker-battle/ataque1.png?v=${BERSERKER_SPRITE_V}`,
-  attackFin: `/assets/sprites/berserker-battle/ataque-fin.png?v=${BERSERKER_SPRITE_V}`,
-  attackFin2: `/assets/sprites/berserker-battle/ataque-fin2.png?v=${BERSERKER_SPRITE_V}`,
-  defend: `/assets/sprites/berserker-battle/defensa.png?v=${BERSERKER_SPRITE_V}`,
+  m: {
+    presentacion: `/assets/sprites/berserker-battle/presentacion.png?v=${BERSERKER_SPRITE_V}`,
+    base: `/assets/sprites/berserker-battle/base.png?v=${BERSERKER_SPRITE_V}`,
+    attack1: `/assets/sprites/berserker-battle/ataque1.png?v=${BERSERKER_SPRITE_V}`,
+    attackFin: `/assets/sprites/berserker-battle/ataque-fin.png?v=${BERSERKER_SPRITE_V}`,
+    attackFin2: `/assets/sprites/berserker-battle/ataque-fin2.png?v=${BERSERKER_SPRITE_V}`,
+    defend: `/assets/sprites/berserker-battle/defensa.png?v=${BERSERKER_SPRITE_V}`,
+  },
+  f: {
+    presentacion: `/assets/sprites/berserker-battle-f/presentacion.png?v=${BERSERKER_SPRITE_V}`,
+    base: `/assets/sprites/berserker-battle-f/base.png?v=${BERSERKER_SPRITE_V}`,
+    attack1: `/assets/sprites/berserker-battle-f/ataque1.png?v=${BERSERKER_SPRITE_V}`,
+    attack2: `/assets/sprites/berserker-battle-f/ataque2.png?v=${BERSERKER_SPRITE_V}`,
+    attackFin: `/assets/sprites/berserker-battle-f/ataque-fin.png?v=${BERSERKER_SPRITE_V}`,
+    defend: `/assets/sprites/berserker-battle-f/defensa.png?v=${BERSERKER_SPRITE_V}`,
+  },
 };
 
 /** Arte de frente del rival de PvP — Guerrero/Berserker (por ahora, las únicas dos clases con este
@@ -352,13 +413,26 @@ export const PVP_BERSERKER_BATTLE_SPRITES = {
  *  con el propio arco (destello dorado en el punto de impacto). */
 const ARQUERO_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
 export const ARQUERO_BATTLE_SPRITES = {
-  presentacion: `/assets/sprites/arquero-battle/presentacion.png?v=${ARQUERO_SPRITE_V}`,
-  base: `/assets/sprites/arquero-battle/base.png?v=${ARQUERO_SPRITE_V}`,
-  attack1: `/assets/sprites/arquero-battle/ataque1.png?v=${ARQUERO_SPRITE_V}`,
-  attackAim: `/assets/sprites/arquero-battle/ataque-fin.png?v=${ARQUERO_SPRITE_V}`,
-  attackRelease: `/assets/sprites/arquero-battle/ataque-fin2.png?v=${ARQUERO_SPRITE_V}`,
-  defend: `/assets/sprites/arquero-battle/defensa.png?v=${ARQUERO_SPRITE_V}`,
-  arrow: `/assets/sprites/arquero-battle/flecha.png?v=${ARQUERO_SPRITE_V}`,
+  m: {
+    presentacion: `/assets/sprites/arquero-battle/presentacion.png?v=${ARQUERO_SPRITE_V}`,
+    base: `/assets/sprites/arquero-battle/base.png?v=${ARQUERO_SPRITE_V}`,
+    attack1: `/assets/sprites/arquero-battle/ataque1.png?v=${ARQUERO_SPRITE_V}`,
+    attackAim: `/assets/sprites/arquero-battle/ataque-fin.png?v=${ARQUERO_SPRITE_V}`,
+    attackRelease: `/assets/sprites/arquero-battle/ataque-fin2.png?v=${ARQUERO_SPRITE_V}`,
+    defend: `/assets/sprites/arquero-battle/defensa.png?v=${ARQUERO_SPRITE_V}`,
+    arrow: `/assets/sprites/arquero-battle/flecha.png?v=${ARQUERO_SPRITE_V}`,
+  },
+  // Flujo femenino CONFIRMADO más corto a propósito (no le falta arte): solo 2 poses de tiro
+  // (attack1 → attackFin), sin la pose intermedia de arco tensado que sí tiene el masculino —
+  // ver playArqueroAttackSequence en main.js, que rama según si `sprites.attackAim` existe.
+  f: {
+    presentacion: `/assets/sprites/arquero-battle-f/presentacion.png?v=${ARQUERO_SPRITE_V}`,
+    base: `/assets/sprites/arquero-battle-f/base.png?v=${ARQUERO_SPRITE_V}`,
+    attack1: `/assets/sprites/arquero-battle-f/ataque1.png?v=${ARQUERO_SPRITE_V}`,
+    attackFin: `/assets/sprites/arquero-battle-f/ataque-fin.png?v=${ARQUERO_SPRITE_V}`,
+    defend: `/assets/sprites/arquero-battle-f/defensa.png?v=${ARQUERO_SPRITE_V}`,
+    arrow: `/assets/sprites/arquero-battle-f/flecha.png?v=${ARQUERO_SPRITE_V}`,
+  },
 };
 
 /** Círculo mágico rúnico bajo los pies del jugador en el mapa — uno distinto por clase, elegido

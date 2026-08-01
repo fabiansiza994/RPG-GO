@@ -22,6 +22,17 @@
  *  falta tocar ninguna otra tabla de monstruos para que empiece a soltarlo.
  *  `sellValue` es lo que paga la tienda por unidad (ver renderShopSellList en main.js) — precio
  *  bajo a propósito, ya que sirven principalmente para fabricar en la Forja, no para vender. */
+/** Cuánto tarda en completarse la fabricación, según la rareza de la receta — pedido explícito:
+ *  "por qué deberíamos poner tiempo [de fabricación], que pueda acortarse viendo anuncio o con
+ *  diamantes". No hay opción de acelerar con oro acá a propósito (a diferencia de las mejoras de
+ *  equipo): estas son armas exclusivas de alto valor, el freno real debe venir de diamantes/
+ *  anuncios, no de oro (que se junta fácil). Ver startCraftWeapon/checkForgeCraftTimers en main.js. */
+export const CRAFT_DURATION_MIN_BY_RARITY = {common:10, rare:20, epic:45, legendary:90};
+export const CRAFT_DEFAULT_DURATION_MIN = 30;
+/** Acelerar la fabricación en curso con diamantes: Math.ceil(minutosRestantes / este valor),
+ *  mínimo 1 diamante. */
+export const CRAFT_RUSH_MIN_PER_DIAMOND = 8;
+
 export const CRAFT_MATERIALS = [
   {key:"colmillo_lobo",   label:"Colmillo de Lobo",        emoji:"🦷", monsterName:"Lobo Umbrío",   dropChance:0.35, min:1, max:2, sellValue:4},
   {key:"piel_lobo",       label:"Piel de Lobo",            emoji:"🐺", monsterName:"Lobo Umbrío",   dropChance:0.30, min:1, max:2, sellValue:3},

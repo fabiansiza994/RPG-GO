@@ -29,8 +29,8 @@ export const AD_PLACEMENTS = Object.freeze([
   "FORTUNE_CHEST_SECOND_TRY", "FORTUNE_CARDS_SECOND_TRY", "FORTUNE_WHEEL_SECOND_TRY",
 ]);
 
-/** Fase 1 — los únicos 3 que de verdad se ofrecen al jugador en esta entrega. */
-export const PHASE_1_PLACEMENTS = Object.freeze(["BATTLE_REVIVE", "POST_BATTLE_GOLD_BONUS", "DAILY_AD_CHEST"]);
+/** Fase 1 — los que de verdad se ofrecen al jugador en esta entrega. */
+export const PHASE_1_PLACEMENTS = Object.freeze(["BATTLE_REVIVE", "POST_BATTLE_GOLD_BONUS", "DAILY_AD_CHEST", "BLACKSMITH_TIME_REDUCTION"]);
 
 // IDs de prueba OFICIALES de Google (públicos, documentados, seguros de commitear) —
 // jamás se usan en producción, ver ENVIRONMENT/IS_PRODUCTION más abajo.
@@ -100,16 +100,18 @@ export const PLACEMENT_CONFIG = Object.freeze({
     preloadStrategy: "ON_PANEL_OPEN", analyticsName: "daily_ad_chest",
     rewardTable: Object.freeze({ goldMin: 100, goldMax: 250, materialChance: 0.4, potionChance: 0.15 }),
   }),
+  // Se reutiliza para DOS features (fabricar en la Forja Y mejorar equipo) — ambas restan
+  // rewardAmount minutos al timer en curso, `context.kind` ("craft"/"upgrade") solo es informativo.
+  BLACKSMITH_TIME_REDUCTION: Object.freeze({
+    enabled: true, dailyLimit: 3, sessionLimit: 3, cooldownSeconds: 0,
+    rewardType: "TIME_REDUCTION_MINUTES", rewardAmount: 15, requiresInternet: true,
+    preloadStrategy: "NONE", analyticsName: "blacksmith_time_reduction",
+  }),
   // --- Fase 2 (preparados, desactivados) ---
   DAILY_SECOND_CHANCE: Object.freeze({
     enabled: false, dailyLimit: 1, sessionLimit: 1, cooldownSeconds: 0,
     rewardType: "SECOND_ATTEMPT", requiresInternet: true, preloadStrategy: "NONE",
     analyticsName: "daily_second_chance",
-  }),
-  BLACKSMITH_TIME_REDUCTION: Object.freeze({
-    enabled: false, dailyLimit: 3, sessionLimit: 3, cooldownSeconds: 0,
-    rewardType: "TIME_REDUCTION_MINUTES", rewardAmount: 15, requiresInternet: true,
-    preloadStrategy: "NONE", analyticsName: "blacksmith_time_reduction",
   }),
   EXPLORATION_BONUS: Object.freeze({
     enabled: false, dailyLimit: 3, sessionLimit: 3, cooldownSeconds: 1800,

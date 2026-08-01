@@ -41,6 +41,10 @@ grep -rn "NombreDelConceptoEnPascalCase\|NOMBRE_EN_MAYUSCULAS" src/main.js src/g
 
 Cada capa del sistema "Mapa Vivo" (`dynamicWorld.js`, `randomEvents.js`, `ecosystemEngine.js`+`biomes.js`, `visibilityEngine.js`+`visibility.js`, `regionManager.js`+`regions.js`) sigue el mismo patrón: un archivo en `config/` con datos puros (nada de lógica), un archivo en `systems/` con funciones puras (reciben todo por parámetro — posiciones, listas, una función de distancia — nunca importan `player`/`map` directamente), e integración liviana en `main.js` que sí toca el juego real. Cualquier capa nueva del Mapa Vivo debería seguir esta misma separación.
 
+Los sistemas de live-ops más recientes (`systems/ads/`, `systems/dailyMissions/`, `systems/adventurerContracts/`, `systems/fortuneHall/`, ver `PROJECT_CONTEXT.md §10`) siguen una variante del mismo patrón con un paso más: `config/*.config.js` (datos) + motor de dominio puro + repositorio con storage inyectable + **servicio** (única puerta de entrada para `main.js`, coordina motor+repositorio, nunca toca `player` directo — devuelve qué recompensa aplicar). Varios se conectan a las acciones del jugador vía `gameEventBus.emit()`/`.subscribe()` en vez de que `main.js` los llame uno por uno — revisar ese bus antes de agregar un hook nuevo a mano en medio de una función de gameplay existente.
+
+**Convención a revisar siempre antes de dar un cambio por "listo para producción"**: varios `config/*.config.js` tienen una constante `DEV_*` (o un comentario "⚠️ SOLO PARA PROBAR EN DESARROLLO") pensada para facilitar pruebas locales, con instrucción explícita de volverla a su valor real antes de publicar — ej. `DEV_FORCE_MOCK_ADS` en `ads.config.js`, `DEV_UNLIMITED_ATTEMPTS` en `fortuneHall.config.js`. Buscar `grep -rn "DEV_" src/game/config/` es el chequeo rápido antes de asumir que un build está listo para release real.
+
 ## 4) Alcance de cambios
 
 - Priorizar cambios quirúrgicos.

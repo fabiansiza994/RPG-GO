@@ -53,7 +53,7 @@
   @keyframes chargeLabelPulse{0%,100%{transform:translateX(-50%) scale(1);} 50%{transform:translateX(-50%) scale(1.08);}}
 
   #updateBanner{position:fixed; top:0; left:0; right:0; z-index:400; background:#1a2e1f; color:#eafff0;
-    border-bottom:2px solid #4fd67a; padding:10px 14px; font-size:13px; text-align:center;
+    border-bottom:2px solid #4fd67a; padding:calc(10px + env(safe-area-inset-top)) 14px 10px; font-size:13px; text-align:center;
     display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap;
     box-shadow:0 8px 20px rgba(0,0,0,.22);}
   #updateBanner button{background:#4fd67a; color:#062b12; border:none; border-radius:8px; padding:6px 12px;
@@ -216,7 +216,8 @@
   .eyebrow{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);}
 
   /* ---------- HUD ---------- */
-  #hud{position:absolute; top:0; left:0; right:0; z-index:20; padding:10px 12px;
+  #hud{position:absolute; top:0; left:0; right:0; z-index:20;
+    padding:calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 10px calc(12px + env(safe-area-inset-left));
     display:flex; flex-direction:column; gap:6px; pointer-events:none;}
   #hud > *{pointer-events:auto;}
   .hud-card{
@@ -436,11 +437,11 @@
   .new-character-card-art:active .ncc-art-img{filter:brightness(1.25);}
 
   /* ---------- Bottom controls ---------- */
-  #bottombar{position:absolute; bottom:16px; left:12px; right:82px; z-index:20;
+  #bottombar{position:absolute; bottom:calc(16px + env(safe-area-inset-bottom)); left:calc(12px + env(safe-area-inset-left)); right:calc(82px + env(safe-area-inset-right)); z-index:20;
     display:flex; flex-wrap:wrap; justify-content:flex-start; gap:8px; align-items:flex-end; pointer-events:none;}
   #bottombar > *{pointer-events:auto;}
   /* ---------- Modo Constructor (solo Hacker994) ---------- */
-  #builderModeBar{position:absolute; left:12px; top:20px; z-index:27; display:flex; align-items:flex-start; gap:8px;}
+  #builderModeBar{position:absolute; left:calc(12px + env(safe-area-inset-left)); top:calc(20px + env(safe-area-inset-top)); z-index:27; display:flex; align-items:flex-start; gap:8px;}
   /* El botón que activa el Modo Constructor ahora se agrega dinámicamente en la fila secundaria
      del menú ☰ (ver setupBuilderModeUI en main.js) — este toque dorado lo distingue del resto. */
   .wheel-secondary-btn#btnBuilderToggle{border-color:var(--gold, #e8c468);}
@@ -557,7 +558,7 @@
 
   /* ---------- Menú de opciones (FAB inferior derecho) ---------- */
   /* ---------- Botones flotantes fijos (Tienda, Inventario, Coliseo) al lado izquierdo ---------- */
-  #floatingSideBtns{position:absolute; left:12px; top:45%; transform:translateY(-50%); z-index:26;
+  #floatingSideBtns{position:absolute; left:calc(12px + env(safe-area-inset-left)); top:45%; transform:translateY(-50%); z-index:26;
     display:flex; flex-direction:column; gap:12px;}
   .floating-side-btn{width:50px; height:50px; border-radius:50%; position:relative;
     color:var(--text); font-size:22px; display:flex; align-items:center; justify-content:center;
@@ -676,7 +677,7 @@
     backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);}
   .wheel-secondary-btn:active{filter:brightness(1.25);}
 
-  .fab-main{position:absolute; right:14px; bottom:16px; width:58px; height:58px; border-radius:50%;
+  .fab-main{position:absolute; right:calc(14px + env(safe-area-inset-right)); bottom:calc(16px + env(safe-area-inset-bottom)); width:58px; height:58px; border-radius:50%;
     background:none; color:#04231d; border:none; font-size:22px; padding:0;
     box-shadow:none;
     transition:transform .2s ease, filter .15s ease, width .25s ease, height .25s ease, box-shadow .25s ease;
@@ -689,7 +690,7 @@
      criterio de esquina fija que .floating-close-btn/.floating-gold-badge), visible SOLO mientras
      el menú ☰ está abierto (reacciona a #fabMenu.open igual que .wheel-overlay-content, sin JS
      aparte para mostrar/ocultarlo). */
-  .fab-corner-settings{position:fixed; top:14px; right:14px; z-index:130; width:42px; height:42px;
+  .fab-corner-settings{position:fixed; top:calc(14px + env(safe-area-inset-top)); right:calc(14px + env(safe-area-inset-right)); z-index:130; width:42px; height:42px;
     border-radius:50%; background:var(--panel2); border:1px solid var(--gold); color:var(--gold);
     font-size:19px; box-shadow:0 8px 20px rgba(0,0,0,.22);
     opacity:0; pointer-events:none; transition:opacity .25s ease, transform .25s ease;
@@ -917,14 +918,17 @@
     background:
       radial-gradient(ellipse at 50% -10%, rgba(94,163,224,.10), transparent 45%),
       linear-gradient(180deg, #0c1120 0%, #0a0e1a 45%, #070a12 100%);}
-  .floating-close-btn{position:fixed; top:14px; left:14px; z-index:130; width:38px; height:38px; border-radius:50%;
+  /* top/left/right con env(safe-area-inset-*) — pedido explícito: en pantalla completa (con la
+     hora/batería del sistema superpuestas) el botón de cerrar y el oro quedaban tapados por esos
+     indicadores al no dejarles ese margen, igual que ya hacen .fab-corner-settings/#bottombar. */
+  .floating-close-btn{position:fixed; top:calc(14px + env(safe-area-inset-top)); left:calc(14px + env(safe-area-inset-left)); z-index:130; width:38px; height:38px; border-radius:50%;
     background:var(--panel2); border:1px solid var(--line); color:var(--text); font-size:16px; box-shadow:0 8px 20px rgba(0,0,0,.22);}
-  .floating-gold-badge{position:fixed; top:14px; right:14px; z-index:130; background:linear-gradient(180deg,#1c2438,#131a29);
+  .floating-gold-badge{position:fixed; top:calc(14px + env(safe-area-inset-top)); right:calc(14px + env(safe-area-inset-right)); z-index:130; background:linear-gradient(180deg,#1c2438,#131a29);
     border:2px solid var(--gold); border-radius:20px; padding:8px 14px; font-weight:900; color:var(--gold); font-size:14px;
     box-shadow:0 8px 20px rgba(0,0,0,.22);}
   /* Fila ícono + título/subtítulo — el margen superior (no horizontal, como antes) deja espacio
      libre para que no choque con los botones fijos (cerrar/oro) de las esquinas de arriba. */
-  .shop-header-row{display:flex; align-items:center; gap:12px; margin:50px 4px 14px;}
+  .shop-header-row{display:flex; align-items:center; gap:12px; margin:calc(50px + env(safe-area-inset-top)) 4px 14px;}
   .shop-header-icon{flex-shrink:0; width:46px; height:46px; border-radius:14px; font-size:24px;
     display:flex; align-items:center; justify-content:center;
     background:linear-gradient(180deg, #202a42, #161d30); border:1px solid rgba(255,255,255,.1);
@@ -1065,6 +1069,13 @@
   .forge-mat-chip{font-size:9.5px; font-weight:700; color:var(--dim); background:rgba(255,255,255,.04);
     border:1px solid var(--line); border-radius:8px; padding:3px 7px;}
   .forge-mat-chip.short{color:var(--danger); border-color:var(--danger);}
+
+  /* ---------- Tarjeta de progreso de fabricación/mejora con tiempo (Forja + puntos de mejora) ----------
+     Selector con DOS clases a propósito (.inv-item.forge-timer-card / .cm-item.forge-timer-card): así
+     gana por especificidad sin importar el orden en la hoja — de otro modo el `border` de .inv-item/
+     .cm-item (definidos más abajo en este archivo) pisaría el border-color de acá. */
+  .inv-item.forge-timer-card, .cm-item.forge-timer-card{border-color:var(--gold); box-shadow:0 0 0 1px var(--gold) inset;}
+  .forge-timer-bar{background:linear-gradient(90deg,#c9a83a,var(--gold));}
 
   /* ---------- Base personal en el mapa: emoji de casa con el nombre del dueño arriba ---------- */
   .base-marker-simple{position:relative; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:flex-end;}
@@ -2895,7 +2906,7 @@
      ============================================================ */
   /* Botón flotante — espejo de #floatingSideBtns (mismo z-index, misma
      altura media) pero del lado derecho, libre de otros controles. */
-  #floatingSideBtnsRight{position:absolute; right:12px; top:45%; transform:translateY(-50%); z-index:26;
+  #floatingSideBtnsRight{position:absolute; right:calc(12px + env(safe-area-inset-right)); top:45%; transform:translateY(-50%); z-index:26;
     display:flex; flex-direction:column; gap:12px;}
   .daily-missions-btn{
     background:

@@ -222,6 +222,21 @@ export const EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS = 7;
 export const EQUIP_UPGRADE_RISK_START_CHANCE = 0.30;
 export const EQUIP_UPGRADE_RISK_STEP = 0.05;
 
+/** Cuánto tarda CADA nivel de mejora en completarse — pedido explícito: "al menos 15 minutos por
+ *  mejora". Sube EQUIP_UPGRADE_DURATION_STEP_MIN por nivel (nextLevel-1) para que las mejoras
+ *  tardías (que ya cuestan diamantes) también pesen más en tiempo, no solo en materiales/riesgo.
+ *  Ver upgradeDurationMs/upgradeEquippedItem en main.js. */
+export const EQUIP_UPGRADE_DURATION_BASE_MIN = 15;
+export const EQUIP_UPGRADE_DURATION_STEP_MIN = 10;
+/** Acelerar la mejora en curso con oro: Math.ceil(minutosRestantes) * este valor — SOLO disponible
+ *  mientras el nivel que se está esperando siga dentro de EQUIP_UPGRADE_MAX (misma frontera que ya
+ *  separa "paga con oro" de "paga con diamantes" en upgradeCost/upgradeDiamondCost). Pedido
+ *  explícito: "acelerar con oro las primeras, después diamante o anuncios". */
+export const EQUIP_UPGRADE_RUSH_GOLD_PER_MIN = 15;
+/** Acelerar con diamantes (disponible siempre, pero es la única opción de pago una vez pasado
+ *  EQUIP_UPGRADE_MAX): Math.ceil(minutosRestantes / este valor), mínimo 1 diamante. */
+export const EQUIP_UPGRADE_RUSH_MIN_PER_DIAMOND = 10;
+
 export const ATTR_DEFS = [
   {key:"maxHp", label:"Vida", emoji:"❤️", per:4},
   {key:"maxMp", label:"Maná", emoji:"🔵", per:2},
