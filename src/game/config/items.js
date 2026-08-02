@@ -202,6 +202,66 @@ export const ROTATING_WEAPON_POOL = [
     bonuses:{atk:9, def:5}, proc:null, desc:"+9 ATQ, +5 DEF · un berserker que también aguanta golpes"},
 ];
 
+/** Pedido explícito: en EQUIP_TABLE (ver pushEquip en main.js) las mejores armas (rareza épica/
+ *  legendaria) solo aparecen desde Nv.31/46 (RARITY_REQ_OFFSET) — hasta ahí, lo único de nivel bajo
+ *  fuerte que existía era la Oferta Semanal (ROTATING_WEAPON_POOL vía getWeeklyShopOffers), que solo
+ *  muestra 4 armas al azar por semana. Este catálogo, en cambio, está SIEMPRE disponible completo
+ *  (ver getEarlyWeaponOffers en main.js), sin requisito de nivel — a cambio, no se paga solo con oro:
+ *  también pide una cantidad moderada de materiales de mundo (madera/piedra/hierro, el mismo trío que
+ *  ya junta el jugador para construir), para que siga sintiéndose algo que hay que trabajar, no un
+ *  regalo gratis. 3 opciones por clase, poder comparable a un épico de ROTATING_WEAPON_POOL. */
+export const EARLY_WEAPON_POOL = [
+  {id:"early_grecruit", name:"Espada del Recluta Curtido", emoji:"🗡️", classKey:"guerrero", rarity:"epic",
+    bonuses:{atk:12, def:1}, proc:null, value:220, materialCost:{wood:20, stone:8, iron:12},
+    desc:"+12 ATQ, +1 DEF"},
+  {id:"early_gdawn",    name:"Espada Filo de Alba",         emoji:"⚔️", classKey:"guerrero", rarity:"epic",
+    bonuses:{atk:13, spd:2}, proc:{type:"haste", chance:0.2}, value:260, materialCost:{wood:25, stone:10, iron:15},
+    desc:"+13 ATQ, +2 VEL"},
+  {id:"early_gwarcry",  name:"Espada Grito de Batalla",     emoji:"🔥", classKey:"guerrero", rarity:"epic",
+    bonuses:{atk:14, def:-1}, proc:{type:"burn", chance:0.22}, value:280, materialCost:{wood:22, stone:12, iron:18},
+    desc:"+14 ATQ, -1 DEF"},
+
+  {id:"early_mapprentice", name:"Cetro del Aprendiz Ardiente", emoji:"🔥", classKey:"mago", rarity:"epic",
+    bonuses:{matk:12, maxMp:6}, proc:null, value:220, materialCost:{wood:20, stone:6, iron:10},
+    desc:"+12 AT.MÁG, +6 MP máx."},
+  {id:"early_mfrostling", name:"Cetro de Escarcha Novata",     emoji:"❄️", classKey:"mago", rarity:"epic",
+    bonuses:{matk:11, def:1}, proc:{type:"poison", chance:0.18}, value:240, materialCost:{wood:22, stone:8, iron:12},
+    desc:"+11 AT.MÁG, +1 DEF"},
+  {id:"early_mspark",      name:"Cetro Chispa Arcana",          emoji:"⚡", classKey:"mago", rarity:"epic",
+    bonuses:{matk:13, maxMp:8}, proc:{type:"haste", chance:0.18}, value:270, materialCost:{wood:25, stone:10, iron:14},
+    desc:"+13 AT.MÁG, +8 MP máx."},
+
+  {id:"early_ahunter",  name:"Arco del Cazador Novato",   emoji:"🏹", classKey:"arquero", rarity:"epic",
+    bonuses:{atk:11, spd:3}, proc:null, value:220, materialCost:{wood:26, stone:6, iron:10},
+    desc:"+11 ATQ, +3 VEL"},
+  {id:"early_atempered",name:"Arco de Puntas Templadas",  emoji:"🔥", classKey:"arquero", rarity:"epic",
+    bonuses:{atk:12, def:1}, proc:{type:"burn", chance:0.2}, value:250, materialCost:{wood:24, stone:9, iron:13},
+    desc:"+12 ATQ, +1 DEF"},
+  {id:"early_awind",    name:"Arco Viento Naciente",      emoji:"💨", classKey:"arquero", rarity:"epic",
+    bonuses:{atk:10, spd:5}, proc:{type:"haste", chance:0.22}, value:240, materialCost:{wood:28, stone:7, iron:11},
+    desc:"+10 ATQ, +5 VEL"},
+
+  {id:"early_bnovice",  name:"Hacha del Novicio Feroz", emoji:"🪓", classKey:"berserker", rarity:"epic",
+    bonuses:{atk:13, def:-1}, proc:null, value:240, materialCost:{wood:22, stone:10, iron:14},
+    desc:"+13 ATQ, -1 DEF"},
+  {id:"early_bredfang", name:"Hacha Colmillo Rojo",       emoji:"☠️", classKey:"berserker", rarity:"epic",
+    bonuses:{atk:12, spd:1}, proc:{type:"poison", chance:0.22}, value:250, materialCost:{wood:24, stone:11, iron:15},
+    desc:"+12 ATQ, +1 VEL"},
+  {id:"early_btempered",name:"Hacha Furia Templada",      emoji:"🔥", classKey:"berserker", rarity:"epic",
+    bonuses:{atk:15, def:-2}, proc:{type:"burn", chance:0.2}, value:280, materialCost:{wood:26, stone:13, iron:17},
+    desc:"+15 ATQ, -2 DEF"},
+];
+
+/** Sets temáticos (arma + armadura + casco + botas, y su propio bono extra por llevar las 4 puestas)
+ *  — pedido explícito: pantalla nueva en la tienda ("Sets"), pero el contenido real (qué sets, qué
+ *  piezas, qué bono) se define más adelante. Vacío a propósito: renderShopSets() en main.js ya sabe
+ *  mostrar un aviso "Próximamente" mientras este arreglo esté vacío, y renderizar tarjetas de set en
+ *  cuanto se agreguen entradas acá — no hace falta tocar más nada cuando lleguen los sets reales.
+ *  Forma esperada de cada entrada (ver buildShopSetCard en main.js):
+ *  {key, name, emoji, rarity, classKey (o null si es universal), pieces:{weapon,armor,helmet,boots},
+ *   setBonus:{...stats extra si llevás las 4 puestas...}, value, desc} */
+export const EQUIPMENT_SETS = [];
+
 /** Nivel de mejora hasta el que se paga solo con oro (ver upgradeCost en main.js). A partir de acá
  *  no es un tope duro — se puede seguir mejorando (upgradeLevel no tiene límite superior), pero
  *  cada nivel extra además pide diamantes: ver EQUIP_UPGRADE_DIAMOND_STEP/upgradeDiamondCost. */
@@ -247,6 +307,12 @@ export const ATTR_DEFS = [
 ];
 
 export const SHOP_CATEGORIES = [
+  // "Destacados" es la pestaña con la que abre la tienda ahora (ver openShop/shopActiveCategory en
+  // main.js) — página gancho con un resumen curado (arma/escudo/armadura/casco/botas destacados
+  // según nivel y clase del jugador), en vez de arrancar directo en "Armas". `test` no se usa acá:
+  // renderShopBuyList especial-casea esta categoría y llama a renderShopFeatured() en vez de filtrar
+  // shopFullCatalog() como cualquier otra pestaña.
+  {key:"featured",  label:"Destacados",      icon:"⭐", test:it=> false},
   {key:"weekly",    label:"Oferta Semanal", icon:"🌟", test:it=> it.isWeeklyOffer},
   {key:"weapon",    label:"Armas",           icon:"⚔️", test:it=> it.slot==="weapon" && !it.isWeeklyOffer},
   {key:"offhand",   label:"Mano secundaria", icon:"🗡️", test:it=> it.slot==="offhand", classOnly:["berserker","guerrero"]},
@@ -257,6 +323,9 @@ export const SHOP_CATEGORIES = [
   {key:"books",     label:"Libros",          icon:"📖", test:it=> it.type==="book", classOnly:["mago"]},
   {key:"potion",    label:"Pociones",        icon:"🧪", test:it=> it.type==="heal"||it.type==="mana"},
   {key:"pets",      label:"Mascotas",        icon:"🐾", test:it=> it.type==="pet_item", requiresPet:true},
+  // Igual que "Destacados": `test` no se usa (sin sets cargados aún no hay nada que filtrar), esta
+  // pestaña especial-casea a renderShopSets() en main.js. Ver EQUIPMENT_SETS arriba.
+  {key:"sets",      label:"Sets",            icon:"🧩", test:it=> it.isSetPiece===true},
   // Las Gemas/Núcleos que vivían acá se sacaron del juego (ver ITEM_TABLE) — la Carta de Captura
   // (antes en una categoría oculta de pruebas, liberada acá con precio alto: 150.000 oro en el
   // ítem, ver TEST_SHOP_ITEMS, para que siga siendo un lujo caro y no un atajo barato a la captura

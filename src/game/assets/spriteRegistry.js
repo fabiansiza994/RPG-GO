@@ -230,6 +230,18 @@ const VETERANO_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "
 export const VETERANO_SPRITES = {
   map: `/assets/sprites/veterano/map.png?v=${VETERANO_SPRITE_V}`,
 };
+/** Retrato de Noe — NPC que da la bienvenida al jugador la primera vez que entra al mundo (ver
+ *  maybeShowWorldIntro en main.js, dispara solo una vez por cuenta). Mismo criterio de
+ *  cachebusteo que el resto de public/. */
+const NOE_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+export const NOE_PORTRAIT_PATH = `/new_elements/Noe.png?v=${NOE_SPRITE_V}`;
+/** Ilustraciones de la cinemática de bienvenida (ver playWorldCinematic en main.js, misma única
+ *  vez por cuenta que Noe). Mismo criterio de cachebusteo que el resto de public/. */
+const WORLD_CINEMATIC_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+export const WORLD_CINEMATIC_SCENE_PATHS = {
+  scene1: `/new_elements/escena1.png?v=${WORLD_CINEMATIC_SPRITE_V}`,
+  scene2: `/new_elements/escena2.png?v=${WORLD_CINEMATIC_SPRITE_V}`,
+};
 /** Arte del Cazador Solitario (NPC de misión "Colmillo de Lobo Umbrío", ver QUEST_TEMPLATES en
  *  main.js) — reemplaza el emoji 🏹 en su marcador del mapa. Mismo criterio que el Veterano. */
 const CAZADOR_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
@@ -285,6 +297,27 @@ export const SABUESO_OSCURO_SPRITES = {
   base: "/assets/sprites/sabueso-oscuro/base.png",
   attack: "/assets/sprites/sabueso-oscuro/attack.png",
   map: "/assets/sprites/sabueso-oscuro/map.png",
+};
+/** Arte del Elemental Aqua — enemigo especial que solo aparece con lluvia/nubado o cerca de agua
+ *  real (lago/río/piscina, ver maybeSpawnElementalAqua en main.js). `baseStrong` reemplaza a
+ *  `base` en su lugar cuando el clima actual es lluvioso Y nubado (más "cargado" visualmente) —
+ *  resuelto en tiempo real por enemySpriteSrc/makeMonster, no un tipo de plantilla aparte. */
+const ELEMENTAL_AQUA_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+export const ELEMENTAL_AQUA_SPRITES = {
+  base: `/assets/sprites/elemental_aqua/aqua_base.png?v=${ELEMENTAL_AQUA_SPRITE_V}`,
+  baseStrong: `/assets/sprites/elemental_aqua/aqua_base_strong.png?v=${ELEMENTAL_AQUA_SPRITE_V}`,
+  attack: `/assets/sprites/elemental_aqua/aqua_ataque.png?v=${ELEMENTAL_AQUA_SPRITE_V}`,
+  map: `/assets/sprites/elemental_aqua/aqua_map.png?v=${ELEMENTAL_AQUA_SPRITE_V}`,
+  gema: `/assets/sprites/elemental_aqua/gema_aqua.png?v=${ELEMENTAL_AQUA_SPRITE_V}`,
+};
+/** Arte del Elemental Fauto — enemigo especial que solo aparece cuando la ciudad está a 30°C o
+ *  más (ver maybeSpawnElementalFauto en main.js). */
+const ELEMENTAL_FAUTO_SPRITE_V = typeof __BUILD_ID__ !== "undefined" ? __BUILD_ID__ : "";
+export const ELEMENTAL_FAUTO_SPRITES = {
+  base: `/assets/sprites/elemental_fauto/fauto_base.png?v=${ELEMENTAL_FAUTO_SPRITE_V}`,
+  attack: `/assets/sprites/elemental_fauto/fauto_ataque.png?v=${ELEMENTAL_FAUTO_SPRITE_V}`,
+  map: `/assets/sprites/elemental_fauto/fauto_map.png?v=${ELEMENTAL_FAUTO_SPRITE_V}`,
+  gema: `/assets/sprites/elemental_fauto/gema_fauto.png?v=${ELEMENTAL_FAUTO_SPRITE_V}`,
 };
 /** Arte de combate especial del Guerrero (por ahora la única clase con este tratamiento) —
  *  reemplaza el par genérico base/attack de CLASS_BATTLE_SPRITES.guerrero: una pose de

@@ -73,6 +73,9 @@ export const OSM_TAG_TO_GAME_FEATURE = [
   { key: "landuse", value: "forest", feature: GAME_FEATURE_KEYS.FOREST_AREA },
   { key: "natural", value: "water", feature: GAME_FEATURE_KEYS.LAKE },
   { key: "landuse", value: "reservoir", feature: GAME_FEATURE_KEYS.LAKE },
+  // Pedido explícito (Elemental Aqua, ver maybeSpawnElementalAqua en main.js): una piscina real
+  // cuenta como "agua cerca" igual que un lago — mismo GameFeature, sin inventar uno nuevo.
+  { key: "leisure", value: "swimming_pool", feature: GAME_FEATURE_KEYS.LAKE },
   { key: "waterway", value: "river", feature: GAME_FEATURE_KEYS.RIVER },
   { key: "waterway", value: "stream", feature: GAME_FEATURE_KEYS.RIVER },
   { key: "shop", value: "mall", feature: GAME_FEATURE_KEYS.MARKET_LOCATION },

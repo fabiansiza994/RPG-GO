@@ -20,13 +20,19 @@ import { fetchOsmFeatures } from "./osmProvider.js";
 import { normalizeOsmElements } from "./osmFeatureNormalizer.js";
 import { upsertFeatures, queryNearby, queryNearbyByType, hasNearbyType } from "./worldFeatureRepository.js";
 import { shouldRequery, recordQuery } from "./osmMapCache.js";
+import { getSharedOsmCache, putSharedOsmCache } from "./osmSharedCache.js";
 import { GAME_FEATURE_TO_BIOME_HINT } from "../config/osm.js";
 
 /** Punto de entrada para mantener el store al día. Se llama en cada movimiento del jugador (desde
  *  main.js), pero en la práctica casi siempre es un no-op: shouldRequery() decide si de verdad
  *  hace falta ir a buscar datos nuevos (jugador se alejó lo suficiente, o venció el TTL) — nunca
  *  consulta Overpass en cada llamada. Es asíncrona y nunca lanza: se puede invocar "fire and
- *  forget" sin bloquear el movimiento ni el resto del juego si Overpass no responde. */
+ *  forget" sin bloquear el movimiento ni el resto del juego si Overpass no responde.
+ *
+ *  Antes de gastar la consulta real a Overpass, primero pregunta a la cache compartida entre
+ *  jugadores (osmSharedCache.js, un Worker propio aparte) si alguien ya consultó esta misma zona
+ *  hace poco — si sí, se ahorra el viaje a Overpass. Si no (o esa capa falla por lo que sea), cae
+ *  a Overpass exactamente como antes, y sube el resultado a la cache compartida para el próximo. */
 export async function refreshWorldGeoData(pos, store, config, deps, distFn){
   if(!pos) return;
   if(!shouldRequery(store, pos, config, Date.now(), distFn)) return;
@@ -34,7 +40,11 @@ export async function refreshWorldGeoData(pos, store, config, deps, distFn){
   // reintentar en loop si Overpass está caído — el próximo intento real llega recién cuando el
   // jugador se mueva requeryDistanceM de nuevo (ver osmMapCache.js).
   try{
-    const elements = await fetchOsmFeatures(pos, config.queryRadiusM, config, deps);
+    let elements = await getSharedOsmCache(pos, deps);
+    if(!elements){
+      elements = await fetchOsmFeatures(pos, config.queryRadiusM, config, deps);
+      if(elements && elements.length) putSharedOsmCache(pos, elements, deps); // fire-and-forget, para el próximo jugador que pase por acá
+    }
     const features = normalizeOsmElements(elements);
     upsertFeatures(store, features);
   }catch(e){

@@ -38,6 +38,48 @@ export async function writeAndShareTextFile(filename, contents){
   setTimeout(()=> URL.revokeObjectURL(url), 1000);
 }
 
+/** Blob → base64 SIN el prefijo "data:...;base64," (Filesystem.writeFile nativo lo quiere pelado). */
+function blobToBase64(blob){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=> resolve(String(reader.result).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Comparte una imagen ya generada (ver buildLevelUpShareCardBlob en main.js) — mismo criterio que
+ *  writeAndShareTextFile: nativo escribe a la caché y abre el panel de compartir de Android/iOS
+ *  (WhatsApp, redes, etc. quedan ahí mismo); en web se intenta la Web Share API nivel 2 (compartir
+ *  archivos — la mayoría de navegadores móviles ya la soportan) y, si tampoco existe, se descarga el
+ *  PNG para que el jugador lo comparta a mano. Devuelve true si se abrió un panel de compartir de
+ *  verdad (nativo o Web Share), false si cayó a la descarga simple — quien llama decide si igual
+ *  premia en ese caso. Lanza si el jugador cancela el panel (Share.share/navigator.share rechazan la
+ *  promesa) — quien llama debe capturarlo y no premiar en ese caso. */
+export async function writeAndShareImageFile(filename, blob, opts){
+  opts = opts || {};
+  if(isNative()){
+    const base64 = await blobToBase64(blob);
+    await Filesystem.writeFile({path: filename, data: base64, directory: Directory.Cache});
+    const {uri} = await Filesystem.getUri({path: filename, directory: Directory.Cache});
+    await Share.share({title: opts.title, text: opts.text, files: [uri], dialogTitle: opts.dialogTitle});
+    return true;
+  }
+  const file = new File([blob], filename, {type: blob.type || "image/png"});
+  if(navigator.share && navigator.canShare && navigator.canShare({files:[file]})){
+    await navigator.share({title: opts.title, text: opts.text, files:[file]});
+    return true;
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(url), 1000);
+  return false;
+}
+
 // Subcarpeta (dentro de Directory.Data — almacenamiento interno de la app, no el mismo que
 // Directory.Cache que usa writeAndShareTextFile) donde viven los backups automáticos nocturnos.
 // Directory.Data sobrevive reinicios/actualizaciones de la app (se borra solo si el usuario borra

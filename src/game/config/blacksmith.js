@@ -39,6 +39,14 @@ export const CRAFT_MATERIALS = [
   {key:"telarana_arana",  label:"Telaraña de Araña",       emoji:"🕸️", monsterName:"Araña Gigante", dropChance:0.40, min:1, max:3, sellValue:3},
   {key:"cuerno_demonio",  label:"Cuerno de Demonio Menor", emoji:"👹", monsterName:"Demonio Menor",  dropChance:0.30, min:1, max:1, sellValue:6},
   {key:"alma_espectro",   label:"Alma de Espectro",        emoji:"👻", monsterName:"Espectro",       dropChance:0.30, min:1, max:2, sellValue:5},
+  // Gemas del Elemental Aqua/Fauto — pedido explícito: chance BAJA (10%), NO por este mecanismo
+  // genérico (rollCraftMaterialDrops solo mira `monsterName`, y acá queda null a propósito para
+  // que nunca calce con nada) — se rifan a mano en winBattle. Viven acá solo para que
+  // resolveMaterialQty/spendMaterial (Forja) sepan leerlas de player.craftMats como cualquier
+  // otro material de combate. `sellValue:0` a propósito: son "muy especiales", no se venden (ver
+  // el filtro sellValue>0 en renderShopSellList, main.js).
+  {key:"gema_aqua",  label:"Gema Aqua",  emoji:"💧", monsterName:null, dropChance:0, min:0, max:0, sellValue:0},
+  {key:"gema_fauto", label:"Gema Fauto", emoji:"🔥", monsterName:null, dropChance:0, min:0, max:0, sellValue:0},
 ];
 
 /** Recetas disponibles en el Herrero — arma exclusiva, solo se consigue fabricándola (no aparece
@@ -69,5 +77,24 @@ export const BLACKSMITH_RECIPES = [
     bonuses:{atk:18}, defShred:0.06, stunChance:0.2,
     materials:[{key:"alma_espectro", amount:100}, {key:"iron", amount:100}, {key:"wood", amount:40}],
     desc:"+18 ATQ · cada golpe desgasta un poco la DEF del rival, y puede dejarlo aturdido un turno. Forjada con almas atrapadas entre este mundo y el siguiente.",
+  },
+  {
+    // Recetas reveladas por gema (ver renderForgeCraftTab en main.js: filtra por revealFlag) — no
+    // aparecen en la lista hasta que el jugador consiguió la gema correspondiente al menos una vez
+    // (player.everFoundGemAqua, ver winBattle). `percentMaxMpBonus`/`extraDefenseCharge` son campos
+    // genéricos nuevos (mismo criterio que nightDmgBonus/defShred/stunChance de arriba) — ver
+    // equipItem/updateBattleBars/startBattle en main.js para dónde se leen.
+    id:"craft_anillo_aqua", name:"Anillo Aqua", emoji:"💧",
+    type:"equip", slot:"accessory", rarity:"epic", value:700, revealFlag:"everFoundGemAqua",
+    percentMaxMpBonus:0.4, extraDefenseCharge:1,
+    materials:[{key:"gema_aqua", amount:1}, {key:"iron", amount:50}],
+    desc:"+40% de maná máximo (se ve en azul cielo en la barra) y un bloqueo extra en combate (se pinta en gris claro, se gasta con el primer golpe bloqueado).",
+  },
+  {
+    id:"craft_anillo_fauto", name:"Anillo Fauto", emoji:"🔥",
+    type:"equip", slot:"accessory", rarity:"epic", value:700, revealFlag:"everFoundGemFauto",
+    burnChanceBonus:0.25, burnImmune:true,
+    materials:[{key:"gema_fauto", amount:1}, {key:"iron", amount:50}],
+    desc:"+25% de probabilidad de quemar al golpear (se suma a la de tu arma, si tiene) y te vuelve inmune a quemaduras.",
   },
 ];

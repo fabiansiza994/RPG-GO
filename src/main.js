@@ -17,7 +17,7 @@ import {
 import { Capacitor } from "@capacitor/core";
 import { App } from "@capacitor/app";
 import { isGpsSupported, gpsGetCurrentPosition, gpsWatchPosition, gpsClearWatch } from "./game/systems/nativeGeolocation.js";
-import { writeAndShareTextFile, pickAndReadTextFile, writeLocalBackupFile, listLocalBackupFiles, readLocalBackupFile, deleteLocalBackupFile } from "./game/systems/saveTransfer.js";
+import { writeAndShareTextFile, pickAndReadTextFile, writeLocalBackupFile, listLocalBackupFiles, readLocalBackupFile, deleteLocalBackupFile, writeAndShareImageFile } from "./game/systems/saveTransfer.js";
 import { isBackupFolderSupported, pickBackupFolder, isBackupFolderValid, writeFileToBackupFolder, listBackupFolderFiles, readBackupFolderFile, deleteBackupFolderFile } from "./game/systems/backupFolder.js";
 import { INVENTORY_CAPACITY_TIERS, INVENTORY_TIER_COST } from "./game/config/inventoryCapacity.js";
 import {
@@ -38,7 +38,7 @@ import { queryEcosystem, getBiomeAt, classifyBiomeForZone, classifyBiomeForPark 
 import { VISIBILITY_PRIORITY, VISIBILITY_DISTANCES, ENTITY_VISIBILITY } from "./game/config/visibility.js";
 import { isEntityVisible, diffVisibility } from "./game/systems/visibilityEngine.js";
 import { buildRegionsForCity, detectRegionAt } from "./game/systems/regionManager.js";
-import { OSM_QUERY_CONFIG } from "./game/config/osm.js";
+import { OSM_QUERY_CONFIG, GAME_FEATURE_KEYS } from "./game/config/osm.js";
 import { createOsmStore } from "./game/systems/osmMapCache.js";
 import { refreshWorldGeoData, getZoneType, getNearbyFeatures, hasNearbyFeature, getBiomeHint } from "./game/systems/geoWorldAdapter.js";
 import { COMBAT_POWER_STAT_WEIGHTS, EQUIPMENT_QUALITY_CONFIG, PET_POWER_CONFIG, PASSIVE_BONUS_WEIGHTS } from "./game/config/combatPower.js";
@@ -62,6 +62,8 @@ import {
   VAGABUNDO_COST,
   LOBO_NOCTURNO_TEMPLATE,
   LOBO_SOMBRIO_TEMPLATE,
+  ELEMENTAL_AQUA_TEMPLATE,
+  ELEMENTAL_FAUTO_TEMPLATE,
   PACK_BUFF_ABILITIES,
 } from "./game/config/enemies.js";
 import {
@@ -87,6 +89,8 @@ import {
   EQUIP_SLOTS,
   EXCLUSIVE_TABLE,
   ROTATING_WEAPON_POOL,
+  EARLY_WEAPON_POOL,
+  EQUIPMENT_SETS,
   EQUIP_UPGRADE_MAX,
   EQUIP_UPGRADE_DIAMOND_STEP,
   EQUIP_UPGRADE_SAFE_DIAMOND_LEVELS,
@@ -158,6 +162,10 @@ import {
   PVP_GUERRERO_BATTLE_SPRITES,
   PVP_BERSERKER_BATTLE_SPRITES,
   CHAR_SELECT_ART,
+  NOE_PORTRAIT_PATH,
+  WORLD_CINEMATIC_SCENE_PATHS,
+  ELEMENTAL_AQUA_SPRITES,
+  ELEMENTAL_FAUTO_SPRITES,
 } from "./game/assets/spriteRegistry.js";
 import { createDailyMissionsService } from "./game/systems/dailyMissions/dailyMissionsService.js";
 import { createAdventurerContractsService } from "./game/systems/adventurerContracts/adventurerContractsService.js";
@@ -195,9 +203,31 @@ if("serviceWorker" in navigator){
 // parpadeo, selección de personaje, y recién ahí aparece el splash" — llegaba tarde, después de
 // que el juego ya se había mostrado). Con HTML/CSS puro no hay ida y vuelta al puente nativo, así
 // que no hay ninguna carrera posible: se pinta en el mismo instante que el resto de la página.
+/** Pedido explícito: usar la pausa fija del splash para mostrar algo además de la imagen quieta —
+ *  hoy, si ya se puede saber sin molestar al jugador (navigator.permissions.query, sin disparar
+ *  el permiso nativo) si la ubicación ya está activada. Puramente informativo/best-effort: nunca
+ *  cambia cuánto dura el splash ni decide nada por su cuenta — el chequeo real (y el pedido de
+ *  activarla si hace falta) sigue siendo maybeShowGpsGate, más abajo, que corre después. */
+function updateNativeSplashStatus(text){
+  const el = document.getElementById("nativeSplashStatus");
+  if(el) el.textContent = text;
+}
 if(Capacitor.isNativePlatform()){
   const splashCover = document.getElementById("nativeSplashCover");
   if(splashCover){
+    (async ()=>{
+      updateNativeSplashStatus("Verificando ubicación…");
+      try{
+        if(navigator.permissions && navigator.permissions.query){
+          const status = await navigator.permissions.query({name:"geolocation"});
+          updateNativeSplashStatus(status.state === "granted" ? "Ubicación activada ✓" : "Listo");
+        } else {
+          updateNativeSplashStatus("Listo");
+        }
+      }catch(e){
+        updateNativeSplashStatus("Listo");
+      }
+    })();
     setTimeout(()=>{
       splashCover.classList.add("hide");
       setTimeout(()=> splashCover.remove(), 320);
@@ -221,6 +251,10 @@ if(Capacitor.isNativePlatform()){
   if(slimeSalvajeTpl) slimeSalvajeTpl.mapSprite = SLIME_SALVAJE_SPRITES.map;
   const rataMutanteTpl = MONSTER_TEMPLATES.find(t=>t.name==="Rata Mutante");
   if(rataMutanteTpl) rataMutanteTpl.mapSprite = RATA_MUTANTE_SPRITES.map;
+  // Elemental Aqua/Fauto no viven en MONSTER_TEMPLATES (son plantillas especiales aparte, como
+  // LOBO_NOCTURNO_TEMPLATE) — se les asigna el marcador de mapa acá igual, mismo criterio.
+  ELEMENTAL_AQUA_TEMPLATE.mapSprite = ELEMENTAL_AQUA_SPRITES.map;
+  ELEMENTAL_FAUTO_TEMPLATE.mapSprite = ELEMENTAL_FAUTO_SPRITES.map;
 }
 
 /** Construye la versión del movimiento definitivo para un nivel de evolución (1, 2 o 3). */
@@ -648,7 +682,7 @@ ARCHER_ACCESSORY_BASES.forEach((a,i)=> EQUIP_TABLE.push({
 let pvp = null;
 let outgoingInvite = null;
 let incomingInvite = null;
-let shopActiveCategory = "weapon";
+let shopActiveCategory = "featured";
 let shopPage = 0;
 const SHOP_PAGE_SIZE = 10;
 // Barra de filtro/orden de la tienda (ver new_elements/shop.png de referencia) — "relevance" es el
@@ -2000,6 +2034,21 @@ const GUERRERO_ATTACK_TOTAL_MS = GUERRERO_ATTACK_TRAVEL_MS*2 + GUERRERO_ATTACK_H
  *  regreso). Ahora cada tramo tiene su PROPIO easing (puesto en el keyframe de arranque de ESE
  *  tramo) — así cada offset sigue cayendo exactamente en su tiempo real, sin importar qué tan
  *  "acelerado" se vea cada tramo por separado. */
+/** Cancela cualquier animación WAAPI residual sobre #spritePlayer/#spriteEnemy (saltos/deslizamientos
+ *  de ataque anteriores que hayan quedado a medio camino) SIN tocar la respiración idle de fondo
+ *  (breathe/breatheFlipped, ver main.css) — bug encontrado: `el.getAnimations()` devuelve TAMBIÉN la
+ *  animación CSS de fondo, así que el `.forEach(a=>a.cancel())` de siempre la mataba a ella también.
+ *  Una animación CSS cancelada por script no se reinicia sola — hace falta un cambio real de clase/
+ *  estilo (ver el truco remove→reflow→add que ya usa triggerGuerreroEarthquakeShake) — así que una
+ *  vez cancelada quedaba muerta el resto del combate. Usar SIEMPRE esto en vez de
+ *  "el.getAnimations().forEach(a=>a.cancel())" en cualquier limpieza sobre estos dos elementos. */
+function cancelNonBreathingAnimations(el){
+  if(!el || !el.getAnimations) return;
+  el.getAnimations().forEach(a=>{
+    if(a.animationName === "breathe" || a.animationName === "breatheFlipped") return;
+    a.cancel();
+  });
+}
 function playGuerreroAttackSequence(img){
   clearTimeout(img._resetTimer);
   clearTimeout(img._seqTimer1);
@@ -2013,6 +2062,11 @@ function playGuerreroAttackSequence(img){
   const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.attack1;
+  // Pedido explícito: la ráfaga de hojas/polvo/niebla tiene que salir JUSTO cuando arranca la
+  // animación de ataque (el instante en que se ve la pose ataque1, acá), no recién cuando el golpe
+  // "revela" el daño (eso pasa bastante después — ver GUERRERO_ATTACK_TRAVEL_MS/hitDelayMs en
+  // executePlayerAction, que solo dispara animateSprite("spritePlayer","attackp") al conectar).
+  spawnAttackDustFx(img.parentElement);
   img._seqTimer1 = setTimeout(()=>{ img.src = sprites.attack2; }, GUERRERO_ATTACK_TRAVEL_MS*0.5);
   // Pedido explícito: dos variantes del golpe final que se intercalan en CADA ataque (no una al
   // azar que podría repetirse dos veces seguidas) — se guarda el turno en el propio <img> para que
@@ -2042,7 +2096,7 @@ function playGuerreroAttackSequence(img){
   const targetElId = battleState && battleState.isPack ? "packStageMon"+battleState.selectedTarget : "spriteEnemy";
   const enemyEl = document.getElementById(targetElId);
   if(container && enemyEl && container.animate && !enemyEl.classList.contains("hidden")){
-    container.getAnimations().forEach(a=> a.cancel()); // corta un salto anterior si llegara a medio camino
+    cancelNonBreathingAnimations(container); // corta un salto anterior si llegara a medio camino
     const from = container.getBoundingClientRect();
     const to = enemyEl.getBoundingClientRect();
     // Llega cerca del enemigo, no encima — 72% del trayecto total, para que se sienta como un
@@ -2081,11 +2135,12 @@ function playGuerreroUltimateSequence(img){
   clearTimeout(img._presentacionTimer);
   clearTimeout(img._ultGlowOffTimer);
   const container = img.parentElement;
-  if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.classList.remove("guerrero-ultimate-glow");
   img.src = sprites.attack1;
+  spawnAttackDustFx(container); // mismo criterio que playGuerreroAttackSequence: justo al salir ataque1
 
   img._seqTimer1 = setTimeout(()=>{
     img.src = sprites.attack2; // pose del punto más alto del salto
@@ -2173,7 +2228,7 @@ function playGuerreroCastSequence(img, isAoe){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer); // mismo motivo que en playGuerreroAttackSequence
   const container = img.parentElement;
-  if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel()); // corta un salto de golpe anterior si quedó a medio camino
+  cancelNonBreathingAnimations(container); // corta un salto de golpe anterior si quedó a medio camino
   const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.shout;
@@ -2196,7 +2251,7 @@ function playGuerreroBuffSequence(img, kind){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
   const container = img.parentElement;
-  if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.shout;
@@ -2260,7 +2315,7 @@ function playGuerreroDefendPose(){
   clearTimeout(img._seqTimer2);
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
-  if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = GUERRERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.defend;
@@ -2288,7 +2343,7 @@ function playMagoCastSequence(img){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
   const container = img.parentElement;
-  if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = MAGO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.attack;
@@ -2314,7 +2369,7 @@ function playMagoDefendPose(){
   clearTimeout(img._seqTimer2);
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
-  if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = MAGO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.defend;
@@ -2347,6 +2402,7 @@ function playBerserkerAttackSequence(img){
   const sprites = BERSERKER_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.attack1;
+  spawnAttackDustFx(img.parentElement); // mismo criterio que playGuerreroAttackSequence: justo al salir ataque1
   if(sprites.attack2){
     // Flujo femenino: lineal, sin variantes alternadas.
     img._seqTimer1 = setTimeout(()=>{ img.src = sprites.attack2; }, BERSERKER_ATTACK_TRAVEL_MS*0.5);
@@ -2371,7 +2427,7 @@ function playBerserkerAttackSequence(img){
   const targetElId = battleState && battleState.isPack ? "packStageMon"+battleState.selectedTarget : "spriteEnemy";
   const enemyEl = document.getElementById(targetElId);
   if(container && enemyEl && container.animate && !enemyEl.classList.contains("hidden")){
-    container.getAnimations().forEach(a=> a.cancel()); // corta un slash anterior si llegara a medio camino
+    cancelNonBreathingAnimations(container); // corta un slash anterior si llegara a medio camino
     const from = container.getBoundingClientRect();
     const to = enemyEl.getBoundingClientRect();
     // Llega cerca del enemigo, no encima — 72% del trayecto, mismo criterio que el salto del
@@ -2404,7 +2460,7 @@ function playBerserkerDefendPose(){
   clearTimeout(img._seqTimer2);
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
-  if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = BERSERKER_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.defend;
@@ -2491,11 +2547,12 @@ function playArqueroAttackSequence(img, charged){
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
   const container = img.parentElement;
-  if(container && container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = ARQUERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.classList.toggle("arquero-charged-glow", !!charged);
   img.src = sprites.attack1;
+  spawnAttackDustFx(container); // mismo criterio que playGuerreroAttackSequence: justo al salir ataque1
   if(sprites.attackAim){
     img._seqTimer1 = setTimeout(()=>{ img.src = sprites.attackAim; }, ARQUERO_ATTACK_NOCK_MS);
   }
@@ -2525,7 +2582,7 @@ function playArqueroDefendPose(){
   clearTimeout(img._seqTimer2);
   clearTimeout(img._seqTimer3);
   clearTimeout(img._presentacionTimer);
-  if(container.getAnimations) container.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(container);
   const sprites = ARQUERO_BATTLE_SPRITES[img.dataset.gender === "f" ? "f" : "m"];
   img.classList.add("attacking");
   img.src = sprites.defend;
@@ -2562,7 +2619,7 @@ function triggerGuerreroEarthquakeShake(){
   // este mismo elemento — las animaciones vía element.animate() tienen MÁS prioridad que las
   // animaciones CSS por clase, así que sin cancelarla primero, esa transform residual tapaba por
   // completo la sacudida (la clase se agregaba, pero visualmente no se movía nada).
-  if(el.getAnimations) el.getAnimations().forEach(a=> a.cancel());
+  cancelNonBreathingAnimations(el);
   el.classList.remove("earthquake-shake");
   void el.offsetWidth;
   el.classList.add("earthquake-shake");
@@ -2618,6 +2675,7 @@ function triggerWeaponAnim(elId, mv){
     if(spr && spr.attack){
       img.src = spr.attack;
       img.classList.add("attacking");
+      spawnAttackDustFx(img.parentElement); // mismo criterio: justo al arrancar la pose de ataque
       clearTimeout(img._resetTimer);
       img._resetTimer = setTimeout(()=>{
         img.src = spr.base;
@@ -2631,6 +2689,7 @@ function triggerWeaponAnim(elId, mv){
   el.classList.remove("attacking");
   void el.offsetWidth;
   el.classList.add("attacking");
+  spawnAttackDustFx(container);
 }
 function triggerClassAttackAnim(mv){ triggerWeaponAnim("spritePlayer", mv); }
 
@@ -2978,6 +3037,7 @@ const BACK_CLOSE_MAP = [
   ["parkOverlay","btnParkCancel"], ["medalOverlay","btnCloseMedal"],
   ["charSheetOverlay","btnCloseCharSheet"], ["settingsOverlay","btnCloseSettings"],
   ["wagerOverlay",null], ["authOverlay",null], ["classOverlay",null],
+  ["gpsGateOverlay","btnGpsGateSkip"],
   ["deleteCharOverlay","btnCancelDeleteChar"], ["returnMenuOverlay","btnCancelReturnMenu"],
   ["levelupOverlay",null], ["learnOverlay","btnSkipLearn"],
   ["invOverlay","btnCloseInv"], ["invDetailOverlay","btnCloseInvDetail"],
@@ -4362,26 +4422,31 @@ function showAlert(message, opts){
  *  en vez de un showConfirm de una sola unidad. `unitMatCost` es opcional ({wood,stone,iron}, armas
  *  élite) — el tope del stepper nunca deja elegir más de lo que el oro (y esos materiales, si aplica)
  *  alcanzan a pagar, así nunca hace falta validar valores negativos ni de más al confirmar. */
-function openBuyQuantityModal(item, unitGoldCost, unitMatCost, onConfirm){
+/** Selector de cantidad genérico — mismo modal (#buyQtyModalOverlay) para comprar Y vender, así no
+ *  hay que tocar "de a uno" cada vez (pedido explícito, ver openSellQuantityModal). `isSell` cambia
+ *  el tope (limitado por lo que TENÉS, no por lo que podés pagar) y el texto del total (lo que
+ *  GANÁS, no lo que gastás). */
+function openQuantityModal(item, unitGoldAmount, unitMatCost, ownedQty, isSell, onConfirm){
   const maxByMatEntry = (have, cost)=> cost>0 ? Math.floor(have/cost) : Infinity;
-  const maxByGold = unitGoldCost>0 ? Math.floor((player.gold||0)/unitGoldCost) : Infinity;
-  const maxByMat = unitMatCost ? Math.min(
+  const maxByGold = (!isSell && unitGoldAmount>0) ? Math.floor((player.gold||0)/unitGoldAmount) : Infinity;
+  const maxByMat = (!isSell && unitMatCost) ? Math.min(
     maxByMatEntry(player.wood||0, unitMatCost.wood||0),
     maxByMatEntry(player.stone||0, unitMatCost.stone||0),
     maxByMatEntry(player.iron||0, unitMatCost.iron||0)
   ) : Infinity;
-  const maxQty = Math.max(1, Math.min(maxByGold, maxByMat));
+  const maxQty = Math.max(1, Math.min(maxByGold, maxByMat, isSell ? Math.max(1, ownedQty) : Infinity));
   let qty = 1;
 
   $("buyQtyModalImgWrap").innerHTML = iconFor(item);
   $("buyQtyModalName").textContent = item.name;
   $("buyQtyModalDesc").textContent = item.desc || "";
+  $("buyQtyConfirm").textContent = isSell ? "Vender" : "Comprar";
 
   const valEl = $("buyQtyValue"), minusBtn = $("buyQtyMinus"), plusBtn = $("buyQtyPlus"), totalEl = $("buyQtyModalTotal");
   function render(){
     valEl.textContent = qty;
-    let totalTxt = `Total: 💰${unitGoldCost*qty}`;
-    if(unitMatCost) totalTxt += ` · 🪵${unitMatCost.wood*qty} 🪨${unitMatCost.stone*qty} 🔩${unitMatCost.iron*qty}`;
+    let totalTxt = isSell ? `Ganarás: 💰${unitGoldAmount*qty}` : `Total: 💰${unitGoldAmount*qty}`;
+    if(!isSell && unitMatCost) totalTxt += ` · 🪵${unitMatCost.wood*qty} 🪨${unitMatCost.stone*qty} 🔩${unitMatCost.iron*qty}`;
     totalEl.textContent = totalTxt;
     minusBtn.disabled = qty<=1;
     plusBtn.disabled = qty>=maxQty;
@@ -4397,6 +4462,14 @@ function openBuyQuantityModal(item, unitGoldCost, unitMatCost, onConfirm){
     overlay.classList.add("hidden");
     onConfirm(qty);
   };
+}
+function openBuyQuantityModal(item, unitGoldCost, unitMatCost, onConfirm){
+  openQuantityModal(item, unitGoldCost, unitMatCost, Infinity, false, onConfirm);
+}
+/** `ownedQty` es cuántas unidades tenés disponibles para vender — pone el tope del selector ahí en
+ *  vez de dejar que se pase de lo que realmente tenés. */
+function openSellQuantityModal(item, unitSellPrice, ownedQty, onConfirm){
+  openQuantityModal(item, unitSellPrice, null, ownedQty, true, onConfirm);
 }
 
 /* ============================================================
@@ -5018,6 +5091,7 @@ $("btnStart").onclick = async ()=>{
   const _mapLoadGen = mapLoadingGen;
   initMap();
   armMapLoadingHide(_mapLoadGen);
+  maybeShowWorldIntro();
   ensureDailyMissionReminderScheduled(); // fire-and-forget — no bloquea nada, no hace falta esperar
   // el marcador del jugador (meMarker) recién existe DESPUÉS de initMap() — refreshHud() de arriba
   // corrió antes, así que cualquier cosa que dependa de él (como el aura del Legado en el mapa)
@@ -5025,7 +5099,10 @@ $("btnStart").onclick = async ()=>{
   // desde el primer momento, no solo tras la próxima mutación de stats.
   refreshHud();
   saveGame();
-  checkDailyBonus();
+  // Pedido explícito: la primera vez (cinemática + Noe todavía sin ver), el bono diario debe
+  // aparecer DESPUÉS de esa bienvenida, no antes — se dispara al final desde closeWorldIntro().
+  // Si ya se vio antes (seenWorldIntro), no hay bienvenida que esperar: sale ya mismo, como siempre.
+  if(player.seenWorldIntro) checkDailyBonus();
   await dailyMissionsService.init();
   gameEventBus.emit({ type: "CHARACTER_SELECTED", payload: { amount: 1 }, dedupeKey: selectedClass });
   updateDailyMissionsButton();
@@ -5108,6 +5185,7 @@ async function saveGame(){
       worldEvents: player.worldEvents||[], lastEventResolvedAt: player.lastEventResolvedAt||null,
       lastRegionId: player.lastRegionId||null,
       lastDailyBonus: player.lastDailyBonus || null,
+      lastShareDay: player.lastShareDay || null,
       totalDistanceM: player.totalDistanceM || 0,
       medals: player.medals || [],
       zoneDistanceM: player.zoneDistanceM || {},
@@ -5116,6 +5194,8 @@ async function saveGame(){
       visitedZones: player.visitedZones || [],
       pets: player.pets || [],
       everGotCaptureCard: player.everGotCaptureCard || false,
+      everFoundGemAqua: player.everFoundGemAqua || false,
+      everFoundGemFauto: player.everFoundGemFauto || false,
       redeemedCodes: player.redeemedCodes || [],
       coliseumStats: player.coliseumStats || null,
       ownedTowers: player.ownedTowers || null,
@@ -5127,6 +5207,8 @@ async function saveGame(){
       globalShopListings: player.globalShopListings || [],
       pickaxe: player.pickaxe || null,
       seenBattleTutorial: player.seenBattleTutorial || false,
+      seenWorldIntro: player.seenWorldIntro || false,
+      seenResourceTip: player.seenResourceTip || false,
       inventoryIds: player.inventory.map(it=>it.id),
       inventoryDurability: player.inventory.map(it=> durabilitySaveData(it)),
       bossLootRegistry: bossLootRegistry, // objetos únicos de jefe generados en tiempo real (no viven en las tablas fijas)
@@ -5166,7 +5248,13 @@ async function saveGame(){
  *  account.equippedByHero — null si ese hueco está vacío. */
 function equipInstanceSaveData(item){
   if(!item) return null;
-  return { id: item.id, upgradeLevel: item.upgradeLevel||0, durability: durabilitySaveData(item) };
+  // resolvedMaxMpBonus: mismo criterio que durability — el Anillo Aqua (percentMaxMpBonus, ver
+  // BLACKSMITH_RECIPES) calcula su bono de maná UNA vez al equiparse (según el maxMp del jugador
+  // en ESE momento, ver equipItem) y lo guarda mutado en item.bonuses.maxMp; freshCopy() en
+  // resolveEquipmentForHero siempre trae la plantilla original sin ese cálculo, así que hay que
+  // persistirlo aparte para no perderlo (ni recalcularlo distinto) en la próxima carga.
+  return { id: item.id, upgradeLevel: item.upgradeLevel||0, durability: durabilitySaveData(item),
+    resolvedMaxMpBonus: item.percentMaxMpBonus ? ((item.bonuses && item.bonuses.maxMp) ?? null) : undefined };
 }
 /** Arma el mapa completo {classKey: equipo} para guardar — recalcula SOLO el héroe activo desde
  *  player.equipment (lo único que vive en memoria ahora mismo); los otros 3 héroes se preservan
@@ -5202,6 +5290,12 @@ function resolveEquipmentForHero(classKey, level){
     if(slotData.upgradeLevel) applyUpgradeToItem(it, slotData.upgradeLevel);
     const dur = slotData.durability;
     if(dur){ it.durability = dur.durability; it.maxDurability = dur.maxDurability; it.material = dur.material; }
+    // Restaura el bono de maná ya calculado del Anillo Aqua (ver equipInstanceSaveData) — sin
+    // esto, freshCopy() traería la plantilla original con percentMaxMpBonus pero SIN el flat ya
+    // resuelto, y unequipItem no podría descontar lo mismo que en su momento se sumó.
+    if(it.percentMaxMpBonus && slotData.resolvedMaxMpBonus != null){
+      it.bonuses = {...(it.bonuses||{}), maxMp: slotData.resolvedMaxMpBonus};
+    }
     return it;
   }
   let accessoryArr = Array.isArray(eq.accessory) ? eq.accessory.map(build) : [];
@@ -5239,13 +5333,16 @@ function freshAccountData(name){
     forgeCraft: null, equipUpgrade: null,
     shadowWolfNightKey: null, shadowWolfEscapes: 0,
     dynamicEntities: [], worldEvents: [], lastEventResolvedAt: null, lastRegionId: null,
-    lastDailyBonus: null, totalDistanceM: 0, medals: [], zoneDistanceM: {},
+    lastDailyBonus: null, lastShareDay: null, totalDistanceM: 0, medals: [], zoneDistanceM: {},
     parkWeaponsObtained: [], parkGuardianState: {}, visitedZones: [], pets: [],
-    everGotCaptureCard: false, redeemedCodes: [], coliseumStats: null, ownedTowers: null,
+    everGotCaptureCard: false, everFoundGemAqua: false, everFoundGemFauto: false,
+    redeemedCodes: [], coliseumStats: null, ownedTowers: null,
     dungeonProgress: {}, activeDungeonRun: null, dungeonPortalCooldowns: {},
     wood: 0, stone: 0, iron: 0, craftMats: {}, pickaxe: null,
     inventoryIds: [], inventoryDurability: [], bossLootRegistry: {}, equippedByHero: {},
     seenBattleTutorial: false,
+    seenWorldIntro: false,
+    seenResourceTip: false,
     lastPos: null, savedAt: Date.now(),
   };
 }
@@ -5307,6 +5404,7 @@ function rebuildPlayer(accountData, heroData){
     attributePoints: heroData.attributePoints||0,
     attrSpent: heroData.attrSpent || {maxHp:0,maxMp:0,atk:0,matk:0,def:0,spd:0},
     lastDailyBonus: accountData.lastDailyBonus || null,
+    lastShareDay: accountData.lastShareDay || null,
     totalDistanceM: accountData.totalDistanceM || 0,
     medals: accountData.medals || [],
     zoneDistanceM: accountData.zoneDistanceM || {},
@@ -5315,6 +5413,8 @@ function rebuildPlayer(accountData, heroData){
     visitedZones: accountData.visitedZones || [],
     pets: accountData.pets || [],
     everGotCaptureCard: accountData.everGotCaptureCard || false,
+    everFoundGemAqua: accountData.everFoundGemAqua || false,
+    everFoundGemFauto: accountData.everFoundGemFauto || false,
     redeemedCodes: accountData.redeemedCodes || [],
     coliseumStats: accountData.coliseumStats || null,
     ownedTowers: accountData.ownedTowers || null,
@@ -5328,6 +5428,8 @@ function rebuildPlayer(accountData, heroData){
     globalShopListings: accountData.globalShopListings || [],
     pickaxe: accountData.pickaxe || null,
     seenBattleTutorial: accountData.seenBattleTutorial || false,
+    seenWorldIntro: accountData.seenWorldIntro || false,
+    seenResourceTip: accountData.seenResourceTip || false,
     maxHp: heroData.maxHp, hp: heroData.hp, maxMp: heroData.maxMp, mp: heroData.mp,
     atk: heroData.atk, matk: heroData.matk||0, def: heroData.def, spd: heroData.spd,
     growth: c.growth,
@@ -5436,6 +5538,12 @@ async function initContinueScreen(){
       const _mapLoadGen = mapLoadingGen;
       initMap(accountData.lastPos);
       armMapLoadingHide(_mapLoadGen);
+      // Pedido explícito: la cinemática de bienvenida + Noe deben salir al menos una vez para
+      // TODOS los jugadores, aunque ya tengan progreso — antes solo se disparaba desde btnStart
+      // (cuenta/héroe recién creados), así que un jugador que YA tenía partida y solo entraba por
+      // "Continuar" nunca la veía. maybeShowWorldIntro() ya se guarda sola si seenWorldIntro es
+      // true, así que en cuentas que ya la vieron esto sigue sin hacer nada.
+      maybeShowWorldIntro();
       ensureDailyMissionReminderScheduled(); // fire-and-forget — no bloquea nada, no hace falta esperar
       // el marcador del jugador (meMarker) recién existe DESPUÉS de initMap() — refreshHud() de
       // arriba corrió antes, así que el aura del Legado (y cualquier otra cosa que dependa del
@@ -5445,7 +5553,10 @@ async function initContinueScreen(){
       refreshHud();
       if(activeQuest && !activeQuest.itemObtained) drawQuestRoute();
       renderQuestTracker();
-      checkDailyBonus();
+      // Igual que en btnStart: si la bienvenida todavía no se vio, el bono diario espera a que
+      // termine esa cadena completa (cinemática + Noe + tutorial de batalla + despedida — ver
+      // closeWorldIntro) en vez de salir ya mismo, para no adelantarse a Noe.
+      if(player.seenWorldIntro) checkDailyBonus();
       await dailyMissionsService.init();
       gameEventBus.emit({ type: "CHARACTER_SELECTED", payload: { amount: 1 }, dedupeKey: key });
       updateDailyMissionsButton();
@@ -6000,6 +6111,8 @@ function teardownMapIfExists(){
   if(typeof map !== "undefined" && map && map.remove){
     try{ map.remove(); }catch(e){ /* ya estaba destruido */ }
   }
+  hideWorldIntroArrow(); // el marker que estaba señalando ya no existe tras destruir el mapa viejo
+  $("worldIntroOverlay").classList.add("hidden");
   map = null;
   meMarker = null;
   meRing = null;
@@ -6139,17 +6252,16 @@ function initMap(savedPos){
   const meInner = initialSrc
     ? `<img src="${initialSrc}" class="me-portrait" alt="">`
     : `<div class="me-marker">${player.emoji}</div>`;
-  const lampClass = isNightTime() ? "street-lamp lit" : "street-lamp";
   // Pedido explícito: ya no se dibuja el aro celeste de alcance (pulse-ring) alrededor del propio
   // jugador — el círculo mágico rúnico (createMeMagicCircle) es ahora el único elemento debajo del
   // personaje. El aro seguía existiendo con la misma inclinación falsa (rotateX vía CSS) que se
   // reemplazó por el círculo con pitchAlignment/rotationAlignment reales; dejarlos juntos se veía
   // redundante y "de más". El resto de los usos de ring-tilt-wrap (fogatas, santuarios, monstruos)
   // no se tocan, son anillos de alcance distintos y siguen igual.
+  // Pedido explícito: se sacaron los dos faroles (🏮) a los costados del jugador que se encendían
+  // de noche.
   const meIcon = L.divIcon({className:'', html:`<div class="me-marker-wrap" style="position:relative; display:flex; align-items:center; justify-content:center; width:110px; height:60px;">
       <div class="me-marker-dark-flame"></div>
-      <div class="${lampClass}" style="position:absolute; left:2px; top:8px;">🏮</div>
-      <div class="${lampClass}" style="position:absolute; right:2px; top:8px;">🏮</div>
       ${meInner}</div>`, iconSize:[120,70], iconAnchor:[60,52]});
   meMarker = L.marker([start.lat,start.lng], {icon:meIcon, zIndexOffset:1000}).addTo(map);
   meMagicCircle = createMeMagicCircle(start);
@@ -6251,6 +6363,8 @@ function initMap(savedPos){
   setInterval(()=> runIfNotInBattle(updateResourceNodeLifespans), 20000);
   maybeSpawnResourceNode(); maybeSpawnResourceNode(); // un par de una vez al empezar
   setInterval(()=> runIfNotInBattle(maybeSpawnLoboNocturno), 60000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnElementalAqua), 60000);
+  setInterval(()=> runIfNotInBattle(maybeSpawnElementalFauto), 60000);
   setInterval(()=> runIfNotInBattle(maybeSpawnDungeonAuraEnemy), 30000);
   setInterval(()=> maybeSpawnShadowWolf(), 45000); // maybeSpawnShadowWolf ya chequea battleState/pvp/groupBattle por su cuenta
   setInterval(()=> runIfNotInBattle(maybeScheduleWanderingMerchant), 120000);
@@ -6266,10 +6380,16 @@ function initMap(savedPos){
   setTimeout(()=> maybeSpawnThief(), 45000);
   initMultiplayer();
 
-  // Modo simulación por defecto: el GPS NUNCA se solicita automáticamente.
-  // Solo se pide cuando el usuario toca "Activar" o el botón 📍/🗺️ del HUD.
-  enableSimulationFallback();
-  setGpsStatus("off", "Modo simulación (toca el mapa o activa el GPS)");
+  // Modo simulación por defecto: el GPS NUNCA se solicita automáticamente ACÁ — salvo que el
+  // jugador ya lo haya activado en la puerta de entrada (ver maybeShowGpsGate/enterGameFlow,
+  // corre ANTES de elegir personaje), en cuyo caso entra directo en modo GPS real de una, en vez
+  // de mostrar simulación un momento y recién ahí prender el GPS.
+  if(hadRealGpsFixBeforeMap){
+    requestRealGps(true); // silent:true — el permiso ya está concedido, no debería volver a preguntar
+  } else {
+    enableSimulationFallback();
+    setGpsStatus("off", "Modo simulación (toca el mapa o activa el GPS)");
+  }
 
   toast("¡Bienvenido, "+player.name+"! Toca 👾 para buscar monstruos, o 📍 para activar el GPS real.", 3600);
 }
@@ -6419,7 +6539,7 @@ async function requestRealGps(silent){
   $("gpsBanner").classList.remove("hidden");
   $("gpsBannerText").innerHTML = "📍 El GPS requiere HTTPS y permisos de ubicación. Buscando señal…";
 
-  const options = {enableHighAccuracy:true, maximumAge:0, timeout:20000};
+  const options = {enableHighAccuracy:true, maximumAge:5000, timeout:30000}; // mismo criterio que beginWatch — ver comentario ahí
   gpsLog("Solicitando ubicación...");
   gpsLog("Hora del intento:", new Date().toISOString());
   gpsLog("Opciones utilizadas:", options);
@@ -6442,10 +6562,15 @@ async function requestRealGps(silent){
   );
 }
 
-/** Seguimiento continuo de posición, una vez que el primer fix fue exitoso. */
+/** Seguimiento continuo de posición, una vez que el primer fix fue exitoso.
+ *  maximumAge:0 + timeout:20000 (valores previos) exigían una lectura 100% nueva cada vez dentro de
+ *   20s — en interiores/señal débil eso falla seguido, y cada falla tira todo el modo GPS a
+ *  simulación (ver onGpsError→enableSimulationFallback), pedido explícito: se "soltaba" el GPS a los
+ *  pocos segundos estando en interiores. Con maximumAge:5000 alcanza con una lectura de hasta 5s de
+ *  antigüedad (imperceptible caminando) y timeout:30000 da más margen antes de rendirse. */
 function beginWatch(){
   if(watchId){ gpsClearWatch(watchId); watchId = null; }
-  const options = {enableHighAccuracy:true, maximumAge:0, timeout:20000};
+  const options = {enableHighAccuracy:true, maximumAge:5000, timeout:30000};
   gpsLog("Iniciando seguimiento continuo (watchPosition) con opciones:", options);
   watchId = gpsWatchPosition(options,
     (pos)=>{
@@ -6780,8 +6905,6 @@ function updateMapTimeOfDay(skipTransition){
       tiles.style.transition = "";
     }
   }
-  const lit = isNightTime();
-  document.querySelectorAll(".street-lamp").forEach(el=> el.classList.toggle("lit", lit));
   const beam = $("mapLightBeam");
   if(beam){
     beam.classList.remove("beam-moon","beam-sun");
@@ -6970,11 +7093,15 @@ function spawnSnowflakes(){
 // la escena de batalla pueda consultarla al arrancar un combate (ver updateBattleRainFx), sin
 // tener que repetir la consulta a Open-Meteo.
 let currentWeatherCategory = "clear";
+// Temperatura real de la última consulta (°C) — null hasta que la primera consulta a Open-Meteo
+// resuelva. Usada por maybeSpawnElementalFauto (30°C o más) — ver fetchWeatherForLocation.
+let currentWeatherTempC = null;
 /** Aplica el efecto visual (sol/nubes/lluvia) y actualiza el textito de clima en el HUD. */
 function applyWeatherEffect(category, tempC){
   const el = $("weatherEffects");
   if(!el) return;
   currentWeatherCategory = category;
+  currentWeatherTempC = tempC;
   el.classList.remove("hidden","weather-clear","weather-cloudy","weather-rain","weather-snow");
   el.classList.add("weather-"+category);
   if(category === "rain") spawnRaindrops();
@@ -7055,15 +7182,46 @@ setInterval(checkForNewVersion, 5*60000); // luego cada 5 minutos
 document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) checkForNewVersion(); });
 
 /** Elige una plantilla de monstruo; de noche favorece a los agresivos (emboscan solos). */
+/** Elige uno de `pool` al azar — si viene `weights` (nombre de plantilla -> peso relativo, ver
+ *  BIOMES en biomes.js), la elección respeta esos pesos en vez de ser uniforme; sin `weights`
+ *  (el caso de siempre, zona con monsterNames curado a mano) se comporta exactamente igual que
+ *  antes: cada plantilla tiene la misma chance. */
+function pickWeighted(pool, weights){
+  if(!weights) return pool[Math.floor(Math.random()*pool.length)];
+  const entries = pool.map(t=> ({ t, w: Math.max(0.0001, weights[t.name] ?? 1) }));
+  const total = entries.reduce((s,e)=> s+e.w, 0);
+  let r = Math.random()*total;
+  for(const e of entries){ r -= e.w; if(r <= 0) return e.t; }
+  return entries[entries.length-1].t;
+}
+/** Pedido explícito ("Mapa Vivo, Capa 4"): cuando el jugador está DENTRO de una zona con
+ *  `monsterNames` curado a mano (world.js), esa zona sigue mandando exactamente igual que
+ *  siempre — esto no cambia una coma de ese caso. El hueco que rellena es el otro: cuando no hay
+ *  ninguna zona así cerca (fuera de Neiva, o cualquier ciudad nueva que todavía no tenga zonas
+ *  definidas), antes se mezclaba TODO MONSTER_TEMPLATES sin ningún criterio — ahora se usa el
+ *  Ecosistema del Mundo (ecosystemEngine.js/BIOMES) como señal blanda: el bioma real (basado en
+ *  OpenStreetMap, si `osmWorldStore` ya tiene algo cerca) manda primero; si no hay uno reconocido
+ *  todavía, se usa el heurístico de zona/parque más cercano (queryWorldEcosystem, funciona en
+ *  cualquier ciudad). Nunca reemplaza el pool curado — solo decide algo más razonable que "cualquier
+ *  cosa" cuando ese pool no existe. */
 function pickMonsterTemplate(){
   const zone = getCurrentZone();
-  const pool = zone ? MONSTER_TEMPLATES.filter(t=>zone.monsterNames.includes(t.name)) : MONSTER_TEMPLATES;
-  const usePool = pool.length ? pool : MONSTER_TEMPLATES;
+  let usePool, weights = null;
+  if(zone){
+    const pool = MONSTER_TEMPLATES.filter(t=>zone.monsterNames.includes(t.name));
+    usePool = pool.length ? pool : MONSTER_TEMPLATES;
+  } else {
+    const biomeKey = playerLatLng && (queryRealWorldBiomeHint(playerLatLng) || queryWorldEcosystem(playerLatLng).biomeKey);
+    const biome = biomeKey && BIOMES[biomeKey];
+    const biomePool = biome ? MONSTER_TEMPLATES.filter(t=> biome.allowedEnemies.includes(t.name)) : [];
+    usePool = biomePool.length ? biomePool : MONSTER_TEMPLATES;
+    weights = biome && biome.spawnWeights && biome.spawnWeights.enemy;
+  }
   if(isNightTime() && Math.random() < 0.65){
     const aggros = usePool.filter(t=>t.aggressive);
-    if(aggros.length) return aggros[Math.floor(Math.random()*aggros.length)];
+    if(aggros.length) return pickWeighted(aggros, weights);
   }
-  return usePool[Math.floor(Math.random()*usePool.length)];
+  return pickWeighted(usePool, weights);
 }
 
 /** Reintenta una posición candidata (generada por `pickFn`) hasta que quede a `minSpacingM` de
@@ -7199,6 +7357,37 @@ function maybeSpawnLoboNocturno(){
   const m = makeMonster(LOBO_NOCTURNO_TEMPLATE, 50, pos, {special:true});
   monsters.push(m);
   toast("🌙 Algo aúlla en la oscuridad... un Lobo Nocturno ronda cerca.", 4500);
+}
+
+/** Elemental Aqua: enemigo especial ligado al clima/agua real — pedido explícito, aparece cuando
+ *  llueve o hay agua real cerca (lago/río/piscina, vía el Mapa Vivo/OSM — ver
+ *  hasNearbyRealWorldFeature). Nivel escalado al jugador, como un monstruo normal. Al vencerlo hay
+ *  una chance baja (10%, ver winBattle) de soltar una Gema Aqua. */
+function maybeSpawnElementalAqua(){
+  if(!playerLatLng) return;
+  if(monsters.some(m=>m.tpl===ELEMENTAL_AQUA_TEMPLATE)) return; // ya hay uno activo
+  const nearWater = hasNearbyRealWorldFeature(playerLatLng, GAME_FEATURE_KEYS.LAKE)
+    || hasNearbyRealWorldFeature(playerLatLng, GAME_FEATURE_KEYS.RIVER);
+  if(currentWeatherCategory !== "rain" && !nearWater) return;
+  if(Math.random() > 0.12) return;
+  const pos = pickPositionAwayFromMonsters(()=> randOffset(60 + Math.random()*160), 30, 6);
+  const level = Math.max(1, player.level + Math.floor(Math.random()*3) - 1);
+  const m = makeMonster(ELEMENTAL_AQUA_TEMPLATE, level, pos, {special:true});
+  monsters.push(m);
+  toast("💧 Sientes la humedad en el aire... un Elemental Aqua se materializa cerca.", 4500);
+}
+/** Elemental Fauto: enemigo especial ligado al calor real — pedido explícito, aparece cuando la
+ *  ciudad está a 30°C o más. Misma mecánica de gema que el Aqua. */
+function maybeSpawnElementalFauto(){
+  if(!playerLatLng) return;
+  if(monsters.some(m=>m.tpl===ELEMENTAL_FAUTO_TEMPLATE)) return; // ya hay uno activo
+  if(currentWeatherTempC == null || currentWeatherTempC < 30) return;
+  if(Math.random() > 0.12) return;
+  const pos = pickPositionAwayFromMonsters(()=> randOffset(60 + Math.random()*160), 30, 6);
+  const level = Math.max(1, player.level + Math.floor(Math.random()*3) - 1);
+  const m = makeMonster(ELEMENTAL_FAUTO_TEMPLATE, level, pos, {special:true});
+  monsters.push(m);
+  toast("🔥 El calor sofocante distorsiona el aire... un Elemental Fauto se materializa cerca.", 4500);
 }
 
 /* ============================================================
@@ -7473,7 +7662,9 @@ function maybeSpawnChest(){
 
 function drawChestMarker(chest){
   const rarity = CHEST_RARITIES.find(r=>r.key===chest.rarityKey);
-  const icon = L.divIcon({className:'', html:`<div class="chest-marker chest-${rarity.key}" style="--chest-glow:${rarity.glow};">🗝️</div>`,
+  // Ya teníamos la ilustración real del cofre (COFRE_CLOSED_ICON_PATH, ver Salón de la Fortuna) —
+  // pedido explícito: usarla acá también en vez de la llave 🗝️ genérica que quedaba del emoji.
+  const icon = L.divIcon({className:'', html:`<div class="chest-marker chest-${rarity.key}" style="--chest-glow:${rarity.glow};"><img src="${COFRE_CLOSED_ICON_PATH}" class="chest-marker-img" alt=""></div>`,
     iconSize:[38,42], iconAnchor:[19,38]});
   const marker = L.marker([chest.lat, chest.lng], {icon, zIndexOffset:200}).addTo(map);
   marker.on('click', ()=> tryOpenChest(chest));
@@ -7517,7 +7708,11 @@ function tryOpenChest(chest){
   saveGame();
   const itemLine = itemWon ? `<br>Y encontraste: <b>${itemWon.emoji} ${itemWon.name}</b>` : "";
   const crystalLine = crystalsWon ? `<br>💎 +${crystalsWon} cristales` : "";
-  $("resultEmoji").textContent = rarity.emoji;
+  // Pedido explícito: mostrar la ilustración real del cofre abierto (ya la usa el Cofre del
+  // Aventurero del Salón de la Fortuna, ver COFRE_OPEN_ICON_PATH) en vez del cuadrado de color
+  // genérico (rarity.emoji) — la rareza se sigue viendo, ahora como resplandor de color alrededor
+  // de la imagen (mismo `glow` que ya trae CHEST_RARITIES) en vez de un emoji abstracto.
+  $("resultEmoji").innerHTML = `<img src="${COFRE_OPEN_ICON_PATH}" alt="Cofre abierto" style="height:84px; width:auto; display:block; margin:0 auto; filter:drop-shadow(0 0 16px ${rarity.glow});">`;
   $("resultTitle").textContent = `¡Cofre ${rarity.label.toLowerCase()} abierto!`;
   $("resultSub").innerHTML = `💰 +${gold} oro · ✨ +${xp} experiencia${itemLine}${crystalLine}`;
   $("btnBoostResultXp").classList.add("hidden");
@@ -7619,10 +7814,20 @@ let activeGather = null; // {nodeId, overRangeStrikes, finishTimer} mientras se 
 /** Cada tanto, hay chance de que aparezca un recurso cerca — no aparece uno nuevo si ya hay
  *  demasiados activos cerca, para no saturar el mapa. */
 function maybeSpawnResourceNode(){
-  if(resourceNodes.length >= 6) return; // como mucho 6 nodos activos a la vez
-  if(Math.random() > 0.45) return;
   if(!playerLatLng) return;
-  const type = rollFromTable(RESOURCE_NODE_TYPES);
+  // Chequeo de siempre — EXACTAMENTE igual que antes (45% de chance, tope de 6, tabla completa
+  // con hierro incluido) — pedido explícito: el % de encontrar hierro no debía tocarse.
+  if(resourceNodes.length < 6 && Math.random() <= 0.45){
+    spawnResourceNodeFromTable(RESOURCE_NODE_TYPES);
+  }
+  // Chequeo APARTE e independiente del de arriba, solo para árboles/roca (nunca hierro) — pedido
+  // explícito: un poco más de madera/piedra en el mapa, sin cambiar nada de la chance de hierro.
+  if(resourceNodes.length < 8 && Math.random() <= 0.25){
+    spawnResourceNodeFromTable(RESOURCE_NODE_TYPES.filter(t=> t.kind !== "iron"));
+  }
+}
+function spawnResourceNodeFromTable(table){
+  const type = rollFromTable(table);
   const pos = randOffset(35 + Math.random()*150);
   const node = {id:"res_"+Math.random().toString(36).slice(2,9), typeKey:type.key, lat:pos.lat, lng:pos.lng,
     spawnedAt:Date.now(), lifespanMs:type.lifespanMs};
@@ -7655,6 +7860,14 @@ function updateResourceNodeLifespans(){
 }
 
 function tryGatherResource(nodeId){
+  // Pedido explícito: la primera vez que se toca CUALQUIER nodo (árbol/roca/vena), Noe explica el
+  // sistema en vez de intentar recolectar ya mismo — de ahí en adelante se comporta normal.
+  if(player && !player.seenResourceTip){
+    player.seenResourceTip = true;
+    saveGame();
+    showNoeResourceTip();
+    return;
+  }
   if(activeGather){ toast("Ya estás recolectando algo."); return; }
   if(!player.pickaxe || player.pickaxe.uses <= 0){ toast("⛏️ Necesitas un pico para recolectar — cómpralo en la 🏪 Tienda.", 3800); return; }
   const node = resourceNodes.find(n=>n.id===nodeId);
@@ -7759,7 +7972,11 @@ function finishGather(node, type){
   if(player.pickaxe){
     player.pickaxe.uses -= 1;
     if(player.pickaxe.uses <= 0){
-      pickaxeMsg = "⛏️ ¡tu pico se rompió!";
+      // Pedido explícito: que el aviso diga claramente que hay que comprar uno nuevo (antes solo
+      // decía "se rompió", sin la acción a seguir) y se quede en pantalla el tiempo suficiente
+      // para leerlo — misma duración que el aviso de "no tienes pico" en tryGatherResource, para
+      // que ambos avisos relacionados se sientan consistentes.
+      pickaxeMsg = "⛏️ ¡Tu pico se rompió en este último uso! Cómprate otro en la 🏪 Tienda para seguir recolectando.";
       player.pickaxe = null;
     }
   }
@@ -7767,7 +7984,7 @@ function finishGather(node, type){
   saveGame();
   renderPickaxeShopStatus();
   spawnResourceGatherFloat(type, amount, beforeQty, anchorRect);
-  if(pickaxeMsg) toast(pickaxeMsg, 2800);
+  if(pickaxeMsg) toast(pickaxeMsg, 4200);
 }
 
 /** Barra fija de materiales recolectados (madera/piedra/hierro) — pedido explícito: va debajo de
@@ -8735,7 +8952,11 @@ function renderForgeCraftTab(){
   list.innerHTML = "";
   const busy = isForgeCrafting();
   if(busy) list.appendChild(buildForgeCraftProgressRow());
-  BLACKSMITH_RECIPES.forEach(recipe=>{
+  // Pedido explícito: recetas reveladas por gema (Anillo Aqua/Fauto) no aparecen hasta que el
+  // jugador consiguió la gema correspondiente al menos una vez (revealFlag, ver BLACKSMITH_RECIPES
+  // en blacksmith.js y player.everFoundGemX en winBattle) — el resto de recetas (sin revealFlag)
+  // se muestran siempre, como hasta ahora.
+  BLACKSMITH_RECIPES.filter(recipe=> !recipe.revealFlag || player[recipe.revealFlag]).forEach(recipe=>{
     const afford = canAffordRecipe(recipe);
     const wrongClass = recipe.classKey && recipe.classKey !== player.classKey;
     const matsHtml = recipe.materials.map(m=>{
@@ -9102,8 +9323,15 @@ function drawAllWorldEvents(){
 function drawWorldEventMarker(ev){
   const def = EVENT_TYPES[ev.type];
   const discovered = !!worldEventDiscovered[ev.id];
-  const icon = L.divIcon({className:'', html:`<div class="world-event-marker">${discovered?def.icon:def.unknownIcon}</div>`,
-    iconSize:[40,44], iconAnchor:[20,40]});
+  // Ya descubierto un "Viajero Atacado": mostrar su ilustración real (la misma que ya se ve en
+  // openTravelerAttackedModal, ver metadata.travelerSprite) en vez del ❗ genérico — pedido
+  // explícito. Sigue oculto (❔) mientras no se descubra, igual que cualquier otro evento.
+  const isTravelerImg = discovered && ev.type === "traveler_attacked" && ev.metadata && ev.metadata.travelerSprite;
+  const bodyHtml = isTravelerImg
+    ? `<img src="${ev.metadata.travelerSprite}" class="world-event-traveler-img" alt="">`
+    : (discovered ? def.icon : def.unknownIcon);
+  const icon = L.divIcon({className:'', html:`<div class="world-event-marker${isTravelerImg?' world-event-marker-img':''}">${bodyHtml}</div>`,
+    iconSize: isTravelerImg ? [46,54] : [40,44], iconAnchor: isTravelerImg ? [23,50] : [20,40]});
   const marker = L.marker([ev.lat, ev.lng], {icon, zIndexOffset:125}).addTo(map);
   marker.on('click', ()=> tryInteractWorldEvent(ev));
   worldEventMarkers[ev.id] = marker;
@@ -9756,9 +9984,17 @@ function makeMonster(tpl, level, pos, opts){
     : (tpl.mapSprite && tpl.mapSpriteStandee)
     ? `<div class="npc-map-standee"><img src="${tpl.mapSprite}" class="mon-real-sprite npc-standee-sprite" alt=""></div>`
     : tpl.mapSprite
-    ? `<img src="${tpl.mapSprite}" class="mon-real-sprite" alt="">`
-    : `<div class="mon-emoji" style="${opts.boss?'font-size:34px;':''}">${tpl.emoji}</div>`;
-  const icon = L.divIcon({className:'', html:`<div class="mon-marker ${opts.boss?'mon-marker-fixed':''}" style="position:relative;">${timerHtml}<div class="ring-tilt-wrap">${ring}</div>${bodyHtml}<div class="mon-lvl ${lvlClass}">Nv.${level}</div></div>`,
+    ? `<div class="mon-body-wrap"><img src="${tpl.mapSprite}" class="mon-real-sprite" alt=""></div>`
+    : `<div class="mon-body-wrap"><div class="mon-emoji" style="${opts.boss?'font-size:34px;':''}">${tpl.emoji}</div></div>`;
+  // la etiqueta de nivel va PRIMERO en el flujo (flex-direction:column) para que quede arriba
+  // del cuerpo del enemigo, no debajo — pedido explícito.
+  // Al aparecer: el marcador entero "sube desde el suelo" (.mon-spawn-pop, ver main.css) y suelta
+  // un puñado de hojas/polvo desde sus pies (.mon-spawn-puff) — pedido explícito, para que un
+  // enemigo nuevo no aparezca de golpe sin aviso. Ambas animaciones son de un solo uso (no
+  // infinite) y viven en un wrapper aparte para no pelear con el transform de zoom/respiración
+  // que ya tienen .mon-marker/.mon-real-sprite.
+  const spawnPuffHtml = `<div class="mon-spawn-puff"><span class="msp b0">🍃</span><span class="msp b1">💨</span><span class="msp b2">🍃</span><span class="msp b3">💨</span></div>`;
+  const icon = L.divIcon({className:'', html:`<div class="mon-spawn-pop"><div class="mon-marker ${opts.boss?'mon-marker-fixed':''}" style="position:relative;">${timerHtml}<div class="ring-tilt-wrap">${ring}</div><div class="mon-lvl ${lvlClass}">Nv.${level}</div>${bodyHtml}${spawnPuffHtml}</div></div>`,
     iconSize:[58,62], iconAnchor:[29,42]});
   const marker = L.marker([pos.lat,pos.lng], {icon, zIndexOffset: opts.boss ? 900 : 500}).addTo(map);
   const lifespanMs = opts.lifespanMsOverride || ((5 + Math.random()*2) * 60000); // 5-7 min normal, o el valor fijo del jefe
@@ -9786,6 +10022,13 @@ function bossDifficultyTier(bossLevel){
 
 function tryEngage(mon){
   if(pvp || groupBattle){ toast("Estás en un duelo — termínalo antes de pelear contra monstruos."); return; }
+  // Mientras la flecha de bienvenida sigue señalando un enemigo fácil (ver worldIntroArrowMonId/
+  // pointArrowAtWeakEnemy), intentar pelear contra otro de MAYOR nivel no arranca el combate — Noe
+  // avisa en su lugar. No aplica a jefes (ya tienen su propia advertencia en openBossInfoModal).
+  if(worldIntroArrowMonId && !mon.isBoss && mon.level > player.level){
+    showNoeChooseWiselyWarning();
+    return;
+  }
   const d = distMeters(playerLatLng, mon);
   if(d > ENGAGE_RANGE_M){
     toast(`Está a ${Math.round(d)} m — acércate para combatir (≤100 m).`);
@@ -10143,6 +10386,27 @@ function refreshHud(){
   renderMapMaterialsBar();
 }
 function pct(v,max){ return Math.max(0, Math.min(100, (v/max)*100)); }
+/** Clase de color según qué tan llena está una barra de vida (verde de lleno → naranja a la mitad
+ *  → rojo parpadeando casi vacía, ver .bar-hp/.hp-mid/.hp-low en main.css) — devuelve "" para el
+ *  estado verde (es el color base de .bar-hp, no necesita clase aparte). Pedido explícito: la
+ *  barra de vida de la escena de batalla arranca verde y va cambiando de color a medida que baja. */
+function hpBarStateClass(cur, max){
+  const p = max > 0 ? cur/max : 0;
+  if(p <= 0.2) return "hp-low";
+  if(p <= 0.5) return "hp-mid";
+  return "";
+}
+/** Setter compartido para las barras de vida principales de la escena de batalla (bPHp/bEHp) —
+ *  centraliza ancho + clase de color/parpadeo para que las 4 pantallas de combate (solo, PvP,
+ *  manada, grupo) se vean consistentes sin repetir la lógica de umbral en cada una. */
+function setHpBarFill(id, cur, max){
+  const el = $(id);
+  if(!el) return;
+  el.style.width = pct(cur, max)+"%";
+  el.classList.remove("hp-mid","hp-low");
+  const cls = hpBarStateClass(cur, max);
+  if(cls) el.classList.add(cls);
+}
 function round1(v){ return Math.round(v*10)/10; }
 /** Acorta números grandes de oro con "K" (a partir de 5 cifras, 10.000+) para que no desborden
  *  el HUD ni las tarjetas del inventario — ej. 1.626.345 se muestra como "1626K". */
@@ -10822,6 +11086,7 @@ function openInventoryDetail(it, count){
   $("invDetailTag").textContent = it.desc || "";
 
   const favBtn = $("btnInvDetailFav");
+  favBtn.classList.remove("hidden"); // openShopItemDetail lo oculta (los objetos de la tienda todavía no son tuyos) — acá siempre es relevante
   favBtn.textContent = invFavorites.has(it.id) ? "★" : "☆";
   favBtn.classList.toggle("active", invFavorites.has(it.id));
   favBtn.onclick = ()=>{
@@ -10980,6 +11245,51 @@ function useItemInBattle(idx){
   if(pvp){ pvpUseItem(idx); return; }
   if(battleState){ pveUseItemTurn(idx); return; }
   useItem(idx); // por si acaso no hay combate activo, comportamiento normal
+}
+
+/** Umbral de "vida/maná bajo" en combate — mismo 30% que ya usa el escudo pasivo lowHpShield como
+ *  referencia de "vida baja" en el resto del juego. Por debajo de esto se ofrece un botón rápido en
+ *  #movegrid para curarte/recuperar maná sin tener que abrir el inventario completo (ver
+ *  buildBattleQuickPotionBtn/renderMoveGrid). */
+const BATTLE_LOW_RESOURCE_RATIO = 0.3;
+/** El consumible de `type` ("heal"/"mana") más barato que ya tenés en el inventario — el botón
+ *  rápido gasta primero lo más común, no el elixir caro que estabas guardando para una emergencia peor. */
+function cheapestInventoryItemOfType(type){
+  return player.inventory.filter(it=> it.type===type).sort((a,b)=>(a.value||0)-(b.value||0))[0] || null;
+}
+/** Botón de emergencia para vida/maná bajo en combate — pedido explícito: si el jugador tiene poca
+ *  vida o poco maná, ofrecer un botón para usar una poción de una vez (sin ir al inventario); si NO
+ *  tiene ninguna en el inventario, ofrecer comprarla por 1 diamante y usarla en el acto (evita el
+ *  viaje tienda→cerrar→inventario en medio de una emergencia). Reusa useItemInBattle, así que gasta
+ *  el turno y funciona igual en PvE y PvP. */
+function buildBattleQuickPotionBtn(type){
+  const isHeal = type==="heal";
+  const accent = isHeal ? "var(--hp)" : "var(--mp)";
+  const owned = cheapestInventoryItemOfType(type);
+  const btn = document.createElement("button");
+  btn.className = "flee-btn";
+  btn.style.borderColor = accent;
+  btn.style.color = accent;
+  if(owned){
+    btn.textContent = `${owned.emoji} Usar ${owned.name}`;
+    btn.onclick = ()=>{
+      const idx = player.inventory.findIndex(it=>it.id===owned.id);
+      if(idx>=0) useItemInBattle(idx);
+    };
+    return btn;
+  }
+  const fallback = ITEM_TABLE.find(it=> it.id===(isHeal?"potion_s":"potion_m"));
+  if(!fallback) return null;
+  btn.textContent = `${fallback.emoji} Comprar ${fallback.name} · 💎1`;
+  btn.disabled = (player.crystals||0) < 1;
+  btn.onclick = ()=>{
+    if((player.crystals||0) < 1){ toast("💎 No tenés diamantes suficientes."); return; }
+    if(!pushItemSafe({...fallback})) return; // pushItemSafe ya avisa si el inventario está lleno
+    player.crystals -= 1;
+    const idx = player.inventory.findIndex(it=> it.id===fallback.id);
+    if(idx>=0) useItemInBattle(idx);
+  };
+  return btn;
 }
 
 /** PvE: usar un objeto cura/restaura maná pero consume el turno; el monstruo ataca después. */
@@ -11635,6 +11945,15 @@ function equipItem(idx, accessorySlotIdx){
       if(current.type==="book") forgetBookMove(current); else unapplyBonuses(current.bonuses);
       player.inventory.push({...current});
     }
+    // Anillo Aqua (percentMaxMpBonus, ver BLACKSMITH_RECIPES): +40% de maná se calcula UNA sola
+    // vez, acá, sobre el maxMp actual del jugador — no es un % que se recalcule cada vez (este
+    // juego no tiene ese mecanismo en ningún otro lado, todo bono es plano); de ahí en más se
+    // comporta como cualquier accesorio normal (equipInstanceSaveData/resolveEquipmentForHero lo
+    // persisten para que quitárselo más tarde reste exactamente lo mismo que se sumó acá).
+    if(item.percentMaxMpBonus && (item.bonuses == null || item.bonuses.maxMp == null)){
+      const flatBonus = Math.max(1, Math.round(player.maxMp * item.percentMaxMpBonus));
+      item.bonuses = {...(item.bonuses||{}), maxMp: flatBonus};
+    }
     if(item.type==="book") learnBookMove(item); else applyBonuses(item.bonuses);
     arr[targetIdx] = item;
   } else {
@@ -11907,6 +12226,10 @@ function enemySpriteSrc(tpl, idx){
   if(tpl.name === "Señor Oscuro") return {src:SENOR_OSCURO_SPRITES.base, dataAttr:"senor-oscuro"};
   if(tpl.name === "Demonio Oscuro") return {src:DEMONIO_OSCURO_SPRITES.base, dataAttr:"demonio-oscuro"};
   if(tpl.name === "Sabueso Oscuro") return {src:SABUESO_OSCURO_SPRITES.base, dataAttr:"sabueso-oscuro"};
+  // Elemental Aqua: pedido explícito, usa la variante "base_strong" (más cargada) cuando el clima
+  // real es lluvioso — mismo currentWeatherCategory que ya decide el efecto visual de lluvia.
+  if(tpl.name === "Elemental Aqua") return {src:(currentWeatherCategory==="rain") ? ELEMENTAL_AQUA_SPRITES.baseStrong : ELEMENTAL_AQUA_SPRITES.base, dataAttr:"elemental-aqua"};
+  if(tpl.name === "Elemental Fauto") return {src:ELEMENTAL_FAUTO_SPRITES.base, dataAttr:"elemental-fauto"};
   return null;
 }
 /** `opts.extraClass`/`opts.style` dejan que cada vista (combate solo vs. escenario de manada,
@@ -11948,28 +12271,40 @@ function playBattleEntranceFx(){
  *  realmente oculto entre uno y el siguiente) dejó de disparar la animación después del primer
  *  combate. Con .animate() cada llamada crea una animación nueva sin ambigüedad — no importa qué
  *  clase tenía puesta antes ni si el contenedor estuvo o no oculto mientras tanto. */
+/** Duración/retraso del deslizamiento de entrada — compartidos como constantes porque
+ *  playBattleGreetingFx() (más abajo) necesita saber cuándo el enemigo YA llegó a su lugar, sin
+ *  duplicar estos números en dos sitios. */
+const BATTLE_SLIDE_IN_DURATION_MS = 1200;
+const BATTLE_SLIDE_IN_DELAY_MS = 900;
 function playCharacterSlideInFx(){
   if(player.classKey !== "guerrero" && player.classKey !== "mago" && player.classKey !== "berserker" && player.classKey !== "arquero") return;
-  const DURATION_MS = 1200, DELAY_MS = 900, EASING = "cubic-bezier(.2,.85,.35,1)";
+  const DURATION_MS = BATTLE_SLIDE_IN_DURATION_MS, DELAY_MS = BATTLE_SLIDE_IN_DELAY_MS, EASING = "cubic-bezier(.2,.85,.35,1)";
   const playerEl = $("spritePlayer");
   if(playerEl && playerEl.animate){
-    playerEl.getAnimations().forEach(a=> a.cancel());
-    playerEl.animate([
+    cancelNonBreathingAnimations(playerEl);
+    const anim = playerEl.animate([
       { transform:"translateX(140%)", opacity:0, offset:0 },
       { opacity:1, offset:0.55 },
       { transform:"translateX(0)", opacity:1, offset:1 },
     ], { duration:DURATION_MS, delay:DELAY_MS, easing:EASING, fill:"both" });
+    // Con fill:"both" la animación sigue "sosteniendo" su último frame (y ganándole a cualquier
+    // animación CSS sobre `transform` en el mismo elemento, ver breathe/breatheFlipped en main.css)
+    // hasta que se cancela explícitamente — sin este cancel(), la respiración quedaba congelada el
+    // resto del combate para las clases con deslizamiento propio. rechazo esperado si un combate
+    // nuevo arranca antes y la cancela primero (ver getAnimations().forEach arriba) — se ignora.
+    anim.finished.then(()=> anim.cancel()).catch(()=>{});
   }
   // #spriteEnemy ya tiene scaleX(-1) fijo por CSS (mira hacia el jugador) — se repite en cada
   // paso del keyframe para no perder el espejado mientras se desliza ni al terminar.
   const enemyEl = $("spriteEnemy");
   if(enemyEl && enemyEl.animate){
-    enemyEl.getAnimations().forEach(a=> a.cancel());
-    enemyEl.animate([
+    cancelNonBreathingAnimations(enemyEl);
+    const enemyAnim = enemyEl.animate([
       { transform:"scaleX(-1) translateX(140%)", opacity:0, offset:0 },
       { opacity:1, offset:0.55 },
       { transform:"scaleX(-1) translateX(0)", opacity:1, offset:1 },
     ], { duration:DURATION_MS, delay:DELAY_MS, easing:EASING, fill:"both" });
+    enemyAnim.finished.then(()=> enemyAnim.cancel()).catch(()=>{});
   }
   // Pedido explícito: que las barras de vida/maná no se vean ya llenas desde el primer frame,
   // detrás del deslizamiento — que aparezcan y se llenen recién cuando personaje y enemigo terminan
@@ -11985,6 +12320,25 @@ function playCharacterSlideInFx(){
     clearTimeout(grid._introLockTimer);
     grid._introLockTimer = setTimeout(()=> grid.classList.remove("intro-locked"), barsRevealMs + 900);
   }
+}
+/** "Saludo" de apertura — pedido explícito (como en Pokémon Cristal: el rival se mueve apenas
+ *  arranca el combate). Dispara la MISMA pose de ataque que el monstruo usa para golpear de verdad
+ *  (ver triggerEnemyAttackPose) una única vez, a modo de gesto de entrada — no hace daño ni cuenta
+ *  como turno. Espera a que el enemigo YA esté en su lugar: si su clase tiene deslizamiento propio
+ *  (ver playCharacterSlideInFx), después de que termina; si no, un instante después del iris de
+ *  apertura (playBattleEntranceFx, .62s). Solo para combate 1 vs 1 (batallaState.mon) — en manada/
+ *  PvP/grupo el enemigo no vive en #spriteEnemy, así que por ahora no aplica ahí. */
+function playBattleGreetingFx(mon){
+  if(!mon || !mon.tpl) return;
+  const hasSlideIn = player.classKey==="guerrero" || player.classKey==="mago" || player.classKey==="berserker" || player.classKey==="arquero";
+  const delay = hasSlideIn ? (BATTLE_SLIDE_IN_DELAY_MS + BATTLE_SLIDE_IN_DURATION_MS + 150) : 800;
+  clearTimeout(playBattleGreetingFx._timer);
+  playBattleGreetingFx._timer = setTimeout(()=>{
+    // El combate pudo haber terminado (huida/derrota instantánea) o cambiado de monstruo mientras
+    // esperábamos — no saludar al aire.
+    if(!battleState || battleState.isPack || battleState.mon !== mon) return;
+    triggerEnemyAttackPose(mon);
+  }, delay);
 }
 /** Las barras (vida del jugador, maná, vida del enemigo, y defensa si está activa este combate) ya
  *  quedaron puestas en su ancho real por updateBattleBars() antes de que #battleWrap se revele —
@@ -12055,6 +12409,10 @@ let enemyStageShadowEl = null;
 const packStageShadowEls = {};
 let lastPerspectiveMode = "solo";
 let lastPerspectiveFlying = false;
+/** Cuánto bajar (en px, a depthScale=1) a un enemigo con ilustración propia para que sus pies
+ *  queden cerca de la sombra en vez del relleno transparente del PNG — ver hasDedicatedArt más
+ *  abajo, en refreshBattleStagePerspective. */
+const ENEMY_ART_GROUND_OFFSET_PX = 12;
 
 /** Punto de entrada del sistema: reposiciona jugador (siempre) y enemigo solo/manada (según
  *  `mode`) sobre sus anclas del escenario activo. Seguro de llamar en cualquier momento — se usa
@@ -12108,7 +12466,10 @@ function refreshBattleStagePerspective(mode, flying){
   const playerAnchorEl = $("spritePlayerAnchor");
   if(playerAnchorEl){
     const p = scene.playerAnchor;
-    positionEntityOnStage(playerAnchorEl, playerStageShadowEl, {fx:p.x, fy:p.y, sceneConfig:scene, stageEl, backgroundEl});
+    // offsetXPx: -24 corre al jugador un poco a la izquierda (pedido explícito, junto con el
+    // translateX(44px) de #petStageSlot en main.css) para que jugador y mascota queden separados
+    // en vez de aparecer casi superpuestos.
+    positionEntityOnStage(playerAnchorEl, playerStageShadowEl, {fx:p.x, fy:p.y, sceneConfig:scene, stageEl, backgroundEl, offsetXPx:-24});
   }
 
   if(mode === "pack"){
@@ -12130,9 +12491,15 @@ function refreshBattleStagePerspective(mode, flying){
   const groundPoint = scene.soloEnemyAnchor || pickGroundAnchor(scene, 0);
   const anchor = flying ? pickFlyingAnchor(groundPoint) : groundPoint;
   const shadow = flying ? {x:anchor.shadowX, y:anchor.shadowY} : anchor;
+  // Pedido explícito: los enemigos con ilustración propia (no el emoji genérico) traen relleno
+  // transparente debajo de los pies en el PNG, así que quedan "flotando" un poco sobre su sombra —
+  // se bajan un poco (ver offsetYPx en positionEntityOnStage) SOLO cuando el monstruo actual tiene
+  // sprite dedicado (enemySpriteSrc devuelve algo), nunca a los que se dibujan con el emoji plano.
+  const hasDedicatedArt = !!(battleState && battleState.mon && battleState.mon.tpl && enemySpriteSrc(battleState.mon.tpl));
   positionEntityOnStage(enemyAnchorEl, enemyStageShadowEl, {
     fx:anchor.x, fy:anchor.y, sceneConfig:scene, stageEl, backgroundEl, flying:!!flying,
     shadowFx: shadow.x, shadowFy: shadow.y,
+    offsetYPx: hasDedicatedArt ? ENEMY_ART_GROUND_OFFSET_PX : 0,
   });
   floatSoloEnemyPanel(enemyAnchorEl, backgroundEl);
 }
@@ -12171,13 +12538,15 @@ function floatSoloEnemyPanel(anchorEl, backgroundEl){
     // 10px se quedaba corto para enemigos chicos/lejanos (voladores en escala reducida, p.ej. el
     // Cuervo Corrupto a 0.5x): el hueco absoluto era el mismo que para un enemigo grande, pero al
     // lado de un sprite chico se veía tapando la cabeza en vez de flotando arriba — sobre todo con
-    // el difuminado del drop-shadow del sprite, que come parte de ese margen. 18px deja aire de
-    // sobra incluso para los sprites más chicos sin alejar demasiado la tarjeta en los grandes.
-    const MARGIN_PX = 18; // separación entre el borde superior del sprite y el borde inferior de la tarjeta
+    // el difuminado del drop-shadow del sprite, que come parte de ese margen. 30px (antes 18px,
+    // pedido explícito: "subela un poco más") deja la tarjeta claramente despegada de la cabeza
+    // incluso para los sprites más chicos sin alejarla demasiado en los grandes.
+    const MARGIN_PX = 30; // separación entre el borde superior del sprite y el borde inferior de la tarjeta
     let leftPct = ((anchorRect.left + anchorRect.width/2 - bgRect.left) / bgRect.width) * 100;
     let topPct = ((anchorRect.top - MARGIN_PX - bgRect.top) / bgRect.height) * 100;
-    // el panel mide ~170px de ancho y su propio alto — recortado para que nunca quede a medio salir
-    // del escenario aunque el anchor esté muy pegado a un borde (enemigos lejanos/cercanos extremos).
+    // el panel mide ~128px de ancho (antes 170px, pedido explícito: "no tan larga") y su propio
+    // alto — recortado para que nunca quede a medio salir del escenario aunque el anchor esté muy
+    // pegado a un borde (enemigos lejanos/cercanos extremos).
     leftPct = Math.max(16, Math.min(84, leftPct));
     topPct = Math.max(9, Math.min(94, topPct));
     panel.style.left = leftPct + "%";
@@ -12248,6 +12617,7 @@ window.addEventListener("resize", ()=>{
 });
 function startBattle(mon, opts){
   opts = opts || {};
+  rollBattleDustVariant(); // pedido explícito: un solo efecto (hojas/polvo/niebla) por combate, no alternado golpe a golpe
   // resguardo: cualquier batalla que arranca por esta vía (encuentro normal en el mapa) nunca debe
   // arrastrar restos de una sesión de Coliseo anterior — si algo quedó mal cerrado, se limpia aquí.
   if(!opts.isColiseo && (coliseoRun || pendingColiseoContinuation)){
@@ -12276,9 +12646,14 @@ function startBattle(mon, opts){
   // fresca en cada combate nuevo, pero jamás se recarga ni se cura mientras dura ESTE combate (ver
   // resolveEnemyDirectAttack y enemyTurn).
   if(classHasDefendPose(player.classKey)){
-    battleState.defenseBarCharges = defenseBarCharges();
+    // Anillo Aqua (extraDefenseCharge, ver BLACKSMITH_RECIPES): +1 bloqueo extra este combate —
+    // defenseBarHasRingCharge es lo que updateBattleBars() usa para pintar la esquina extra en
+    // gris claro mientras la barra siga al máximo (ver ahí).
+    const ringExtra = equippedAquaRing() ? 1 : 0;
+    battleState.defenseBarCharges = defenseBarCharges() + ringExtra;
     battleState.defenseBarMax = battleState.defenseBarCharges;
     battleState.defenseBar = battleState.defenseBarMax;
+    battleState.defenseBarHasRingCharge = ringExtra > 0;
   }
   updateBattleSceneBackground();
   updateBattleRainFx();
@@ -12286,7 +12661,7 @@ function startBattle(mon, opts){
   $("battleWrap").classList.remove("group-mode");
   $("soloEnemyPanel").classList.remove("hidden");
   $("packEnemyPanels").classList.add("hidden");
-  $("spriteEnemy").classList.remove("hidden");
+  $("spriteEnemy").classList.remove("hidden","defeat-fade"); // por si el combate anterior terminó con el enemigo desvanecido (ver winBattle)
   $("packStageRow").classList.add("hidden");
   $("groupAllyStageRow").classList.add("hidden");
   $("partyStatusRow").classList.add("hidden");
@@ -12322,12 +12697,31 @@ function startBattle(mon, opts){
   refreshBattleStagePerspective("solo", !!(mon.tpl && mon.tpl.flying));
   playBattleEntranceFx();
   playCharacterSlideInFx(); // el retraso hasta que se revele la escena vive en el CSS (animation-delay), no acá
+  playBattleGreetingFx(mon);
   maybeShowBattleTutorial();
 }
 
+/** Anillo Aqua equipado (si hay uno) — accesorio con `percentMaxMpBonus` ya resuelto a un bono
+ *  plano de maná (ver equipItem). null si no hay ninguno puesto ahora mismo. */
+function equippedAquaRing(){
+  return (player.equipment.accessory||[]).find(a=> a && a.id==="craft_anillo_aqua") || null;
+}
 function updateBattleBars(){
-  $("bPHp").style.width = pct(player.hp, player.maxHp)+"%";
-  $("bPMp").style.width = pct(player.mp, player.maxMp)+"%";
+  setHpBarFill("bPHp", player.hp, player.maxHp);
+  const bPMpEl = $("bPMp");
+  bPMpEl.style.width = pct(player.mp, player.maxMp)+"%";
+  // Pedido explícito: con el Anillo Aqua puesto, el tramo de maná que viene de su bono (+40%) se
+  // pinta en azul cielo — el resto de la barra (tu maná "de base") sigue con el degradé normal.
+  // Es solo la posición del CORTE de color lo que cambia (según cuánto del maxMp total es bono),
+  // no el ancho de la barra: eso lo sigue decidiendo pct(player.mp, player.maxMp) de arriba.
+  const aquaRing = equippedAquaRing();
+  const aquaBonus = aquaRing ? (aquaRing.bonuses.maxMp||0) : 0;
+  if(aquaBonus > 0 && player.maxMp > 0){
+    const baseMaxPct = Math.max(0, Math.min(100, ((player.maxMp - aquaBonus) / player.maxMp) * 100));
+    bPMpEl.style.background = `linear-gradient(90deg, #7fc6f5 0%, var(--mp) ${baseMaxPct}%, skyblue ${baseMaxPct}%, skyblue 100%)`;
+  } else {
+    bPMpEl.style.background = "";
+  }
   const pStatusEl = $("bPStatus");
   if(pStatusEl) pStatusEl.innerHTML = statusBadgeHtml(player);
   // Barra de defensa del jugador: solo existe (battleState.defenseBar definido) en combate solo —
@@ -12338,13 +12732,22 @@ function updateBattleBars(){
     const hasDefBar = battleState && typeof battleState.defenseBar === "number";
     defWrap.classList.toggle("hidden", !hasDefBar);
     if(hasDefBar) $("bPDef").style.width = pct(battleState.defenseBar, battleState.defenseBarMax)+"%";
+    // Pedido explícito: la carga EXTRA de bloqueo del Anillo Aqua se pinta como una esquina en
+    // gris más claro al final de la barra — desaparece apenas se gasta el primer bloqueo (o sea,
+    // en cuanto defenseBar deja de estar al máximo). Ver startBattle (que ya suma +1 a
+    // defenseBarMax y marca defenseBarHasRingCharge si hay Anillo Aqua puesto).
+    const extraChargeEl = $("bPDefExtraCharge");
+    if(extraChargeEl){
+      const showExtra = hasDefBar && battleState.defenseBarHasRingCharge && battleState.defenseBar === battleState.defenseBarMax;
+      extraChargeEl.classList.toggle("hidden", !showExtra);
+    }
   }
   // en manada normal usa battleState.mon; si es un jefe que ya invocó y ahora se muestra "solo"
   // otra vez (ver syncPackDisplayMode) usa su propia entrada dentro de battleState.mons.
   const soloMon = !battleState.isPack ? battleState.mon
     : (battleState._displayingSolo ? battleState.mons.find(m=>m.isBoss) : null);
   if(soloMon){
-    $("bEHp").style.width = pct(soloMon.curHp, soloMon.maxHp)+"%";
+    setHpBarFill("bEHp", soloMon.curHp, soloMon.maxHp);
     const statusEl = $("bEStatus");
     if(statusEl){
       // Mientras el Lobo Sombrío está cargando su Súper ataque (todo tu turno de por medio), se
@@ -12557,6 +12960,17 @@ function renderMoveGrid(){
     });
   }
 
+  // Vida/maná bajo (≤30%): botón rápido de poción, antes que el resto de las acciones secundarias —
+  // ver buildBattleQuickPotionBtn.
+  if(player.maxHp>0 && player.hp/player.maxHp <= BATTLE_LOW_RESOURCE_RATIO){
+    const healBtn = buildBattleQuickPotionBtn("heal");
+    if(healBtn) grid.appendChild(healBtn);
+  }
+  if(player.maxMp>0 && player.mp/player.maxMp <= BATTLE_LOW_RESOURCE_RATIO){
+    const manaBtn = buildBattleQuickPotionBtn("mana");
+    if(manaBtn) grid.appendChild(manaBtn);
+  }
+
   const itemBtn = document.createElement("button");
   itemBtn.id = "btnBattleUseItem"; // ancla del tutorial de batalla (ver maybeShowBattleTutorial) — este botón se recrea en cada render, así que el id se re-agrega acá cada vez.
   itemBtn.className = "flee-btn";
@@ -12596,14 +13010,25 @@ function renderMoveGrid(){
     grid.appendChild(summonBtn);
   }
 
-  startTurnTimer(20, ()=>{
-    const affordable = getAllUsableMoves().filter(mv=> canAffordMove(mv, player.mp, player.hp, player.maxHp));
-    if(affordable.length){
-      logBattle("⏱️ Se acabó el tiempo — elige más rápido la próxima vez.");
-      const mv = affordable[Math.floor(Math.random()*affordable.length)];
-      battleState.isPack ? packPlayerAction(mv) : playerAction(mv);
-    }
-  });
+  // Mientras el jugador todavía no vio el tutorial de batalla (ver maybeShowBattleTutorial), el
+  // cronómetro de 20s NO arranca en este primer render — si no, se le acabaría el tiempo mientras
+  // recién está leyendo qué hace cada botón. Arranca cuando el tutorial llega al paso que lo
+  // explica, o al cerrarse si lo saltó antes de llegar ahí (ver showBattleTutorialStep/
+  // closeBattleTutorial) — desde el turno siguiente en adelante (seenBattleTutorial ya en true)
+  // vuelve a arrancar acá normalmente, como siempre.
+  if(player && !player.seenBattleTutorial){
+    clearTurnTimer();
+  } else {
+    startTurnTimer(20, handleTurnTimeout);
+  }
+}
+function handleTurnTimeout(){
+  const affordable = getAllUsableMoves().filter(mv=> canAffordMove(mv, player.mp, player.hp, player.maxHp));
+  if(affordable.length){
+    logBattle("⏱️ Se acabó el tiempo — elige más rápido la próxima vez.");
+    const mv = affordable[Math.floor(Math.random()*affordable.length)];
+    battleState.isPack ? packPlayerAction(mv) : playerAction(mv);
+  }
 }
 
 /** ============================================================
@@ -12621,13 +13046,21 @@ const BATTLE_TUTORIAL_STEPS = [
     text:"Acá puedes usar una poción u otro objeto — ojo: hacerlo gasta tu turno, así que úsalo con cuidado." },
   { selector:"#btnFleeCorner", title:"Huir del combate",
     text:"Si el combate se pone muy difícil, puedes huir desde este botón." },
+  { selector:".turn-timer-wrap", title:"Tiempo por turno",
+    text:"Tienes un tiempo límite para elegir tu movimiento — si se acaba, se usará uno al azar por ti. Recién ahora se pone en marcha.",
+    startsTimer:true },
 ];
 let battleTutorialStepIdx = 0;
+/** true una vez que el cronómetro de turno ya arrancó durante ESTE tutorial (ver el paso
+ *  startsTimer en showBattleTutorialStep y el fallback en closeBattleTutorial) — evita que un
+ *  reposicionamiento (resize) o un cierre anticipado (Saltar) lo reinicien o lo dupliquen. */
+let battleTutorialTimerArmed = false;
 /** Se llama al final de startBattle()/startPackBattle() — no hace nada si ya se vio antes. El
  *  setTimeout deja que la animación de entrada del combate (playBattleEntranceFx/
  *  playCharacterSlideInFx) termine de acomodar todo antes de medir posiciones reales. */
 function maybeShowBattleTutorial(){
   if(!player || player.seenBattleTutorial) return;
+  battleTutorialTimerArmed = false;
   setTimeout(()=>{
     if(!player || player.seenBattleTutorial) return; // pudo cerrarse el combate mientras esperaba
     battleTutorialStepIdx = 0;
@@ -12675,12 +13108,37 @@ function showBattleTutorialStep(){
   $("battleTutorialText").textContent = step.text;
   $("battleTutorialProgress").textContent = `${battleTutorialStepIdx+1}/${BATTLE_TUTORIAL_STEPS.length}`;
   $("btnBattleTutorialNext").textContent = (battleTutorialStepIdx === BATTLE_TUTORIAL_STEPS.length-1) ? "¡Entendido!" : "Siguiente";
+  // Pedido explícito: el cronómetro de turno no debe correr mientras se explican los demás
+  // componentes — arranca recién en ESTE paso, que es el que lo explica (ver renderMoveGrid, que
+  // lo deja pausado hasta acá mientras !player.seenBattleTutorial).
+  if(step.startsTimer && !battleTutorialTimerArmed){
+    battleTutorialTimerArmed = true;
+    startTurnTimer(20, handleTurnTimeout);
+  }
 }
+/** true cuando el tutorial de batalla se acaba de ver por PRIMERA vez y todavía no se mostró la
+ *  despedida de Noe — pedido explícito: esa despedida (y el bono diario que sale al cerrarla) debe
+ *  esperar a que la batalla TERMINE y el jugador reciba la experiencia, no aparecer ya mismo con
+ *  el combate todavía en curso. Se consume en btnResultClose (la victoria) — se apaga sin mostrar
+ *  nada en loseBattle/packLoseBattle si el jugador pierde esta primera batalla (no "recibió" XP). */
+let battleTutorialPendingFarewell = false;
+/** true cuando acaba de dropear una gema elemental (Aqua/Fauto, ver winBattle) y todavía no se
+ *  mostró el comentario de Noe sobre la Forja — se consume en btnResultClose, igual patrón que
+ *  battleTutorialPendingFarewell. */
+let pendingElementalGemDrop = false;
 function closeBattleTutorial(){
   $("battleTutorialOverlay").classList.add("hidden");
-  if(player && !player.seenBattleTutorial){
+  const firstTimeSeeingIt = !!(player && !player.seenBattleTutorial);
+  if(firstTimeSeeingIt){
     player.seenBattleTutorial = true;
     saveGame();
+    battleTutorialPendingFarewell = true;
+  }
+  // Si se saltó el tutorial (o se cerró) antes de llegar al paso que arranca el cronómetro, arranca
+  // acá igual — el combate no puede quedarse con la barra de tiempo pausada para siempre.
+  if(!battleTutorialTimerArmed){
+    battleTutorialTimerArmed = true;
+    startTurnTimer(20, handleTurnTimeout);
   }
 }
 $("btnBattleTutorialNext").onclick = ()=>{
@@ -12691,6 +13149,382 @@ $("btnBattleTutorialSkip").onclick = closeBattleTutorial;
 window.addEventListener("resize", ()=>{
   if(!$("battleTutorialOverlay").classList.contains("hidden")) showBattleTutorialStep();
 });
+
+/** ============================================================
+ *  CINEMÁTICA DE BIENVENIDA — pedido explícito: corre ANTES que Noe, la primera vez que se entra
+ *  al mundo (mismo player.seenWorldIntro que Noe/pointArrowAtWeakEnemy — ver maybeShowWorldIntro).
+ *  Escena1 (pantalla completa, paneo LENTO de abajo hacia arriba) → escena2 (pantalla completa,
+ *  fundido + zoom Ken-Burns) → se desvanece #wcOpaqueLayer sobre la PRIMERA parada de un recorrido
+ *  real por varias calles cercanas (sin pasar todavía por la ubicación exacta del jugador — pedido
+ *  explícito) → la cámara del mapa REAL viaja parada por parada (tourCinematicStreets) y en cada
+ *  una nacen monstruos reales (marcadores de Leaflet, variedad curada) — así se ve el mapa
+ *  "tomando vida" calle por calle → RECIÉN AL FINAL, zoom de llegada al personaje (mismo flyTo que
+ *  btnRecenter) → tarjeta "Bienvenido <nombre>". Al terminar (o al saltarla), llama a onDone
+ *  (showNoeWelcomeDialogue).
+ *  ============================================================ */
+const WORLD_CINEMATIC_SCENE1_TEXTS = [
+  "El mundo ha permanecido en guerra durante siglos...",
+  "Las criaturas ya no habitan tierras lejanas...",
+  "Ahora caminan entre nosotros.",
+];
+const WORLD_CINEMATIC_SCENE2_TEXTS = [
+  "Este no es un mundo ficticio...",
+  "Es tu ciudad.",
+];
+const WORLD_CINEMATIC_PARADE_TEXTS = [
+  "Cada calle puede esconder una criatura.",
+  "Cada parque puede guardar un tesoro.",
+  "Cada barrio puede convertirse en un campo de batalla.",
+];
+/** Muestrario curado (no el spawn real, que es al azar) de la variedad de monstruos del juego —
+ *  se prioriza el ícono de mapa (`.map`) cuando la plantilla tiene uno; si no, su pose base/enemy.
+ *  Nacen como marcadores REALES de Leaflet sobre calles cercanas (ver spawnCinematicStreetMonsters),
+ *  no una tira decorativa aparte — para que de verdad se vea "el mapa real con monstruos naciendo". */
+const WORLD_CINEMATIC_PARADE_SPRITES = [
+  LOBO_UMBRIO_SPRITES.map, RATA_MUTANTE_SPRITES.map, SLIME_SALVAJE_SPRITES.map,
+  DEMONIO_MENOR_SPRITES.map, CUERVO_CORRUPTO_SPRITES.map, ESPECTRO_SPRITES.base,
+  GOLEM_ROCA_SPRITES.enemy, LOBO_SOMBRIO_SPRITES.base, LOBO_NOCTURNO_SPRITES.enemy,
+  DRAGON_MENOR_SPRITES.enemy, DRAGON_ANCESTRAL_SPRITES.enemy,
+].filter(Boolean);
+const CINEMATIC_TYPE_SPEED_MS = 78; // pedido explícito: bajarle la velocidad todavía más al texto
+const WC_STREET_MON_PUFF_HTML = `<div class="mon-spawn-puff"><span class="msp b0">🍃</span><span class="msp b1">💨</span><span class="msp b2">🍃</span><span class="msp b3">💨</span></div>`;
+/** Nivel de zoom del recorrido: más alejado que la vista final sobre el jugador (DEFAULT_ZOOM),
+ *  pero ya lo bastante cerca para ver calles de verdad — no la vista panorámica de toda la ciudad
+ *  que usa MAP_ENTRY_ZOOM al arrancar el juego. */
+const CINEMATIC_STREET_ZOOM = DEFAULT_ZOOM - 1;
+const CINEMATIC_TOUR_STOPS = 4;
+
+let cinematicEnded = false;
+let cinematicStreetMarkers = [];
+function cinematicWait(ms){ return new Promise(resolve=> setTimeout(resolve, ms)); }
+/** Escribe el subtítulo letra por letra (pedido explícito: "los textos también saliendo
+ *  lentamente", mismo criterio que el diálogo de Noe) y lo sostiene `holdMs` una vez completo. */
+async function cinematicTypeCaption(text, holdMs){
+  const el = $("wcCaption");
+  el.textContent = "";
+  for(let i=1;i<=text.length;i++){
+    if(cinematicEnded) return;
+    el.textContent = text.slice(0, i);
+    await cinematicWait(CINEMATIC_TYPE_SPEED_MS);
+  }
+  await cinematicWait(holdMs);
+}
+async function cinematicBeat(lines, holdMs){
+  for(const line of lines){
+    if(cinematicEnded) return;
+    await cinematicTypeCaption(line, holdMs);
+  }
+}
+/** `CINEMATIC_TOUR_STOPS` puntos repartidos en círculo alrededor del jugador (pointAtBearing, ya
+ *  usado en otras partes del juego para ubicar algo "adelante" de alguien) a 140-360m — ninguno
+ *  coincide con la ubicación exacta del jugador, a propósito: el recorrido pasa por calles
+ *  cercanas SIN mostrar todavía dónde está parado (eso queda para el zoom final de llegada). */
+function buildCinematicTourStops(){
+  const baseBearing = Math.random()*360;
+  const stops = [];
+  for(let i=0;i<CINEMATIC_TOUR_STOPS;i++){
+    const bearing = (baseBearing + i*(360/CINEMATIC_TOUR_STOPS) + (Math.random()*30-15) + 360) % 360;
+    const dist = 140 + Math.random()*220;
+    stops.push(pointAtBearing(playerLatLng, dist, bearing));
+  }
+  return stops;
+}
+/** Marcadores decorativos REALES (Leaflet), no clicables, que "nacen" cerca de `center` (reusa el
+ *  mismo pop/polvo de aparición de un monstruo real, ver makeMonster) — se limpian todos antes del
+ *  zoom final de llegada (clearCinematicStreetMonsters). */
+async function spawnCinematicStreetMonsters(center, count){
+  for(let i=0;i<count;i++){
+    if(cinematicEnded || !map) return;
+    const src = WORLD_CINEMATIC_PARADE_SPRITES[Math.floor(Math.random()*WORLD_CINEMATIC_PARADE_SPRITES.length)];
+    const pos = pointAtBearing(center, 15 + Math.random()*35, Math.random()*360);
+    const icon = L.divIcon({className:'', html:`<div class="mon-spawn-pop"><div class="wc-street-mon"><img src="${src}" alt="">${WC_STREET_MON_PUFF_HTML}</div></div>`,
+      iconSize:[56,56], iconAnchor:[28,48]});
+    const marker = L.marker([pos.lat, pos.lng], {icon, interactive:false, keyboard:false, zIndexOffset:400});
+    marker.addTo(map);
+    cinematicStreetMarkers.push(marker);
+    await cinematicWait(350);
+  }
+}
+function clearCinematicStreetMonsters(){
+  cinematicStreetMarkers.forEach(m=>{ try{ if(map) map.removeLayer(m); }catch(e){ /* el mapa ya pudo haberse destruido */ } });
+  cinematicStreetMarkers = [];
+}
+/** El recorrido en sí: viaja parada por parada (la cámara ya está en `stops[0]` cuando se llama,
+ *  ver playWorldCinematic) y en cada una nacen 1-2 monstruos — así se ve el mapa "tomar vida"
+ *  calle por calle en vez de un solo lugar fijo. */
+async function tourCinematicStreets(stops){
+  for(let i=0;i<stops.length;i++){
+    if(cinematicEnded || !map) return;
+    if(i>0){
+      map.flyTo([stops[i].lat, stops[i].lng], {zoom: CINEMATIC_STREET_ZOOM, pitch: 65, duration: 2400});
+      await cinematicWait(2400);
+      if(cinematicEnded) return;
+    }
+    await spawnCinematicStreetMonsters(stops[i], 1 + Math.round(Math.random()));
+    await cinematicWait(1100);
+  }
+}
+function finishWorldCinematic(onDone){
+  if(cinematicEnded) return;
+  cinematicEnded = true;
+  clearCinematicStreetMonsters();
+  $("worldCinematicOverlay").classList.add("hidden");
+  if(onDone) onDone();
+}
+async function playWorldCinematic(onDone){
+  cinematicEnded = false;
+  clearCinematicStreetMonsters();
+  const overlay = $("worldCinematicOverlay");
+  $("wcScene1Img").src = WORLD_CINEMATIC_SCENE_PATHS.scene1;
+  $("wcScene2Img").src = WORLD_CINEMATIC_SCENE_PATHS.scene2;
+  $("wcOpaqueLayer").classList.remove("wc-fadeout");
+  $("wcScene1").classList.remove("wc-revealed");
+  $("wcScene2").classList.remove("wc-visible");
+  $("wcWelcomeCard").classList.remove("wc-show");
+  $("wcCaption").textContent = "";
+  $("btnSkipCinematic").onclick = ()=> finishWorldCinematic(onDone);
+  overlay.classList.remove("hidden");
+
+  // --- Escena 1: pantalla completa, paneo LENTO de abajo hacia arriba (13s, ver CSS) + 3 líneas ---
+  await cinematicWait(30); // dale un frame al navegador para pintar el estado inicial antes de animar
+  if(cinematicEnded) return;
+  $("wcScene1").classList.add("wc-revealed");
+  await cinematicBeat(WORLD_CINEMATIC_SCENE1_TEXTS, 2200);
+  if(cinematicEnded) return;
+
+  // --- Escena 2: pantalla completa, fundido + zoom Ken-Burns lento (ver CSS) ---
+  $("wcScene2").classList.add("wc-visible");
+  await cinematicWait(1800);
+  await cinematicBeat(WORLD_CINEMATIC_SCENE2_TEXTS, 2200);
+  if(cinematicEnded) return;
+
+  // --- Se ubica la cámara del mapa real sobre la primera parada del recorrido (una calle
+  // cercana, NO la ubicación exacta del jugador — pedido explícito) y se desvanece la capa opaca
+  // para revelarla detrás ---
+  const tourStops = playerLatLng ? buildCinematicTourStops() : [];
+  if(map && tourStops.length) map.flyTo([tourStops[0].lat, tourStops[0].lng], {zoom: CINEMATIC_STREET_ZOOM, pitch: 65, duration: 1900});
+  await cinematicWait(1900);
+  if(cinematicEnded) return;
+  $("wcOpaqueLayer").classList.add("wc-fadeout");
+  await cinematicWait(500);
+  if(cinematicEnded) return;
+
+  // --- Recorre varias calles cercanas (tourCinematicStreets) con monstruos reales naciendo en
+  // cada una, mientras corren los subtítulos — el mapa "toma vida" antes de llegar al personaje ---
+  const tourDone = tourStops.length ? tourCinematicStreets(tourStops) : Promise.resolve();
+  await cinematicBeat(WORLD_CINEMATIC_PARADE_TEXTS, 2200);
+  await tourDone;
+  if(cinematicEnded) return;
+  await cinematicWait(600);
+  if(cinematicEnded) return;
+  clearCinematicStreetMonsters();
+
+  // --- Zoom de LLEGADA al personaje (mismo efecto que btnRecenter) + tarjeta de bienvenida ---
+  $("wcCaption").textContent = "";
+  if(map && playerLatLng) map.flyTo([playerLatLng.lat, playerLatLng.lng], {zoom: DEFAULT_ZOOM, pitch: 65, duration: 1800});
+  await cinematicWait(2200);
+  if(cinematicEnded) return;
+  $("wcWelcomeText").innerHTML = `Bienvenido ${escapeHtml(player.name)}<br>Tu aventura comienza donde estás parado.`;
+  $("wcWelcomeCard").classList.add("wc-show");
+  await Promise.race([
+    new Promise(resolve=>{ $("wcWelcomeCard").onclick = resolve; }),
+    cinematicWait(6000),
+  ]);
+  finishWorldCinematic(onDone);
+}
+
+/** ============================================================
+ *  BIENVENIDA DEL MUNDO — pedido explícito: Noe saluda al jugador y, apenas cierra el cuadro,
+ *  señala con una flecha (#worldIntroArrow) al primer enemigo REAL cercano de nivel <= al del
+ *  jugador — para que sepa con cuál conviene empezar. El flag "ya la vi" (player.seenWorldIntro)
+ *  es de CUENTA, igual que seenBattleTutorial: una vez vista, no vuelve a salir con ningún otro
+ *  héroe (ver freshAccountData/saveGame/rebuildPlayer). Se muestra al terminar playWorldCinematic
+ *  (ver maybeShowWorldIntro), nunca antes. */
+const NOE_WELCOME_TEXT = "¡Por fin has despertado! Ten cuidado a tu alrededor, hay monstruos cerca. Trata de comenzar luchando con los de menor nivel.";
+const NOE_CHOOSE_WISELY_TEXT = "Recuerda elegir bien tus batallas.";
+const NOE_TUTORIAL_REVIVE_TEXT = "Vuelve a intentarlo, recuerda atacar.";
+const NOE_FAREWELL_TEXT = "Tu ciudad esconde misterios en cada calle... ve con cuidado en tu aventura, nos veremos luego.";
+const NOE_RESOURCE_TIP_TEXT = "Puedes recolectar recursos para fabricar armas. Para esto debes comprar un Pico en la tienda. En la tienda también hay objetos que puedes comprar con esos recursos, y en la Forja hay recetas que puedes usar para conseguir armas muy poderosas.";
+const NOE_GEM_TIP_TEXT = "Esa gema es muy especial... deberías visitar la Forja para ver qué podemos hacer. Seguramente algo interesante puede construirse.";
+const NOE_TYPE_SPEED_MS = 22;
+
+let worldIntroTypeTimer = null;
+let worldIntroCurrentText = "";
+let worldIntroMode = "welcome"; // "welcome" | "warning" | "farewell" | "tutorialRevive" | "resourceTip" — decide qué pasa al cerrar (ver closeWorldIntro)
+
+/** Efecto de máquina de escribir — pedido explícito: el texto de Noe no debe salir todo de golpe. */
+function typeNoeText(text){
+  worldIntroCurrentText = text;
+  const el = $("worldIntroText");
+  clearInterval(worldIntroTypeTimer);
+  el.textContent = "";
+  let i = 0;
+  worldIntroTypeTimer = setInterval(()=>{
+    i++;
+    el.textContent = text.slice(0, i);
+    if(i >= text.length){ clearInterval(worldIntroTypeTimer); worldIntroTypeTimer = null; }
+  }, NOE_TYPE_SPEED_MS);
+}
+/** Se llama desde btnStart, justo después de initMap(). Corre PRIMERO la cinemática (escena1 →
+ *  escena2 → monstruos naciendo en el mapa real → zoom al personaje + tarjeta de bienvenida, ver
+ *  playWorldCinematic) y recién cuando esa termina muestra el diálogo de Noe — pedido explícito.
+ *  Arranca de INMEDIATO (sin esperar a que carguen los mosaicos ni al flyTo de entrada) — pedido
+ *  explícito: antes el jugador llegaba a ver el mapa/personaje real un instante ANTES de que
+ *  apareciera la cinemática. #worldCinematicOverlay es opaco y su z-index (800) queda POR DEBAJO
+ *  de #mapLoadingOverlay (900, ver main.css) — al arrancar ya mismo, queda listo y tapando todo
+ *  DEBAJO de la pantalla de carga, así cuando esa se desvanece (armMapLoadingHide/
+ *  hideMapLoadingScreen) lo único que se revela es la cinemática, nunca el mapa real. */
+function maybeShowWorldIntro(){
+  if(!player || player.seenWorldIntro) return;
+  playWorldCinematic(showNoeWelcomeDialogue);
+}
+function showNoeWelcomeDialogue(){
+  if(!player || player.seenWorldIntro) return;
+  $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
+  worldIntroMode = "welcome";
+  typeNoeText(NOE_WELCOME_TEXT);
+  $("worldIntroOverlay").classList.remove("hidden");
+}
+/** Pedido explícito: Noe se despide recién cuando esa PRIMERA batalla tutorial TERMINA con una
+ *  victoria y el jugador ya recibió la experiencia (se dispara desde btnResultClose, al cerrar la
+ *  pantalla de resultado — ver battleTutorialPendingFarewell/closeBattleTutorial) — recién al
+ *  cerrar ESTE cuadro sale el bono diario (ver closeWorldIntro), no antes. */
+function showNoeFarewellDialogue(){
+  $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
+  worldIntroMode = "farewell";
+  typeNoeText(NOE_FAREWELL_TEXT);
+  $("worldIntroOverlay").classList.remove("hidden");
+}
+/** Pedido explícito: si el jugador cae en su primerísima batalla (la del tutorial, todavía sin
+ *  ganar — ver battleTutorialPendingFarewell), el combate NO termina en derrota. En vez de
+ *  offerRevive/loseBattle (ver finishEnemyTurn/packEnemyTurn), se le rellena la vida por completo
+ *  y Noe interrumpe con este ánimo — el combate sigue en cuanto cierra el cuadro (ver
+ *  closeWorldIntro, modo "tutorialRevive"). */
+function reviveForTutorialBattle(){
+  player.hp = player.maxHp;
+  updateBattleBars();
+  refreshHud();
+  saveGame();
+  $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
+  worldIntroMode = "tutorialRevive";
+  typeNoeText(NOE_TUTORIAL_REVIVE_TEXT);
+  $("worldIntroOverlay").classList.remove("hidden");
+}
+/** Tocar el cuadro mientras el texto se está tipiando lo completa de una vez — recién el toque
+ *  SIGUIENTE cierra de verdad (mismo patrón estándar de diálogos con máquina de escribir). */
+function closeWorldIntro(){
+  if($("worldIntroOverlay").classList.contains("hidden")) return;
+  if(worldIntroTypeTimer){
+    clearInterval(worldIntroTypeTimer);
+    worldIntroTypeTimer = null;
+    $("worldIntroText").textContent = worldIntroCurrentText;
+    return;
+  }
+  $("worldIntroOverlay").classList.add("hidden");
+  if(worldIntroMode === "warning") return; // solo fue un aviso (ver showNoeChooseWiselyWarning) — no toca el flag ni vuelve a buscar enemigo
+  if(worldIntroMode === "resourceTip") return; // solo fue el tip de recolección (ver showNoeResourceTip) — el flag ya se guardó antes de mostrarlo
+  if(worldIntroMode === "gemTip") return; // solo fue el comentario sobre la gema (ver showNoeGemTip) — nada más que cerrar
+  if(worldIntroMode === "farewell"){
+    // Pedido explícito: recién ACÁ (después de la cinemática + bienvenida + tutorial de batalla)
+    // sale el bono diario — ver el guard `if(player.seenWorldIntro)` en btnStart, que se salta
+    // esto el primer día porque a esa altura seenWorldIntro todavía era false.
+    checkDailyBonus();
+    return;
+  }
+  if(worldIntroMode === "tutorialRevive"){
+    // La vida ya se rellenó en reviveForTutorialBattle() — acá solo se retoma el combate.
+    disableMoves(false);
+    renderMoveGrid();
+    return;
+  }
+  if(player && !player.seenWorldIntro){
+    player.seenWorldIntro = true;
+    saveGame();
+  }
+  pointArrowAtWeakEnemy();
+}
+$("worldIntroOverlay").onclick = closeWorldIntro;
+/** Pedido explícito: mientras la flecha esté señalando un enemigo débil (ver worldIntroArrowMonId),
+ *  si el jugador en cambio intenta pelear contra uno de MAYOR nivel que él, no arranca el combate —
+ *  Noe vuelve a aparecer con este aviso. Se usa desde tryEngage(). */
+function showNoeChooseWiselyWarning(){
+  worldIntroMode = "warning";
+  $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
+  typeNoeText(NOE_CHOOSE_WISELY_TEXT);
+  $("worldIntroOverlay").classList.remove("hidden");
+}
+/** Pedido explícito: la PRIMERA vez que se toca cualquier nodo de recolección (árbol/roca/vena de
+ *  hierro), Noe explica el sistema en vez de que arranque la recolección de una — ver el guard en
+ *  tryGatherResource(). El flag "ya lo vi" (player.seenResourceTip) es de CUENTA, mismo patrón que
+ *  seenBattleTutorial/seenWorldIntro. */
+function showNoeResourceTip(){
+  worldIntroMode = "resourceTip";
+  $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
+  typeNoeText(NOE_RESOURCE_TIP_TEXT);
+  $("worldIntroOverlay").classList.remove("hidden");
+}
+/** Pedido explícito: al cerrar la pantalla de victoria donde dropeó una gema elemental (Aqua o
+ *  Fauto, ver pendingElementalGemDrop/btnResultClose), Noe aparece sugiriendo visitar la Forja. */
+function showNoeGemTip(){
+  worldIntroMode = "gemTip";
+  $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
+  typeNoeText(NOE_GEM_TIP_TEXT);
+  $("worldIntroOverlay").classList.remove("hidden");
+}
+
+let worldIntroArrowMonId = null;
+let worldIntroArrowTickTimer = null;
+let worldIntroArrowRetryTimer = null;
+/** Busca el enemigo real (no NPC/jefe, ver isAmbushEligible) más cercano de nivel <= al del
+ *  jugador. Los monstruos iniciales de spawnMonsters() ya deberían estar puestos para cuando el
+ *  jugador cierra el cuadro (initMap los crea de entrada, antes del flyTo), pero por si ninguno
+ *  todavía califica, reintenta cada segundo hasta 20s en vez de rendirse de una. */
+function pointArrowAtWeakEnemy(){
+  clearInterval(worldIntroArrowRetryTimer);
+  let attempts = 0;
+  const tryPick = ()=>{
+    if(battleState || pvp || groupBattle) return true; // ya entró en combate por su cuenta, no hace falta señalar nada
+    const candidates = monsters.filter(m=> isAmbushEligible(m) && m.level <= player.level);
+    if(!candidates.length) return false;
+    candidates.sort((a,b)=> distMeters(playerLatLng,a) - distMeters(playerLatLng,b));
+    showWorldIntroArrowOnMonster(candidates[0]);
+    return true;
+  };
+  if(tryPick()) return;
+  worldIntroArrowRetryTimer = setInterval(()=>{
+    attempts++;
+    if(tryPick() || attempts>=20) clearInterval(worldIntroArrowRetryTimer);
+  }, 1000);
+}
+function showWorldIntroArrowOnMonster(mon){
+  worldIntroArrowMonId = mon.id;
+  $("worldIntroArrow").classList.remove("hidden");
+  updateWorldIntroArrowPosition();
+  clearInterval(worldIntroArrowTickTimer);
+  worldIntroArrowTickTimer = setInterval(updateWorldIntroArrowPosition, 150);
+  setTimeout(hideWorldIntroArrow, 15000); // se apaga sola si el jugador no se acerca a pelear
+}
+/** Reubica la flecha en cada tick leyendo la posición REAL en pantalla del marcador (mismo truco
+ *  que refreshQuestTargetHighlights: marker.getElement().getBoundingClientRect()) — así sigue al
+ *  enemigo aunque el jugador mueva/rote/incline el mapa. Se apaga sola si el enemigo señalado ya
+ *  no está en el mapa (lo mataron, expiró, quedó fuera de rango) o si el jugador entró a combate. */
+function updateWorldIntroArrowPosition(){
+  const mon = monsters.find(m=> m.id===worldIntroArrowMonId);
+  const markerEl = mon && mon.marker && mon.marker.getElement && mon.marker.getElement();
+  if(!mon || !markerEl || battleState || pvp || groupBattle){ hideWorldIntroArrow(); return; }
+  const r = markerEl.getBoundingClientRect();
+  const el = $("worldIntroArrow");
+  el.style.left = (r.left + r.width/2) + "px";
+  el.style.top = (r.top - 6) + "px";
+}
+function hideWorldIntroArrow(){
+  clearInterval(worldIntroArrowTickTimer);
+  worldIntroArrowTickTimer = null;
+  clearInterval(worldIntroArrowRetryTimer);
+  worldIntroArrowRetryTimer = null;
+  worldIntroArrowMonId = null;
+  $("worldIntroArrow").classList.add("hidden");
+}
 
 /** Pedido explícito: "que no todos los enemigos dejen escapar del combate, que algunos digan 'el
  *  enemigo te ha acorralado'" — algunos monstruos (ver `cantFlee` en enemies.js, los mismos que ya
@@ -13263,8 +14097,30 @@ function executePlayerAction(mv){
 /** Si el arma equipada tiene una propiedad especial (quemar/envenenar/acelerar), la sortea tras un golpe.
  *  Nota: solo aplica a TUS propios golpes en PvE (solo, manada, grupo) — en duelos PvP se omite, porque
  *  el rival solo conoce tus estadísticas base, no los detalles de tu arma, y el combate ahí es determinista. */
+/** Anillo Fauto equipado (si hay uno) — accesorio con `burnChanceBonus`/`burnImmune` (ver
+ *  BLACKSMITH_RECIPES). */
+function isFautoRingEquipped(){
+  return (player.equipment.accessory||[]).some(a=> a && a.id==="craft_anillo_fauto");
+}
+function fautoRingBurnBonus(){
+  const ring = (player.equipment.accessory||[]).find(a=> a && a.id==="craft_anillo_fauto");
+  return ring ? (ring.burnChanceBonus||0) : 0;
+}
 function rollWeaponProc(totalDmg){
   const w = player.equipment.weapon;
+  // Quemar: pedido explícito, el Anillo Fauto SUMA su 25% al que ya tenga el arma (ej. arma con
+  // 25% + anillo = 50%), o quema por su cuenta si el arma no tiene ningún proc de quemar — nunca
+  // lo reemplaza. Un solo roll combinado, no dos rolls independientes que se pisen entre sí.
+  const isWeaponBurnProc = !!(w && w.proc && w.proc.type === "burn");
+  const ringBurnBonus = fautoRingBurnBonus();
+  const totalBurnChance = (isWeaponBurnProc ? w.proc.chance : 0) + ringBurnBonus;
+  if(totalBurnChance > 0){
+    if(Math.random() < totalBurnChance){
+      const mult = (isWeaponBurnProc && w.proc.mult) || 0.5;
+      return {type:"burn", bonus: Math.max(1, Math.round(totalDmg * mult))};
+    }
+    if(isWeaponBurnProc) return null; // el único proc del arma era quemar y no salió — nada más que chequear
+  }
   if(!w || !w.proc) return null;
   if(Math.random() >= w.proc.chance) return null;
   if(w.proc.type === "haste") return {type:"haste"};
@@ -13564,13 +14420,21 @@ function triggerShadowWolfDotQTE(mon, onResolve){
 
   setTimeout(spawnDot, TELEGRAPH_MS);
 }
-function triggerDodgeQTE(mon, onResolve, isBlockMode){
+/** `interactive=false` (barra de defensa ya agotada): se muestra el mismo aviso de "prepara un
+ *  golpe fuerte" para que quede claro que lo que viene NO es un golpe cualquiera, pero sin ventana
+ *  de deslizamiento — no hay nada que bloquear, así que resuelve solo como golpe recibido tras un
+ *  instante. Antes, en ese caso, el golpe pasaba directo sin ningún aviso — se sentía como un golpe
+ *  normal aunque hiciera más daño, sin forma de saber por qué. */
+function triggerDodgeQTE(mon, onResolve, isBlockMode, interactive){
+  if(interactive === undefined) interactive = true;
   const overlay = $("dodgeQteOverlay");
   const barFill = $("dodgeQteBarFill");
   const hint = $("dodgeQteHint");
-  $("dodgeQteText").textContent = isBlockMode
-    ? `¡${mon.tpl.name} prepara un golpe fuerte! Desliza para cubrirte con ${player.classKey === "mago" ? "la barrera mágica" : player.classKey === "berserker" ? "el filo de la espada" : player.classKey === "arquero" ? "el arco" : "el escudo"}.`
-    : `¡${mon.tpl.name} prepara un golpe fuerte!`;
+  $("dodgeQteText").textContent = !interactive
+    ? `¡${mon.tpl.name} descarga un golpe fuerte que ya no puedes bloquear!`
+    : isBlockMode
+      ? `¡${mon.tpl.name} prepara un golpe fuerte! Desliza para cubrirte con ${player.classKey === "mago" ? "la barrera mágica" : player.classKey === "berserker" ? "el filo de la espada" : player.classKey === "arquero" ? "el arco" : "el escudo"}.`
+      : `¡${mon.tpl.name} prepara un golpe fuerte!`;
   hint.textContent = "👀 ¡Prepárate...!";
   if(barFill) barFill.style.width = "100%";
   overlay.classList.remove("hidden");
@@ -13611,6 +14475,13 @@ function triggerDodgeQTE(mon, onResolve, isBlockMode){
 
   setTimeout(()=>{
     if(resolved) return;
+    if(!interactive){
+      // sin barra de defensa no hay nada que deslizar — se deja el aviso un instante más para que
+      // se alcance a leer y recién ahí golpea, siempre como "hit" (nunca dodged/blocked).
+      hint.textContent = "💥 ¡Sin defensa para bloquearlo!";
+      setTimeout(()=> finish(false), 550);
+      return;
+    }
     // arranca la ventana real: ahora si cuenta el deslizamiento y empieza a bajar la barra
     overlay.style.pointerEvents = "auto";
     hint.textContent = "👉 ¡DESLIZA AHORA para esquivar!";
@@ -13896,11 +14767,17 @@ function enemyTurn(isExtraAttack){
         resolveEnemyDirectAttack(mon, power, spdMod, outcome);
         maybeExtraEnemyTurn(mon, isExtraAttack);
       }, isBlockDefender);
+    } else if(isStrongAttack && isBlockDefender && !canBlock && !undodgeableAtNight){
+      // barra de defensa agotada: sigue siendo un golpe fuerte de verdad, así que se avisa igual
+      // (sin ventana para bloquear, ver triggerDodgeQTE) en vez de pasar como un golpe cualquiera.
+      logBattle(`🛡️ Tu barra de defensa está agotada — ya no puedes bloquear golpes fuertes en este combate.`);
+      triggerDodgeQTE(mon, ()=>{
+        resolveEnemyDirectAttack(mon, power, spdMod, "hit");
+        maybeExtraEnemyTurn(mon, isExtraAttack);
+      }, isBlockDefender, false);
     } else {
       if(isStrongAttack && undodgeableAtNight){
         logBattle(`🌙 ¡La oscuridad envuelve el golpe de ${mon.tpl.name} — no hay forma de esquivarlo esta noche!`);
-      } else if(isStrongAttack && isBlockDefender && !canBlock){
-        logBattle(`🛡️ Tu barra de defensa está agotada — ya no puedes bloquear golpes fuertes en este combate.`);
       }
       resolveEnemyDirectAttack(mon, power, spdMod, "hit");
       maybeExtraEnemyTurn(mon, isExtraAttack);
@@ -13908,6 +14785,33 @@ function enemyTurn(isExtraAttack){
   }
 }
 
+/** Embiste (.attacke, con su ráfaga de polvo) + la pose de ataque propia del monstruo si tiene una
+ *  dedicada (ver spriteRegistry.js) — antes vivía inline dentro de resolveEnemyDirectAttack, ahora
+ *  también la usa el "saludo" de apertura del combate (ver playBattleGreetingFx) para que el
+ *  enemigo se mueva apenas aparece, sin duplicar esta lista monstruo por monstruo en dos lugares. */
+function triggerEnemyAttackPose(mon){
+  animateSprite("spriteEnemy","attacke");
+  if(mon.tpl === THIEF_TEMPLATE) triggerThiefAttackPose();
+  if(mon.tpl.name === "Lobo Umbrío") triggerLoboAttackPose();
+  if(mon.tpl.name === "Cuervo Corrupto") triggerCuervoAttackPose();
+  if(mon.tpl.name === "Demonio Menor") triggerDemonioAttackPose();
+  if(mon.tpl.name === "Golem de Roca") triggerGolemAttackPose();
+  if(mon.tpl.name === "Dragón Menor") triggerDragonAttackPose();
+  if(mon.tpl.name === "Dragón Ancestral") triggerDragonAncestralAttackPose();
+  if(mon.tpl.name === "Lobo Nocturno") triggerLoboNocturnoAttackPose();
+  if(mon.tpl.name === "Slime Salvaje") triggerSlimeSalvajePose("attack", 700);
+  if(mon.tpl.name === "Rata Mutante") triggerRataMutantePose("attack", 700);
+  if(mon.tpl.name === "Espectro") triggerEspectroPose("attack", 700);
+  if(mon.tpl.name === "Señor Oscuro") triggerSenorOscuroAttackPose(700);
+  if(mon.tpl.name === "Demonio Oscuro") triggerAuraEnemyPose("demonio-oscuro", DEMONIO_OSCURO_SPRITES, 700);
+  if(mon.tpl.name === "Sabueso Oscuro") triggerAuraEnemyPose("sabueso-oscuro", SABUESO_OSCURO_SPRITES, 700);
+  // La pose "base" de Aqua tiene que coincidir con la que enemySpriteSrc mostró al arrancar el
+  // combate (base_strong con lluvia, base normal si no) — si no, terminaría un golpe y volvería
+  // SIEMPRE a la variante normal aunque haya seguido lloviendo.
+  if(mon.tpl.name === "Elemental Aqua") triggerAuraEnemyPose("elemental-aqua",
+    {base:(currentWeatherCategory==="rain") ? ELEMENTAL_AQUA_SPRITES.baseStrong : ELEMENTAL_AQUA_SPRITES.base, attack:ELEMENTAL_AQUA_SPRITES.attack}, 700);
+  if(mon.tpl.name === "Elemental Fauto") triggerAuraEnemyPose("elemental-fauto", ELEMENTAL_FAUTO_SPRITES, 700);
+}
 /** Aplica el golpe directo del enemigo contra el jugador — toda la lógica de daño/animaciones/
  *  mensajes que antes vivía directamente dentro de enemyTurn(). `outcome` es "dodged" (esquivado
  *  por completo, sin daño — cualquier clase sin pose de defensa propia), "blocked" (el jugador lo
@@ -13957,24 +14861,10 @@ function resolveEnemyDirectAttack(mon, power, spdMod, outcome){
   }
   player.hp = Math.max(0, player.hp - dmg);
   animateSprite("spritePlayer","hitshake");
-  animateSprite("spriteEnemy","attacke");
   flashSprite("spritePlayer","red");
   maybeShowCrit(dmg, player.maxHp);
   spawnFloatingNumber("spritePlayer", "-"+dmg, (dmg >= player.maxHp*0.5) ? "crit" : "damage");
-  if(mon.tpl === THIEF_TEMPLATE) triggerThiefAttackPose();
-  if(mon.tpl.name === "Lobo Umbrío") triggerLoboAttackPose();
-  if(mon.tpl.name === "Cuervo Corrupto") triggerCuervoAttackPose();
-  if(mon.tpl.name === "Demonio Menor") triggerDemonioAttackPose();
-  if(mon.tpl.name === "Golem de Roca") triggerGolemAttackPose();
-  if(mon.tpl.name === "Dragón Menor") triggerDragonAttackPose();
-  if(mon.tpl.name === "Dragón Ancestral") triggerDragonAncestralAttackPose();
-  if(mon.tpl.name === "Lobo Nocturno") triggerLoboNocturnoAttackPose();
-  if(mon.tpl.name === "Slime Salvaje") triggerSlimeSalvajePose("attack", 700);
-  if(mon.tpl.name === "Rata Mutante") triggerRataMutantePose("attack", 700);
-  if(mon.tpl.name === "Espectro") triggerEspectroPose("attack", 700);
-  if(mon.tpl.name === "Señor Oscuro") triggerSenorOscuroAttackPose(700);
-  if(mon.tpl.name === "Demonio Oscuro") triggerAuraEnemyPose("demonio-oscuro", DEMONIO_OSCURO_SPRITES, 700);
-  if(mon.tpl.name === "Sabueso Oscuro") triggerAuraEnemyPose("sabueso-oscuro", SABUESO_OSCURO_SPRITES, 700);
+  triggerEnemyAttackPose(mon);
   logBattle(`${mon.tpl.name} ataca: ${dmg} de daño.`);
   if(mon.tpl.debuffOnHit && Math.random() < mon.tpl.debuffOnHit.chance){
     const d = mon.tpl.debuffOnHit;
@@ -13995,7 +14885,13 @@ function finishEnemyTurn(){
   if(battleState.playerBuffs.turnsAtk>0){ battleState.playerBuffs.turnsAtk--; if(battleState.playerBuffs.turnsAtk===0) battleState.playerBuffs.atk=1; }
   if(battleState.playerBuffs.turnsDef>0){ battleState.playerBuffs.turnsDef--; if(battleState.playerBuffs.turnsDef===0) battleState.playerBuffs.def=1; }
   setTimeout(()=>{
-    if(player.hp<=0){ offerRevive(loseBattle); return; }
+    if(player.hp<=0){
+      // Pedido explícito: en la primerísima batalla (tutorial todavía sin ganar), una "derrota" no
+      // termina el combate — Noe anima al jugador y sigue con la vida llena (ver
+      // reviveForTutorialBattle/battleTutorialPendingFarewell).
+      if(battleTutorialPendingFarewell){ reviveForTutorialBattle(); return; }
+      offerRevive(loseBattle); return;
+    }
     disableMoves(false);
     renderMoveGrid();
   }, 650);
@@ -14037,6 +14933,62 @@ function animateSprite(id, cls){
   el.classList.remove("hitshake","attackp","attacke","ultimate-strike","ultimate-hit");
   void el.offsetWidth;
   el.classList.add(cls);
+  // Pedido explícito: que un ataque (del jugador O del enemigo) se sienta más dinámico — una
+  // ráfaga de hojas/polvo/niebla sale disparada desde sus pies en el mismo instante en que
+  // arranca el embiste (lungeR/lungeL, ver .attackp/.attacke en main.css).
+  if(cls === "attacke" || cls === "attackp") triggerAttackDustFx(el);
+}
+
+/** Dispara la ráfaga de hojas/polvo/niebla DOS veces por golpe — al arrancar el embiste (el pie
+ *  se despega del suelo, posición de reposo) y de nuevo cerca del pico del lunge (~190ms después,
+ *  ver lungeR/lungeL en main.css: ambas duran .5s y llegan a su punto más lejos al 50%), leyendo
+ *  la posición del sprite otra vez en ese momento para que la segunda ráfaga salga ya desde el
+ *  punto de impacto, no desde el punto de partida. Pedido explícito: "también cuando el personaje
+ *  inicie el ataque, no solo al final" — antes solo se disparaba una vez. */
+function triggerAttackDustFx(spriteEl){
+  spawnAttackDustFx(spriteEl);
+  setTimeout(()=> spawnAttackDustFx(spriteEl), 190);
+}
+
+/** Variantes visuales de la ráfaga de ataque — hojas, polvo de tierra o niebla suave. Pedido
+ *  explícito: NO alternar entre variantes dentro de un mismo combate (se sentía inconsistente
+ *  que un golpe levante hojas y el siguiente polvo); se sortea UNA sola vez por combate (ver
+ *  rollBattleDustVariant(), llamada al arrancar cada modo de batalla) y esa es la única que se ve
+ *  durante TODO ese combate — el siguiente combate puede tocarle otra distinta. */
+const ATTACK_FX_VARIANTS = ["leaves", "dust", "mist"];
+let currentBattleDustVariant = ATTACK_FX_VARIANTS[0];
+function rollBattleDustVariant(){
+  currentBattleDustVariant = ATTACK_FX_VARIANTS[Math.floor(Math.random()*ATTACK_FX_VARIANTS.length)];
+}
+
+/** Una sola ráfaga de hojas/polvo/niebla a los pies de un sprite de combate — puramente
+ *  decorativa, sin estado ni cleanup fino: cada partícula se autodestruye sola vía
+ *  `animation-fill-mode:forwards` + `remove()` del wrapper entero al terminar (ver
+ *  attackDustBurst/attackDustPuff/attackMistDrift en main.css). Acepta un elemento ya resuelto
+ *  (spritePlayer, spriteEnemy, o el `.psm-emoji`/`.am-sprite` de un miembro de manada/grupo) en
+ *  vez de un id. Llamarla directo dispara solo UNA ráfaga en la posición ACTUAL del sprite — para
+ *  el efecto completo de un golpe (inicio + impacto) usar triggerAttackDustFx(), que la llama dos
+ *  veces. */
+function spawnAttackDustFx(spriteEl){
+  const stageEl = document.querySelector(".stage");
+  if(!spriteEl || !stageEl) return;
+  const spriteRect = spriteEl.getBoundingClientRect();
+  const stageRect = stageEl.getBoundingClientRect();
+  if(!spriteRect.width || !stageRect.width) return;
+  const leftPct = ((spriteRect.left + spriteRect.width/2 - stageRect.left) / stageRect.width) * 100;
+  const topPct = ((spriteRect.bottom - stageRect.top) / stageRect.height) * 100;
+  const variant = currentBattleDustVariant;
+  const wrap = document.createElement("div");
+  wrap.className = "attack-dust-wrap";
+  wrap.style.left = leftPct + "%";
+  wrap.style.top = topPct + "%";
+  wrap.innerHTML = variant === "leaves"
+    ? `<span class="adb adb0">🍃</span><span class="adb adb1">🍃</span><span class="adb adb2">🍃</span><span class="adb adb3">🍃</span><span class="adb adb4">🍃</span>`
+    : variant === "dust"
+    ? `<span class="adp adp0"></span><span class="adp adp1"></span><span class="adp adp2"></span><span class="adp adp3"></span><span class="adp adp4"></span>`
+    : `<span class="adm adm0"></span><span class="adm adm1"></span><span class="adm adm2"></span>`;
+  stageEl.appendChild(wrap);
+  setTimeout(()=> wrap.remove(), 800);
 }
 
 /** Número flotante ("-128", "+64"...) que sube y se desvanece sobre un sprite de combate — solo
@@ -14222,6 +15174,12 @@ function winBattle(){
   if(battleState.eventId) resolveWorldEventVictory(battleState.eventId);
   clearTurnTimer();
   const mon = battleState.mon;
+  // Pedido explícito: que el enemigo se desvanezca al ser vencido, en vez de quedarse plantado hasta
+  // que la pantalla de resultado tapa todo de golpe — dura 1.6s (ver .defeat-fade en main.css), así
+  // que ya terminó de desaparecer, con una pausa extra sobre el escenario vacío, antes de que el
+  // setTimeout de más abajo (2200ms) revele el resultado.
+  const enemySpriteEl = $("spriteEnemy");
+  if(enemySpriteEl) enemySpriteEl.classList.add("defeat-fade");
   adsService.forgetBattle(mon.id); // libera el registro de "anuncio usado en este combate" (ver BATTLE_REVIVE)
   const overflowItems = []; // recompensas que no cupieron — se ofrece comprar espacio por todas al final
   logBattle(`¡Derrotaste a ${mon.tpl.name}!`);
@@ -14350,6 +15308,22 @@ function winBattle(){
       bossItemMsg = `<br>👑 ¡Botín especial! ${bItem.emoji} ${bItem.name} (${bItem.desc})`;
       defeatedBossDropItem = bItem;
     }
+  } else if((mon.tpl.name === "Elemental Aqua" || mon.tpl.name === "Elemental Fauto") && Math.random() < 0.10){
+    // Pedido explícito: chance BAJA (10%) de soltar su gema — material único para revelar y
+    // forjar su anillo en la Forja (ver renderForgeCraftTab/BLACKSMITH_RECIPES). Se guarda como
+    // player.craftMats, igual que Colmillo de Lobo/Cuerno de Demonio/etc (rollCraftMaterialDrops)
+    // — nunca ocupa espacio de inventario, así nunca se pierde por overflow. El flag
+    // "everFoundGemX" es de CUENTA (mismo patrón que seenBattleTutorial) y queda guardado aunque
+    // el jugador gaste la gema fabricando después — la receta no debe volver a esconderse.
+    const isAqua = mon.tpl.name === "Elemental Aqua";
+    const gemKey = isAqua ? "gema_aqua" : "gema_fauto";
+    const gemLabel = isAqua ? "Gema Aqua" : "Gema Fauto";
+    const gemEmoji = isAqua ? "💧" : "🔥";
+    if(!player.craftMats) player.craftMats = {};
+    player.craftMats[gemKey] = (player.craftMats[gemKey]||0) + 1;
+    bossItemMsg = `<br>${gemEmoji} ¡Encontraste algo especial! ${gemEmoji} ${gemLabel}`;
+    pendingElementalGemDrop = true;
+    if(isAqua) player.everFoundGemAqua = true; else player.everFoundGemFauto = true;
   }
   if(mon.isBoss && !mon.isParkGuardian){
     releaseBossLock(mon);
@@ -14410,7 +15384,7 @@ function winBattle(){
       checkLevelUps();
       battleState = null;
       saveGame();
-    }, 700);
+    }, 2200); // le da tiempo de sobra al desvanecido del enemigo (1.6s, ver .defeat-fade en main.css) más una pausa extra en el escenario ya vacío antes de mostrar el resultado
   });
 }
 
@@ -14432,6 +15406,10 @@ const STATUS_EFFECTS = {
 function applyStatusEffect(target, type){
   const eff = STATUS_EFFECTS[type];
   if(!eff || !target) return;
+  // Anillo Fauto (burnImmune, ver BLACKSMITH_RECIPES): el jugador nunca puede quedar quemado
+  // mientras lo lleve puesto — genérico acá (no en el punto donde se aplica cada quemadura en
+  // particular) para que valga sin importar qué enemigo/arma la cause, incluso alguno futuro.
+  if(type === "burn" && target === player && isFautoRingEquipped()) return;
   target.status = {type, turnsLeft: eff.turns};
 }
 /** Descuenta el HP de este turno si el objetivo está quemado/envenenado, con su destello — y avisa
@@ -14602,6 +15580,9 @@ function loseBattle(){
   if(battleState.isDungeon) return dungeonLoseFloor();
   if(battleState.isColiseo) return coliseoLoseRun();
   if(battleState.eventId) resolveWorldEventLoss(battleState.eventId);
+  // No hubo experiencia recibida — la despedida de Noe (y el bono diario) esperan a una victoria
+  // real, ver battleTutorialPendingFarewell/btnResultClose.
+  battleTutorialPendingFarewell = false;
   clearTurnTimer();
   const mon = battleState.mon;
   if(mon) adsService.forgetBattle(mon.id); // libera el registro de "anuncio usado en este combate" (ver BATTLE_REVIVE)
@@ -14641,6 +15622,23 @@ $("btnResultClose").onclick = ()=> {
     pendingColiseoContinuation = null;
     if(round % 10 === 0) openColiseoBuffPicker(()=> startColiseoRound());
     else startColiseoRound();
+  }
+  // Pedido explícito: la despedida de Noe (y el bono diario que dispara al cerrarla, ver
+  // closeWorldIntro) sale recién ACÁ — al cerrar la pantalla de resultado de la primera batalla
+  // tutorial YA GANADA, con la experiencia ya recibida. Este botón es compartido por TODOS los
+  // resultados de combate del juego, pero el flag solo queda en true tras una victoria real (ver
+  // battleTutorialPendingFarewell/closeBattleTutorial/loseBattle/packLoseBattle).
+  if(battleTutorialPendingFarewell){
+    battleTutorialPendingFarewell = false;
+    showNoeFarewellDialogue();
+  } else if(pendingElementalGemDrop){
+    // Pedido explícito: Noe comenta la gema recién al cerrar ESTA pantalla de victoria, no antes.
+    // "else if" a propósito — no tiene sentido mostrar dos cuadros de Noe apilados de una vez;
+    // si algún día coinciden, la despedida del tutorial gana y este comentario simplemente espera
+    // (pendingElementalGemDrop se queda en true, así que igual sale la próxima vez que se cierre
+    // una pantalla de resultado).
+    pendingElementalGemDrop = false;
+    showNoeGemTip();
   }
 };
 
@@ -15716,6 +16714,7 @@ $("btnColiseoBackToMenu").onclick = ()=>{ $("coliseoSummaryOverlay").classList.a
    ============================================================ */
 function startPackBattle(packMons, opts){
   opts = opts || {};
+  rollBattleDustVariant(); // pedido explícito: un solo efecto (hojas/polvo/niebla) por combate, no alternado golpe a golpe
   if(!opts.isColiseo && (coliseoRun || pendingColiseoContinuation)){
     coliseoRun = null;
     pendingColiseoContinuation = null;
@@ -15738,9 +16737,14 @@ function startPackBattle(packMons, opts){
   // golpes fuertes, ver isStrongAttack/canBlock ahí). Mismo criterio que startBattle: se llena
   // fresca en cada combate nuevo, nunca se recarga durante ESTE.
   if(classHasDefendPose(player.classKey)){
-    battleState.defenseBarCharges = defenseBarCharges();
+    // Anillo Aqua (extraDefenseCharge, ver BLACKSMITH_RECIPES): +1 bloqueo extra este combate —
+    // defenseBarHasRingCharge es lo que updateBattleBars() usa para pintar la esquina extra en
+    // gris claro mientras la barra siga al máximo (ver ahí).
+    const ringExtra = equippedAquaRing() ? 1 : 0;
+    battleState.defenseBarCharges = defenseBarCharges() + ringExtra;
     battleState.defenseBarMax = battleState.defenseBarCharges;
     battleState.defenseBar = battleState.defenseBarMax;
+    battleState.defenseBarHasRingCharge = ringExtra > 0;
   }
   updateBattleSceneBackground();
   updateBattleRainFx();
@@ -15833,6 +16837,7 @@ function animatePackMon(idx, cls){
   emoji.classList.remove("hitshake","attackp","attacke","ultimate-strike","ultimate-hit");
   void emoji.offsetWidth;
   emoji.classList.add(cls);
+  if(cls === "attacke") triggerAttackDustFx(emoji);
 }
 /** Igual que triggerLoboAttackPose, pero para un Lobo Umbrío específico dentro de una manada — al
  *  terminar el golpe vuelve a SU variante (enemy/enemy_var, la que le tocó según su índice en
@@ -16144,7 +17149,10 @@ function packEnemyTurn(){
       if(battleState.playerBuffs.turnsAtk>0){ battleState.playerBuffs.turnsAtk--; if(battleState.playerBuffs.turnsAtk===0) battleState.playerBuffs.atk=1; }
       if(battleState.playerBuffs.turnsDef>0){ battleState.playerBuffs.turnsDef--; if(battleState.playerBuffs.turnsDef===0) battleState.playerBuffs.def=1; }
       setTimeout(()=>{
-        if(player.hp<=0){ offerRevive(packLoseBattle); return; }
+        if(player.hp<=0){
+          if(battleTutorialPendingFarewell){ reviveForTutorialBattle(); return; }
+          offerRevive(packLoseBattle); return;
+        }
         disableMoves(false);
         renderMoveGrid();
       }, 450);
@@ -16201,7 +17209,18 @@ function packEnemyTurn(){
       return;
     }
     if(isStrongAttack && isBlockDefender && !canBlock){
+      // barra de defensa agotada: sigue siendo un golpe fuerte de verdad — se avisa igual (sin
+      // ventana para bloquear, ver triggerDodgeQTE) en vez de pasar como un golpe cualquiera.
       logBattle(`🛡️ Tu barra de defensa está agotada — ya no puedes bloquear golpes fuertes en este combate.`);
+      setTimeout(()=>{
+        hidePackAttackTelegraph(idx);
+        triggerDodgeQTE(m, ()=>{
+          resolvePackDirectAttack(m, idx, power, spdMod, "hit");
+          updateBattleBars(); refreshHud();
+          setTimeout(attackNext, 500);
+        }, isBlockDefender, false);
+      }, 480);
+      return;
     }
     setTimeout(()=>{
       hidePackAttackTelegraph(idx);
@@ -16361,6 +17380,9 @@ function packLoseBattle(){
   if(battleState.isDungeon) return dungeonLoseFloor();
   if(battleState.isColiseo) return coliseoLoseRun();
   if(battleState.eventId) resolveWorldEventLoss(battleState.eventId);
+  // No hubo experiencia recibida — la despedida de Noe (y el bono diario) esperan a una victoria
+  // real, ver battleTutorialPendingFarewell/btnResultClose.
+  battleTutorialPendingFarewell = false;
   clearTurnTimer();
   logBattle(`¡Has caído ante la manada!`);
   const bossEntry = battleState.mons.find(m=>m.isBoss);
@@ -16517,6 +17539,98 @@ function playLevelUpCloseFx(){
   });
 }
 
+/** Carga una imagen y espera a que esté lista para poder dibujarla en un canvas — promesa simple,
+ *  rechaza si la ruta no carga (ver buildLevelUpShareCardBlob, que sigue sin retrato en ese caso). */
+function loadImageEl(src){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=> resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+/** Dibuja la tarjeta de "subí de nivel" para compartir (retrato de la clase + nivel + nombre) en un
+ *  canvas fuera de pantalla — nunca se muestra en el DOM, solo existe para generar el PNG que se
+ *  comparte (ver shareLevelUpCard). Pedido explícito: "que se vea como una tarjeta... algo
+ *  interesante", con el retrato del personaje y el nivel. */
+async function buildLevelUpShareCardBlob(level){
+  const W = 900, H = 1200;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#1a2133");
+  bg.addColorStop(1, "#0b0e14");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = "#e8c468";
+  ctx.lineWidth = 12;
+  ctx.strokeRect(22, 22, W-44, H-44);
+  ctx.strokeStyle = "rgba(232,196,104,.4)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(40, 40, W-80, H-80);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#e8c468";
+  ctx.font = "bold 50px sans-serif";
+  ctx.fillText("⚔️ RPG GO ⚔️", W/2, 118);
+
+  const portraitSet = (CLASS_PORTRAITS[player.classKey]||{})[player.gender==="f" ? "f" : "m"];
+  const portraitSrc = portraitSet && (portraitSet.combat || portraitSet.map);
+  if(portraitSrc){
+    try{
+      const img = await loadImageEl(portraitSrc);
+      const maxW = 620, maxH = 640;
+      const scale = Math.min(maxW/img.width, maxH/img.height);
+      const dw = img.width*scale, dh = img.height*scale;
+      ctx.drawImage(img, (W-dw)/2, 170, dw, dh);
+    }catch(e){ /* sin retrato, la tarjeta sigue funcionando solo con el texto */ }
+  }
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 130px sans-serif";
+  ctx.fillText(`Nv. ${level}`, W/2, 920);
+
+  const className = (CLASSES[player.classKey]||{}).name || player.classKey;
+  ctx.fillStyle = "#c7cde0";
+  ctx.font = "bold 42px sans-serif";
+  ctx.fillText(`${player.name} · ${className}`, W/2, 990);
+
+  ctx.fillStyle = "#5ee1c9";
+  ctx.font = "36px sans-serif";
+  ctx.fillText("¡Sigo subiendo de nivel!", W/2, 1060);
+
+  return new Promise(resolve=> canvas.toBlob(resolve, "image/png"));
+}
+/** Comparte la tarjeta de nivel — botón del modal de subida de nivel (ver showLevelUpModal). Premia
+ *  💎1 diamante SOLO la primera vez que se comparte cada día (player.lastShareDay, mismo patrón de
+ *  fecha "YYYY-MM-DD" que ya usa lastBossCrystalDay/lastDailyBonus) — compartir de más el mismo día
+ *  no vuelve a pagar. Si el jugador cancela el panel de compartir, writeAndShareImageFile rechaza la
+ *  promesa y acá simplemente no se premia (cancelar no es un error, no hace falta avisar nada). */
+async function shareLevelUpCard(level){
+  const btn = $("btnLevelupShare");
+  if(btn) btn.disabled = true;
+  try{
+    const blob = await buildLevelUpShareCardBlob(level);
+    if(blob){
+      await writeAndShareImageFile(`rpggo_nivel_${level}.png`, blob, {
+        title: `¡Llegué al nivel ${level} en RPG GO!`,
+        text: `¡Llegué al nivel ${level} en RPG GO! 🎮⚔️`,
+        dialogTitle: "Compartir tu progreso",
+      });
+      const today = new Date().toISOString().slice(0,10);
+      if(player.lastShareDay !== today){
+        player.lastShareDay = today;
+        player.crystals = (player.crystals||0) + 1;
+        refreshHud(); saveGame();
+        showAlert("¡Gracias por compartir! Recibiste 💎+1 diamante.", {icon:"💎", title:"¡Compartido!", confirmLabel:"¡Genial!"});
+      }
+    }
+  }catch(e){ /* el jugador canceló el panel de compartir, o algo falló al generar la imagen */ }
+  finally{ if(btn) btn.disabled = false; }
+}
 function showLevelUpModal(item){
   $("lvBadge").textContent = item.level;
 
@@ -16583,6 +17697,7 @@ function showLevelUpModal(item){
   }
 
   $("levelupOverlay").classList.remove("hidden");
+  $("btnLevelupShare").onclick = ()=> shareLevelUpCard(item.level);
   $("btnLevelupClose").onclick = ()=>{
     $("levelupOverlay").classList.add("hidden");
     const isFinal = pendingLevelUps.length===0;
@@ -17199,6 +18314,7 @@ function elFor(side){ return side===pvp.role ? "spritePlayer" : "spriteEnemy"; }
 
 function startPvpBattle({battleId, role, opponent}){
   if(battleState){ toast("Termina tu combate actual antes de iniciar un duelo."); return; }
+  rollBattleDustVariant(); // pedido explícito: un solo efecto (hojas/polvo/niebla) por combate, no alternado golpe a golpe
   const oppRole = oppRoleOf(role);
   pvp = {
     battleId, role, channel: pvpChannel(battleId), opponent,
@@ -17346,9 +18462,9 @@ function renderPvpBattleUI(){
 
 function updatePvpBars(){
   const oppRole = oppRoleOf(pvp.role);
-  $("bPHp").style.width = pct(pvp.hp[pvp.role], player.maxHp)+"%";
+  setHpBarFill("bPHp", pvp.hp[pvp.role], player.maxHp);
   $("bPMp").style.width = pct(pvp.mp[pvp.role], player.maxMp)+"%";
-  $("bEHp").style.width = pct(pvp.hp[oppRole], pvp.opponent.maxHp)+"%";
+  setHpBarFill("bEHp", pvp.hp[oppRole], pvp.opponent.maxHp);
 }
 
 function renderPvpMoveGrid(){
@@ -17989,18 +19105,25 @@ function closeFabMenu(){
   setFabToggleIcon(false);
   $("fabMenuBackdrop").classList.remove("show");
 }
+/** Pedido explícito: confirmar antes de huir — antes el botón actuaba directo con un solo toque,
+ *  fácil de apretar por error en medio de la pelea. Un solo showConfirm acá arriba de TODO el
+ *  despacho (dungeon/coliseo/pvp/grupo/solo-manada) para que valga igual sin importar el tipo de
+ *  combate, en vez de agregarlo por separado en cada rama. */
 $("btnFleeCorner").onclick = ()=>{
-  if(battleState && battleState.isDungeon) return dungeonSurrender();
-  if(battleState && battleState.isColiseo) return coliseoSurrender();
-  if(pvp) return pvpConcede();
-  // Bug: acá decía `battleState.isPack` para decidir si mandar a proposeGroupFlee() — pero esa
-  // función es para la batalla de GRUPO multijugador, que vive en `groupBattle` (variable aparte,
-  // battleState queda en null durante todo un combate de grupo). En manada (battleState.isPack)
-  // esto llamaba a proposeGroupFlee() con groupBattle=null, que no hace nada (return inmediato) —
-  // por eso el botón no servía en manada. Y en grupo de verdad, `battleState.isPack` explotaba
-  // (battleState es null ahí), tirando abajo todo el handler en silencio.
-  if(groupBattle) return proposeGroupFlee();
-  if(battleState) return fleeBattle();
+  if(!battleState && !pvp && !groupBattle) return; // nada de qué huir
+  showConfirm("¿Seguro que querés huir del combate? No recibirás recompensas.", ()=>{
+    if(battleState && battleState.isDungeon) return dungeonSurrender();
+    if(battleState && battleState.isColiseo) return coliseoSurrender();
+    if(pvp) return pvpConcede();
+    // Bug: acá decía `battleState.isPack` para decidir si mandar a proposeGroupFlee() — pero esa
+    // función es para la batalla de GRUPO multijugador, que vive en `groupBattle` (variable aparte,
+    // battleState queda en null durante todo un combate de grupo). En manada (battleState.isPack)
+    // esto llamaba a proposeGroupFlee() con groupBattle=null, que no hace nada (return inmediato) —
+    // por eso el botón no servía en manada. Y en grupo de verdad, `battleState.isPack` explotaba
+    // (battleState es null ahí), tirando abajo todo el handler en silencio.
+    if(groupBattle) return proposeGroupFlee();
+    if(battleState) return fleeBattle();
+  }, {icon:"🏃", title:"¿Huir del combate?", confirmLabel:"Sí, huir", cancelLabel:"Seguir peleando"});
 };
 
 /** Orden fijo de las 8 cuñas del menú radial (mismo orden horario de siempre, arrancando arriba).
@@ -18190,6 +19313,29 @@ function getWeeklyShopOffers(){
   return picks.map(t=> rotatingItemToEquip(t, "weekly", true));
 }
 
+/** Convierte una plantilla de EARLY_WEAPON_POOL en un objeto de equipo comprable — a diferencia de
+ *  la Oferta Semanal, estas SIEMPRE están todas disponibles (no rotan ni dependen de suerte) y no
+ *  piden nivel mínimo; a cambio, además del oro piden una cantidad moderada de materiales de mundo
+ *  (item.materialCost, ver buildShopCard más abajo, mismo campo {wood,stone,iron} que ya usa el Arma
+ *  Superior). Mismo arreglo de registro que rotatingItemToEquip/getEliteWeaponOffer: no vive en
+ *  ninguna tabla fija, así que hay que anotarlo en bossLootRegistry para que findItemById() la
+ *  encuentre al recargar la partida. */
+function earlyGearToEquip(tpl){
+  const item = {
+    id: "early_"+tpl.id, name: tpl.name, emoji: tpl.emoji, type:"equip", slot:"weapon",
+    classKey: tpl.classKey, requiredClass: CLASS_ID_MAP[tpl.classKey]||null,
+    rarity: tpl.rarity, bonuses: tpl.bonuses, proc: tpl.proc||null,
+    value: tpl.value, materialCost: tpl.materialCost, isEarlyGear:true,
+    desc: tpl.desc + (tpl.proc ? ` · ${PROC_LABELS[tpl.proc.type]} (${Math.round(tpl.proc.chance*100)}%)` : "") + " · sin requisito de nivel",
+  };
+  bossLootRegistry[item.id] = item;
+  return item;
+}
+/** Las 3 armas de nivel bajo (sin requisito de nivel) de la clase del jugador — ver EARLY_WEAPON_POOL. */
+function getEarlyWeaponOffers(){
+  return EARLY_WEAPON_POOL.filter(t=> t.classKey === player.classKey).map(earlyGearToEquip);
+}
+
 /* ============================================================
    ARMA SUPERIOR — siempre hay una disponible en la tienda, bastante más fuerte que la que ya
    tienes puesta, para que siempre haya una meta a la que apuntar. Escala con tu nivel y con
@@ -18245,7 +19391,7 @@ function shopPreviewPool(){
 function shopFullCatalog(){
   const petItems = (player.pets && player.pets.length>0) ? PET_ITEM_TABLE : [];
   const eliteOffer = getEliteWeaponOffer();
-  return [...getWeeklyShopOffers(), ...(eliteOffer?[eliteOffer]:[]), ...shopPreviewPool(), ...ITEM_TABLE, ...petItems, ...TEST_SHOP_ITEMS, ...BOOK_TABLE];
+  return [...getWeeklyShopOffers(), ...(eliteOffer?[eliteOffer]:[]), ...getEarlyWeaponOffers(), ...shopPreviewPool(), ...ITEM_TABLE, ...petItems, ...TEST_SHOP_ITEMS, ...BOOK_TABLE];
 }
 
 function statPreviewLine(bonuses){
@@ -18673,6 +19819,7 @@ function openShop(){
   closeFabMenu();
   shopMode = 'buy';
   shopPage = 0;
+  shopActiveCategory = "featured"; // la tienda siempre abre en la página gancho ("Destacados")
   renderShopTabs();
   renderShopBuyList();
   renderPickaxeShopStatus();
@@ -18813,11 +19960,74 @@ function renderShopTabs(){
   updateBaseAndPickaxeCardsVisibility();
 }
 
-/** Tarjeta compacta de tienda (2 por fila); los épicos/legendarios/botín de jefe se muestran anchos, como antes. */
+/** Costo en materiales (además del oro) de comprar `item`, o null si se paga solo con oro. Unifica
+ *  el Arma Superior (porcentual, eliteWeaponMatCost) con los objetos de costo fijo (item.materialCost,
+ *  ver EARLY_WEAPON_POOL) — un solo lugar para esta cuenta, usado por la tarjeta Y el detalle. */
+function shopItemMatCost(item, goldCost){
+  return item.isEliteWeapon ? eliteWeaponMatCost(goldCost) : (item.materialCost || null);
+}
+/** Compra `item` desde la tienda: respeta el candado de nivel, abre el selector de cantidad y aplica
+ *  la compra (oro + materiales si corresponde). Compartido entre buildShopCard (botón de la tarjeta)
+ *  y openShopItemDetail (botón "Comprar" del detalle) para no duplicar la lógica en dos lugares. */
+function shopBuyItem(item){
+  const locked = item.reqLevel && player.level < item.reqLevel;
+  if(locked) return;
+  const goldCost = shopPrice(item);
+  const matCost = shopItemMatCost(item, goldCost);
+  const canAffordGold = player.gold >= goldCost;
+  const canAffordMat = !matCost || (["wood","stone","iron"].every(k=> (player[k]||0) >= matCost[k]));
+  if(!canAffordGold || !canAffordMat) return;
+  openBuyQuantityModal(item, goldCost, matCost, (qty)=>{
+    let bought = 0;
+    for(let i=0;i<qty;i++){ if(!pushItemSafe({...item})) break; bought++; }
+    if(bought<=0) return;
+    player.gold -= goldCost*bought;
+    audioManager.playSfx("GOLD");
+    if(matCost){
+      player.wood -= matCost.wood*bought; player.stone -= matCost.stone*bought; player.iron -= matCost.iron*bought;
+      if(item.isEliteWeapon) player.eliteWeaponsBought = (player.eliteWeaponsBought||0) + bought;
+    }
+    refreshHud(); saveGame();
+    toast(`Compraste ${bought>1?`${bought}x `:""}${item.emoji} ${item.name}.`);
+    renderShopBuyList(); renderShopSellList();
+  });
+}
+/** Vende `item` (debe estar en player.inventory) desde la tienda — pedido explícito: elegir cuántas
+ *  copias vender de una sola vez (en vez de tocar "Vender" una por una), viendo cuánto oro se gana
+ *  ANTES de confirmar. Compartido entre buildShopCard y openShopItemDetail. */
+function shopSellItem(item){
+  const sellPrice = Math.round((item.value||10)*0.4);
+  const ownedQty = player.inventory.filter(x=>x.id===item.id).length;
+  if(ownedQty<=0) return;
+  openSellQuantityModal(item, sellPrice, ownedQty, (qty)=>{
+    let sold = 0;
+    for(let i=0;i<qty;i++){
+      const idx = player.inventory.findIndex(x=>x.id===item.id);
+      if(idx<0) break;
+      player.inventory.splice(idx,1);
+      sold++;
+    }
+    if(sold<=0) return;
+    player.gold += sellPrice*sold;
+    audioManager.playSfx("GOLD");
+    refreshHud(); saveGame();
+    toast(`Vendiste ${sold>1?`${sold}x `:""}${item.emoji} ${item.name} por 💰${sellPrice*sold}.`);
+    renderShopBuyList(); renderShopSellList();
+  });
+}
+/** Tarjeta compacta de tienda (2 por fila); los épicos/legendarios/botín de jefe se muestran anchos, como antes.
+ *  Tocar la tarjeta en cualquier parte que NO sea el botón de acción abre el detalle completo con
+ *  comparación (ver openShopItemDetail) — pedido explícito: poder ver el detalle de cada objeto antes
+ *  de decidir comprarlo, no solo el resumen recortado de la tarjeta. */
 function buildShopCard(item, isBuy){
   const meta = equipItemMeta(item);
   const isBig = item.rarity==="epic" || item.rarity==="legendary" || item.isBossLoot;
   const card = document.createElement("div");
+  card.style.cursor = "pointer";
+  card.addEventListener("click", (e)=>{
+    if(e.target.closest("button")) return; // el botón de comprar/vender ya tiene su propia acción
+    openShopItemDetail(item, isBuy);
+  });
 
   if(isBig){
     // los épicos/legendarios/botín de jefe se muestran anchos, con el estilo de fila de siempre (no la tarjeta compacta)
@@ -18827,7 +20037,7 @@ function buildShopCard(item, isBuy){
     if(isBuy){
       const locked = item.reqLevel && player.level < item.reqLevel;
       const goldCost = shopPrice(item);
-      const matCost = item.isEliteWeapon ? eliteWeaponMatCost(goldCost) : null;
+      const matCost = shopItemMatCost(item, goldCost);
       const canAffordGold = player.gold >= goldCost;
       const canAffordMat = !matCost || (["wood","stone","iron"].every(k=> (player[k]||0) >= matCost[k]));
       const canAfford = canAffordGold && canAffordMat;
@@ -18844,25 +20054,7 @@ function buildShopCard(item, isBuy){
       card.innerHTML = `${meta.sparkles}<div class="ie">${iconFor(item)}</div>
         <div class="it">${item.name}${meta.tag}<small>${item.desc}</small>${preview}${cmpLine}${matLine}</div>
         ${actionHtml}`;
-      if(!locked){
-        card.querySelector("button").onclick = ()=>{
-          if(!canAfford) return;
-          openBuyQuantityModal(item, goldCost, matCost, (qty)=>{
-            let bought = 0;
-            for(let i=0;i<qty;i++){ if(!pushItemSafe({...item})) break; bought++; }
-            if(bought<=0) return;
-            player.gold -= goldCost*bought;
-            audioManager.playSfx("GOLD");
-            if(matCost){
-              player.wood -= matCost.wood*bought; player.stone -= matCost.stone*bought; player.iron -= matCost.iron*bought;
-              player.eliteWeaponsBought = (player.eliteWeaponsBought||0) + bought;
-            }
-            refreshHud(); saveGame();
-            toast(`Compraste ${bought>1?`${bought}x `:""}${item.emoji} ${item.name}.`);
-            renderShopBuyList(); renderShopSellList();
-          });
-        };
-      }
+      if(!locked) card.querySelector("button").onclick = ()=> shopBuyItem(item);
     } else {
       const count = player.inventory.filter(x=>x.id===item.id).length;
       const qtyTag = count>1 ? ` <b style="color:var(--accent);">x${count}</b>` : "";
@@ -18870,18 +20062,7 @@ function buildShopCard(item, isBuy){
       card.innerHTML = `${meta.sparkles}<div class="ie">${iconFor(item)}</div>
         <div class="it">${item.name}${qtyTag}${meta.tag}<small>${item.desc}</small></div>
         <button>+💰${sellPrice}</button>`;
-      card.querySelector("button").onclick = ()=>{
-        showConfirm(`¿Vender <b>${item.name}</b> por 💰${sellPrice}?`, ()=>{
-          const idx = player.inventory.findIndex(x=>x.id===item.id);
-          if(idx<0) return;
-          player.gold += sellPrice;
-          audioManager.playSfx("GOLD");
-          player.inventory.splice(idx,1);
-          refreshHud(); saveGame();
-          toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
-          renderShopBuyList(); renderShopSellList();
-        }, {icon:"💸", title:"Confirmar venta", confirmLabel:"Vender"});
-      };
+      card.querySelector("button").onclick = ()=> shopSellItem(item);
     }
     return card;
   }
@@ -18901,21 +20082,7 @@ function buildShopCard(item, isBuy){
        <div class="sc-info"><div class="sc-name">${item.name}${meta.tag}</div>
        <div class="sc-desc">${item.desc}${preview}${cmpLine}</div></div>
        ${actionHtml}`;
-    if(!locked){
-      card.querySelector("button").onclick = ()=>{
-        if(player.gold < shopPrice(item)) return;
-        openBuyQuantityModal(item, shopPrice(item), null, (qty)=>{
-          let bought = 0;
-          for(let i=0;i<qty;i++){ if(!pushItemSafe({...item})) break; bought++; }
-          if(bought<=0) return;
-          player.gold -= shopPrice(item)*bought;
-          audioManager.playSfx("GOLD");
-          refreshHud(); saveGame();
-          toast(`Compraste ${bought>1?`${bought}x `:""}${item.emoji} ${item.name}.`);
-          renderShopBuyList(); renderShopSellList();
-        });
-      };
-    }
+    if(!locked) card.querySelector("button").onclick = ()=> shopBuyItem(item);
   } else {
     const count = player.inventory.filter(x=>x.id===item.id).length;
     const qtyTag = count>1 ? ` <b style="color:var(--accent);">x${count}</b>` : "";
@@ -18924,20 +20091,54 @@ function buildShopCard(item, isBuy){
        <div class="sc-info"><div class="sc-name">${item.name}${qtyTag}${meta.tag}</div>
        <div class="sc-desc">${item.desc}</div></div>
        <button>+💰${sellPrice}</button>`;
-    card.querySelector("button").onclick = ()=>{
-      showConfirm(`¿Vender <b>${item.name}</b> por 💰${sellPrice}?`, ()=>{
-        const idx = player.inventory.findIndex(x=>x.id===item.id);
-        if(idx<0) return;
-        player.gold += sellPrice;
-        audioManager.playSfx("GOLD");
-        player.inventory.splice(idx,1);
-        refreshHud(); saveGame();
-        toast(`Vendiste ${item.emoji} ${item.name} por 💰${sellPrice}.`);
-        renderShopBuyList(); renderShopSellList();
-      }, {icon:"💸", title:"Confirmar venta", confirmLabel:"Vender"});
-    };
+    card.querySelector("button").onclick = ()=> shopSellItem(item);
   }
   return card;
+}
+/** Detalle completo de un objeto de la tienda — mismo overlay que el detalle del inventario
+ *  (invDetailOverlay/comparisonRowsColored, ver openInventoryDetail), pero con la acción de
+ *  Comprar/Vender de la tienda en vez de Usar/Equipar. Se abre al tocar cualquier tarjeta de la
+ *  tienda (ver buildShopCard) — pedido explícito: ver el detalle y la comparación contra lo que ya
+ *  tenés equipado antes de decidir. */
+function openShopItemDetail(item, isBuy){
+  const rarityColor = item.isBossLoot ? (item.auraColor||"#fff") : (RARITY_BY_KEY[item.rarity]||{}).color || "var(--dim)";
+  $("invDetailIconWrap").innerHTML = iconFor(item);
+  $("invDetailIconWrap").style.filter = `drop-shadow(0 0 18px ${rarityColor}66)`;
+  $("invDetailRarity").textContent = item.isBossLoot ? "👑 Botín de Jefe" : (item.rarity ? rarityLabel(item.rarity) : "");
+  $("invDetailRarity").style.color = rarityColor;
+  $("invDetailName").textContent = item.name;
+  $("invDetailTag").textContent = item.desc || "";
+  $("btnInvDetailFav").classList.add("hidden"); // favoritos son solo para objetos que ya tenés en el inventario
+
+  let statsHtml = "";
+  if(item.bonuses) statsHtml += `<div class="ids-row">⚔️ <div>${bonusDesc(item.bonuses)}</div></div>`;
+  if(item.proc) statsHtml += `<div class="ids-row">${PROC_LABELS[item.proc.type]||"✨"} <div>Probabilidad de efecto extra: ${Math.round(item.proc.chance*100)}%</div></div>`;
+  if(isBuy && item.reqLevel){
+    const locked = player.level < item.reqLevel;
+    statsHtml += `<div class="ids-row">${locked?"🔒":"✔️"} <div style="${locked?'color:var(--danger);':''}">Requiere Nv.${item.reqLevel}</div></div>`;
+  }
+  $("invDetailStats").innerHTML = statsHtml || `<div class="ids-row">${item.desc||""}</div>`;
+
+  $("invDetailCmp").innerHTML = item.type==="equip" ? comparisonRowsColored(item) : "";
+
+  const actionBtn = $("btnInvDetailAction");
+  actionBtn.classList.remove("hidden");
+  if(isBuy){
+    const locked = item.reqLevel && player.level < item.reqLevel;
+    const goldCost = shopPrice(item);
+    const matCost = shopItemMatCost(item, goldCost);
+    const canAffordMat = !matCost || (["wood","stone","iron"].every(k=> (player[k]||0) >= matCost[k]));
+    const canAfford = player.gold >= goldCost && canAffordMat;
+    actionBtn.textContent = locked ? `🔒 Requiere Nv.${item.reqLevel}` : `Comprar · 💰${goldCost}${matCost?" + materiales":""}`;
+    actionBtn.disabled = locked || !canAfford;
+    actionBtn.onclick = ()=>{ $("invDetailOverlay").classList.add("hidden"); shopBuyItem(item); };
+  } else {
+    const sellPrice = Math.round((item.value||10)*0.4);
+    actionBtn.textContent = `Vender · +💰${sellPrice}`;
+    actionBtn.disabled = false;
+    actionBtn.onclick = ()=>{ $("invDetailOverlay").classList.add("hidden"); shopSellItem(item); };
+  }
+  $("invDetailOverlay").classList.remove("hidden");
 }
 
 /** Aplica el filtro de rareza + el orden elegido (ver #shopFilterBar) — la rareza "hereda" el
@@ -18953,11 +20154,67 @@ function applyShopFilterAndSort(items){
   else if(shopSortMode==="name") out = [...out].sort((a,b)=> a.name.localeCompare(b.name));
   return out;
 }
+/** El mejor objeto de `slot` que el jugador puede llevar YA (clase compatible, y equipable a su
+ *  nivel actual) — usado por renderShopFeatured() para armar el resumen de la página gancho. Si no
+ *  hay ninguno todavía equipable a su nivel (jugador recién empezando, antes de tener acceso a nada
+ *  con reqLevel>1 igual siempre hay algo por EARLY_WEAPON_POOL/objetos base sin requisito), cae a
+ *  mostrar la meta más cercana (el de menor reqLevel) para que igual funcione como gancho ("esto es
+ *  lo próximo que vas a poder comprar"). */
+function pickBestForSlot(slot){
+  const pool = shopFullCatalog().filter(it=> it.type==="equip" && it.slot===slot
+    && (!it.classKey || it.classKey===player.classKey));
+  if(pool.length===0) return null;
+  const equipableNow = pool.filter(it=> !it.reqLevel || it.reqLevel<=player.level);
+  const source = equipableNow.length ? equipableNow : pool;
+  return source.reduce((best,it)=> (!best || (it.value||0) > (best.value||0)) ? it : best, source[0]);
+}
+/** Página "Destacados": la tienda abre acá (ver openShop) en vez de directo en "Armas" — un resumen
+ *  gancho con lo mejor que el jugador puede llevar puesto ahora mismo, uno por ranura de equipo,
+ *  para que entienda de un vistazo qué hay sin tener que ponerse a filtrar por categoría. Reutiliza
+ *  buildShopCard tal cual (misma tarjeta grande con precio/candado/comparación que ya usa el resto
+ *  de la tienda), así que comprar desde acá funciona exactamente igual que desde cualquier categoría. */
+function renderShopFeatured(){
+  const list = $("shopBuyList");
+  const banner = document.createElement("div");
+  banner.className = "shop-featured-banner";
+  banner.innerHTML = `<div class="sfb-title">⭐ Destacados para ti</div>`;
+  list.appendChild(banner);
+  const slots = ["weapon","armor","helmet","boots","accessory"];
+  if(player.classKey==="berserker" || player.classKey==="guerrero") slots.splice(1, 0, "offhand");
+  let shown = 0;
+  slots.forEach(slot=>{
+    const item = pickBestForSlot(slot);
+    if(item){ list.appendChild(buildShopCard(item, true)); shown++; }
+  });
+  if(shown===0){
+    const note = document.createElement("div");
+    note.className = "empty-note";
+    note.style.gridColumn = "1 / -1";
+    note.textContent = "No hay objetos destacados todavía.";
+    list.appendChild(note);
+  }
+  $("shopPager").classList.add("hidden");
+}
+/** Página "Sets": conjuntos temáticos (arma+armadura+casco+botas) — ver EQUIPMENT_SETS en
+ *  game/config/items.js. Todavía vacío a propósito (los sets reales se definen más adelante), así
+ *  que por ahora solo se muestra el aviso; en cuanto EQUIPMENT_SETS tenga entradas, reemplazar este
+ *  aviso por tarjetas de set (misma idea que buildShopCard, pero comprando las 4 piezas juntas). */
+function renderShopSets(){
+  const list = $("shopBuyList");
+  const note = document.createElement("div");
+  note.className = "empty-note";
+  note.style.gridColumn = "1 / -1";
+  note.innerHTML = `🧩 <b>Sets temáticos</b> — próximamente.<br><small>Conjuntos de arma + armadura + casco + botas, con un bono extra por llevar las 4 piezas puestas a la vez.</small>`;
+  list.appendChild(note);
+  $("shopPager").classList.add("hidden");
+}
 function renderShopBuyList(){
   const list = $("shopBuyList");
   list.innerHTML = "";
   list.classList.toggle("shop-grid-list", shopViewMode==="list");
   $("shopGoldDisplay").textContent = player.gold;
+  if(shopActiveCategory==="featured"){ renderShopFeatured(); return; }
+  if(shopActiveCategory==="sets"){ renderShopSets(); return; }
   const cat = SHOP_CATEGORIES.find(c=>c.key===shopActiveCategory);
   const items = applyShopFilterAndSort(shopFullCatalog().filter(cat.test));
   const pager = $("shopPager");
@@ -19001,15 +20258,20 @@ function buildMaterialSellCard(mat){
      <div class="sc-desc">Material de combate para la Forja.</div>
      <button>+💰${mat.sellValue}</button>`;
   card.querySelector("button").onclick = ()=>{
-    showConfirm(`¿Vender 1x <b>${mat.label}</b> por 💰${mat.sellValue}?`, ()=>{
-      if(((player.craftMats && player.craftMats[mat.key]) || 0) <= 0) return;
-      player.craftMats[mat.key] -= 1;
-      player.gold += mat.sellValue;
+    const owned = (player.craftMats && player.craftMats[mat.key]) || 0;
+    if(owned<=0) return;
+    const shim = {name: mat.label, desc:"Material de combate para la Forja.", emoji: mat.emoji};
+    openSellQuantityModal(shim, mat.sellValue, owned, (qtySel)=>{
+      const have = (player.craftMats && player.craftMats[mat.key]) || 0;
+      const sold = Math.min(qtySel, have);
+      if(sold<=0) return;
+      player.craftMats[mat.key] -= sold;
+      player.gold += mat.sellValue*sold;
       audioManager.playSfx("GOLD");
       refreshHud(); saveGame();
-      toast(`Vendiste ${mat.emoji} ${mat.label} por 💰${mat.sellValue}.`);
+      toast(`Vendiste ${sold>1?`${sold}x `:""}${mat.emoji} ${mat.label} por 💰${mat.sellValue*sold}.`);
       renderShopSellList();
-    }, {icon:"💸", title:"Confirmar venta", confirmLabel:"Vender"});
+    });
   };
   return card;
 }
@@ -19018,7 +20280,10 @@ function renderShopSellList(){
   const sellList = $("shopSellList");
   sellList.innerHTML = "";
   const sellable = player.inventory.filter(it=> it.tradeable!==false);
-  const sellableMats = CRAFT_MATERIALS.filter(m=> ((player.craftMats && player.craftMats[m.key]) || 0) > 0);
+  // sellValue>0 a propósito: las gemas del Elemental Aqua/Fauto (ver CRAFT_MATERIALS en
+  // blacksmith.js) tienen sellValue:0 — son "muy especiales", no deben poder venderse por error
+  // antes de forjar su anillo en la Forja.
+  const sellableMats = CRAFT_MATERIALS.filter(m=> m.sellValue>0 && ((player.craftMats && player.craftMats[m.key]) || 0) > 0);
   if(sellable.length===0 && sellableMats.length===0){
     sellList.innerHTML = `<div class="empty-note" style="grid-column:1 / -1;">No tienes objetos para vender.</div>`;
     return;
@@ -20005,6 +21270,7 @@ function startGroupEncounter(mon){
 
 function startGroupBattleFromPayload(payload){
   if(battleState || pvp){ return; } // ya ocupado en otra cosa, no se puede unir a tiempo
+  rollBattleDustVariant(); // pedido explícito: un solo efecto (hojas/polvo/niebla) por combate, no alternado golpe a golpe
   const members = {};
   payload.members.forEach(m=>{
     members[m.id] = {
@@ -20063,9 +21329,9 @@ function renderGroupBattleUI(){
 
 function updateGroupBattleBars(){
   const me = groupBattle.members[myPlayerId];
-  $("bPHp").style.width = pct(me.hp, me.maxHp)+"%";
+  setHpBarFill("bPHp", me.hp, me.maxHp);
   $("bPMp").style.width = pct(me.mp, me.maxMp)+"%";
-  $("bEHp").style.width = pct(groupBattle.monster.hp, groupBattle.monster.maxHp)+"%";
+  setHpBarFill("bEHp", groupBattle.monster.hp, groupBattle.monster.maxHp);
 }
 
 function renderPartyStatusRow(){
@@ -20082,7 +21348,7 @@ function renderPartyStatusRow(){
     const chip = document.createElement("div");
     chip.className = "combatant player ally-combatant" + (dead ? " dead" : "");
     chip.innerHTML = `<div class="name"><span>${m.name}</span><span class="lvl">Nv.${m.level||1}</span></div>
-      <div class="bar-wrap"><div class="bar-fill bar-hp" style="width:${pct(m.hp,m.maxHp)}%"></div></div>
+      <div class="bar-wrap"><div class="bar-fill bar-hp ${hpBarStateClass(m.hp,m.maxHp)}" style="width:${pct(m.hp,m.maxHp)}%"></div></div>
       <div class="bar-wrap"><div class="bar-fill bar-mp" style="width:${pct(m.mp,m.maxMp)}%"></div></div>`;
     row.appendChild(chip);
 
@@ -20210,6 +21476,7 @@ function animateAllyMini(memberId, cls){
   inner.classList.remove("hitshake","attackp","attacke","ultimate-strike","ultimate-hit");
   void inner.offsetWidth;
   inner.classList.add(cls);
+  if(cls === "attacke" || cls === "attackp") triggerAttackDustFx(inner);
 }
 function flashAllyMini(memberId, color){
   const el = document.getElementById("allySprite-"+memberId);
@@ -20583,10 +21850,82 @@ function initAuthGate(){
 }
 function enterGameFlow(){
   $("authOverlay").classList.add("hidden");
-  $("classOverlay").classList.remove("hidden");
-  buildClassGrid();
-  initContinueScreen();
-  setTimeout(maybeOfferBackupFolderSetup, 600); // pequeño delay para no pisar la animación de entrada a esta pantalla
+  maybeShowGpsGate(()=>{
+    $("classOverlay").classList.remove("hidden");
+    buildClassGrid();
+    initContinueScreen();
+    setTimeout(maybeOfferBackupFolderSetup, 600); // pequeño delay para no pisar la animación de entrada a esta pantalla
+  });
+}
+
+/** ============================================================
+ *  PUERTA DE UBICACIÓN — pedido explícito: antes de elegir personaje/nombre, Noe pide activar el
+ *  GPS — así, para cuando se llega a la pantalla de carga, ya se sabe en qué ciudad/calles está
+ *  el jugador (initMap usa `playerLatLng` como punto de partida real en vez del Bogotá de
+ *  respaldo, ver ahí). NUNCA bloquea la entrada al juego: si el permiso ya está denegado, si el
+ *  entorno no soporta geolocalización, o si el jugador toca "Continuar sin ubicación", se sigue
+ *  derecho al modo simulación de siempre.
+ *  ============================================================ */
+let hadRealGpsFixBeforeMap = false; // true si ya se consiguió una posición real ACÁ — ver el tail de initMap
+/** Un solo fix de posición (no seguimiento continuo — eso lo arma requestRealGps/beginWatch una
+ *  vez que ya existe el mapa) — alcanza para saber ciudad/calles antes de la pantalla de carga. */
+function fetchGpsFixForCitySelection(cb){
+  navigator.geolocation.getCurrentPosition(
+    (pos)=>{
+      playerLatLng = {lat: pos.coords.latitude, lng: pos.coords.longitude};
+      hadRealGpsFixBeforeMap = true;
+      cb(true);
+    },
+    (err)=> cb(false, err),
+    {enableHighAccuracy:true, maximumAge:10000, timeout:15000}
+  );
+}
+async function maybeShowGpsGate(onDone){
+  const env = validateGpsEnvironment();
+  if(!env.ok){ onDone(); return; } // sin HTTPS o sin soporte del navegador — insistir no serviría de nada
+  let permState = "prompt";
+  if(navigator.permissions && navigator.permissions.query){
+    try{
+      const status = await navigator.permissions.query({name:"geolocation"});
+      permState = status.state;
+    }catch(e){ /* algunos navegadores no soportan consultar este permiso — se sigue asumiendo "prompt" */ }
+  }
+  if(permState === "denied"){ onDone(); return; } // ya lo rechazó antes — no insistir con el cuadro
+  if(permState === "granted"){
+    // Ya lo había activado en una visita anterior: consigue la posición en silencio, sin mostrar
+    // nada, y sigue — no hace falta volver a pedir permiso para algo que el navegador ya recuerda.
+    fetchGpsFixForCitySelection(()=> onDone());
+    return;
+  }
+  showGpsGateOverlay(onDone);
+}
+function showGpsGateOverlay(onDone){
+  $("gpsGatePortrait").src = NOE_PORTRAIT_PATH;
+  $("gpsGateStatus").textContent = "";
+  $("btnGpsGateActivate").disabled = false;
+  $("btnGpsGateActivate").textContent = "📍 Activar ubicación";
+  $("gpsGateOverlay").classList.remove("hidden");
+  $("btnGpsGateActivate").onclick = ()=>{
+    $("btnGpsGateActivate").disabled = true;
+    $("btnGpsGateActivate").textContent = "📡 Buscando señal…";
+    $("gpsGateStatus").textContent = "";
+    fetchGpsFixForCitySelection((ok, err)=>{
+      if(ok){
+        $("gpsGateStatus").textContent = "¡Listo! Ubicación activada.";
+        setTimeout(()=>{ $("gpsGateOverlay").classList.add("hidden"); onDone(); }, 700);
+      } else {
+        $("btnGpsGateActivate").disabled = false;
+        $("btnGpsGateActivate").textContent = "📍 Reintentar";
+        $("gpsGateStatus").textContent = (err && err.code === 1)
+          ? "Permiso denegado — podés seguir sin ubicación."
+          : "No se pudo obtener la ubicación — podés reintentar o seguir sin ella.";
+      }
+    });
+  };
+  $("btnGpsGateSkip").onclick = ()=>{
+    $("gpsGateOverlay").classList.add("hidden");
+    onDone();
+  };
 }
 /** Abre #authOverlay para cualquiera de los dos casos: puerta inicial (allowGuest:true, ver
  *  initAuthGate) o vincular cuenta a mitad de partida desde la ficha de personaje

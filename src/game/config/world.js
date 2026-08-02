@@ -1,13 +1,21 @@
+/** Pedido explícito: los radios de acá abajo se achicaron a propósito (antes 1600-2000, se
+ *  superponían mucho entre sí — sobre todo centro/occidente, a solo ~1.3km de distancia real
+ *  entre sus centros, con 1600+1800 de radio se pisaban casi por completo) para que cada zona
+ *  quede geográficamente separada de sus vecinas: en el mismo lugar ya no se mezclan los
+ *  monsterNames de dos zonas distintas. Los huecos que quedan ENTRE zonas (donde ya no entra
+ *  ningún radio) no se quedan sin filtro — ahí cae el Ecosistema del Mundo (ver
+ *  queryRealWorldBiomeHint/queryWorldEcosystem en pickMonsterTemplate, main.js), así que nunca
+ *  vuelve a mezclarse TODO MONSTER_TEMPLATES sin criterio. */
 export const NEIVA_ZONES = [
-  { key:"centro",     name:"Centro",     color:"#e8c468", center:{lat:2.9263, lng:-75.2891}, radius:1600,
+  { key:"centro",     name:"Centro",     color:"#e8c468", center:{lat:2.9263, lng:-75.2891}, radius:550,
     monsterNames:["Espectro","Cuervo Corrupto"] },
-  { key:"norte",      name:"Norte",      color:"#4aa3e0", center:{lat:2.9440, lng:-75.2830}, radius:1900,
+  { key:"norte",      name:"Norte",      color:"#4aa3e0", center:{lat:2.9440, lng:-75.2830}, radius:1300,
     monsterNames:["Rata Mutante","Trasgo"] },
-  { key:"sur",        name:"Sur",        color:"#4fd67a", center:{lat:2.9080, lng:-75.2850}, radius:2000,
+  { key:"sur",        name:"Sur",        color:"#4fd67a", center:{lat:2.9080, lng:-75.2850}, radius:1300,
     monsterNames:["Golem de Roca","Demonio Menor"] },
-  { key:"oriente",    name:"Oriente",    color:"#c98bf0", center:{lat:2.9280, lng:-75.2650}, radius:2000,
+  { key:"oriente",    name:"Oriente",    color:"#c98bf0", center:{lat:2.9280, lng:-75.2650}, radius:1150,
     monsterNames:["Lobo Umbrío","Araña Gigante"] },
-  { key:"occidente",  name:"Occidente",  color:"#ef9d5d", center:{lat:2.9270, lng:-75.3010}, radius:1800,
+  { key:"occidente",  name:"Occidente",  color:"#ef9d5d", center:{lat:2.9270, lng:-75.3010}, radius:550,
     monsterNames:["Slime Salvaje","Dragón Menor"] },
 ];
 

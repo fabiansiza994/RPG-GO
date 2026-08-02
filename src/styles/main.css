@@ -22,6 +22,12 @@
   #nativeSplashCover.show{display:block;}
   #nativeSplashCover.hide{opacity:0; pointer-events:none;}
   #nativeSplashCover img{width:100%; height:100%; object-fit:cover; display:block;}
+  /* Texto de estado abajo del todo — pedido explícito: usar la pausa fija del splash para mostrar
+     qué se está verificando (hoy: la ubicación), en vez de dejarla en blanco. Lo actualiza
+     updateNativeSplashStatus() en main.js. */
+  #nativeSplashStatus{position:absolute; left:0; right:0; bottom:calc(28px + env(safe-area-inset-bottom));
+    text-align:center; font-size:12.5px; font-weight:600; color:rgba(255,255,255,.75);
+    text-shadow:0 1px 4px rgba(0,0,0,.6); letter-spacing:.02em; pointer-events:none;}
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;
     -webkit-user-select:none; -moz-user-select:none; -ms-user-select:none; user-select:none;
     -webkit-touch-callout:none;}
@@ -260,10 +266,26 @@
   .bar-fill{height:100%; border-radius:5px; transition:width .9s ease;}
   .bar-hp{background:linear-gradient(90deg,#ff7a86,var(--hp));}
   .bar-mp{background:linear-gradient(90deg,#7fc6f5,var(--mp));}
+  /* Barra de vida DENTRO de la escena de batalla (bPHp/bEHp y las de los compañeros en combate de
+     grupo, ver setHpBarFill()/hpBarStateClass() en main.js): arranca verde (>50%), pasa a naranja
+     a la mitad (20%-50%) y a rojo parpadeando casi vacía (≤20%) — pedido explícito. Selector con
+     #battleWrap a propósito: la barra de vida del HUD del mapa (#hpFill, fuera de la escena de
+     batalla) sigue con su gradiente rojo/rosa fijo de siempre, sin verse afectada. */
+  #battleWrap .bar-hp{background:linear-gradient(90deg,#3ecf6e,#4fd67a);}
+  #battleWrap .bar-hp.hp-mid{background:linear-gradient(90deg,#e8983a,#f0b45a);}
+  #battleWrap .bar-hp.hp-low{background:linear-gradient(90deg,#ef5d6f,#ff7a86); animation:hpBarLowBlink .9s ease-in-out infinite;}
+  @keyframes hpBarLowBlink{0%,100%{opacity:1;} 50%{opacity:.4;}}
   /* Barra de defensa del Guerrero (bloqueo de golpes fuertes con escudo) — tono acero/plata para
      distinguirla claramente del rojo (vida) y el azul (maná). Ver bPDefWrap en index.html y
      updateBattleBars/enemyTurn en main.js. */
   .bar-def{background:linear-gradient(90deg,#e8edf3,#8a97a6);}
+  /* Bloqueo extra del Anillo Aqua (ver equippedAquaRing/updateBattleBars en main.js) — esquina en
+     gris más claro al final de la barra de defensa, visible SOLO mientras esa barra sigue al
+     máximo (desaparece apenas se gasta el primer bloqueo, sea cual sea). */
+  #bPDefExtraCharge{position:absolute; right:0; top:0; bottom:0; width:16%; z-index:1;
+    background:linear-gradient(90deg, rgba(232,237,243,.5), rgba(232,237,243,.85));
+    border-left:1px solid rgba(255,255,255,.45);}
+  #bPDefExtraCharge.hidden{display:none;}
   .bar-xp{background:linear-gradient(90deg,#8ff2df,var(--xp));}
   /* Tramo extra de XP pagado con oro — se superpone a la barra normal (posicionada aparte con
      "left"), en un color bien distinto (dorado) para que se note claramente que ese pedazo vino
@@ -787,6 +809,11 @@
   .world-event-marker{font-size:28px; cursor:pointer; animation:worldEventPulse 1.8s ease-in-out infinite;
     filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 8px rgba(239,93,111,.5)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
   @keyframes worldEventPulse{0%,100%{transform:scale(1); opacity:.92;} 50%{transform:scale(1.12); opacity:1;}}
+  /* "Viajero Atacado" ya descubierto: la ilustración real del viajero (ver drawWorldEventMarker en
+     main.js) en vez del emoji ❗ genérico — mismo pulso/drop-shadow que ya tenía .world-event-marker,
+     solo se ajusta el layout interno para acomodar una imagen en vez de un carácter de texto. */
+  .world-event-marker-img{width:100%; height:100%; display:flex; align-items:flex-end; justify-content:center;}
+  .world-event-traveler-img{height:46px; width:auto; object-fit:contain; border-radius:6px;}
 
   .poi-location-wrap{position:relative; width:100%; height:100%; display:flex; flex-direction:column;
     align-items:center; justify-content:flex-end;}
@@ -993,8 +1020,43 @@
   .npc-map-standee{position:relative; width:100%; height:100%; display:flex; align-items:flex-end; justify-content:center;}
   .npc-standee-sprite.npc-standee-sprite{height:46px; width:auto; border:none; background:none; padding:0;
     box-shadow:none; object-fit:contain; filter:drop-shadow(0 3px 4px rgba(0,0,0,.45));}
-  .mon-lvl{font-size:9px; background:var(--panel); border:1px solid var(--line); color:var(--accent);
-    border-radius:8px; padding:0 5px; margin-top:-2px; font-weight:700;}
+  .mon-lvl{font-size:8px; background:rgba(10,12,18,.55); border:1px solid var(--line); color:var(--accent);
+    border-radius:7px; padding:0 4px; margin-bottom:2px; font-weight:700; backdrop-filter:blur(1px);}
+  /* Envuelve el cuerpo del enemigo (sprite plano o emoji) para darle una sombra propia en el
+     suelo, igual que ya tenían el Ladrón (.thief-map-wrap) y demás elementos del mapa — así el
+     enemigo se ve apoyado sobre el terreno en vez de flotando. */
+  .mon-body-wrap{position:relative; width:100%; height:100%; display:flex; align-items:flex-end; justify-content:center;}
+  .mon-body-wrap::after{content:""; position:absolute; left:50%; bottom:1px; transform:translateX(-50%);
+    width:24px; height:8px; border-radius:50%; background:rgba(0,0,0,.48); filter:blur(2px); z-index:-1;}
+  /* Respiración sutil: el sprite/emoji sube 1px y vuelve, lento, para que el enemigo se sienta
+     "vivo" parado en el mapa en vez de estático — pedido explícito. La sombra en el suelo (arriba)
+     NO se mueve, así el efecto de "subir y bajar" se nota de verdad. */
+  @keyframes monBreathe{0%,100%{transform:translateY(0);} 50%{transform:translateY(-1px);}}
+  .mon-real-sprite, .mon-emoji{animation:monBreathe 2.8s ease-in-out infinite;}
+  /* Aparición de un enemigo nuevo en el mapa: sube desde el suelo (en vez de aparecer de golpe) y
+     suelta un puñado de hojas/polvo desde sus pies. Vive en un wrapper APARTE de .mon-marker a
+     propósito: .mon-marker ya tiene su propio transform (zoom-scale) con transition propia, y una
+     animación en la MISMA propiedad/elemento se pisarían entre sí (mismo motivo que .sprite/
+     #spriteEnemy en la escena de batalla, ver breathe/breatheFlipped). No es infinite — juega una
+     sola vez al insertarse el marcador y no vuelve a dispararse (makeMonster solo construye este
+     html una vez por monstruo, nunca se recrea mientras vive). */
+  .mon-spawn-pop{width:100%; height:100%; display:block; animation:monSpawnPop .45s cubic-bezier(.2,.8,.3,1.1);}
+  @keyframes monSpawnPop{
+    0%{transform:translateY(16px) scale(.4); opacity:0;}
+    55%{opacity:1;}
+    100%{transform:translateY(0) scale(1); opacity:1;}
+  }
+  .mon-spawn-puff{position:absolute; left:50%; bottom:2px; transform:translateX(-50%); width:0; height:0; pointer-events:none;}
+  .mon-spawn-puff .msp{position:absolute; left:0; top:0; font-size:11px; opacity:0; animation:monSpawnPuffBurst .6s ease-out forwards;}
+  .mon-spawn-puff .b0{--sdx:-14px; --sdy:-10px; animation-delay:.02s;}
+  .mon-spawn-puff .b1{--sdx:10px; --sdy:-14px; animation-delay:.05s;}
+  .mon-spawn-puff .b2{--sdx:-6px; --sdy:-18px; animation-delay:.08s;}
+  .mon-spawn-puff .b3{--sdx:12px; --sdy:-6px; animation-delay:0s;}
+  @keyframes monSpawnPuffBurst{
+    0%{transform:translate(0,0) scale(.4) rotate(0deg); opacity:0;}
+    25%{opacity:.9;}
+    100%{transform:translate(var(--sdx),var(--sdy)) scale(1) rotate(40deg); opacity:0;}
+  }
   .me-marker{font-size:36px; filter:drop-shadow(0 0 10px rgba(94,225,201,.65)) drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 -3px 3px rgba(255,255,255,.16));}
   /* Sombra propia en el suelo del personaje, mismo costado/ángulo que .resource-node-marker::after
      (árboles/rocas) — así todo el mapa comparte una única dirección de luz consistente. Va en
@@ -1004,7 +1066,6 @@
      con una sola regla. */
   .me-marker-wrap::after{content:""; position:absolute; left:64%; bottom:6px; transform:translateX(-50%) rotate(-10deg);
     width:34px; height:10px; border-radius:50%; background:rgba(0,0,0,.38); filter:blur(3px); z-index:-1;}
-  /* ---------- Postes de luz junto al jugador (más notorios de noche) ---------- */
   /* ---------- Fogatas de curación en el mapa ---------- */
   .campfire-marker{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;}
 
@@ -1133,10 +1194,13 @@
   .base-room-hotspot#baseRoomHotspotForge{grid-column:1/-1;}
 
   /* ---------- Cofres del tesoro ---------- */
-  .chest-marker{font-size:26px; cursor:pointer; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 10px var(--chest-glow, rgba(200,200,200,.6))) drop-shadow(0 -3px 3px rgba(255,255,255,.16));
+  .chest-marker{width:100%; height:100%; display:flex; align-items:flex-end; justify-content:center;
+    cursor:pointer; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 10px var(--chest-glow, rgba(200,200,200,.6))) drop-shadow(0 -3px 3px rgba(255,255,255,.16));
     animation:chestBob 2.2s ease-in-out infinite;}
+  .chest-marker-img{height:34px; width:auto; object-fit:contain; pointer-events:none;}
   @keyframes chestBob{0%,100%{transform:translateY(0);} 50%{transform:translateY(-4px);}}
-  .chest-legendario{font-size:30px; animation:chestBobLegendary 1.6s ease-in-out infinite;}
+  .chest-legendario .chest-marker-img{height:38px;}
+  .chest-legendario{animation:chestBobLegendary 1.6s ease-in-out infinite;}
   @keyframes chestBobLegendary{0%,100%{transform:translateY(0) scale(1);} 50%{transform:translateY(-6px) scale(1.08);}}
 
   .tower-marker{position:relative; width:100%; height:100%; display:flex; align-items:center; justify-content:center;
@@ -1182,10 +1246,6 @@
   #gatherProgressBarWrap{width:100%; height:8px; margin-top:6px; background:rgba(0,0,0,.5);
     border:1px solid var(--line); border-radius:5px; overflow:hidden;}
   #gatherProgressFill{height:100%; width:0%; background:linear-gradient(90deg, var(--gold,#e8c468), #fff3c0);}
-
-  .street-lamp{font-size:15px; opacity:0; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)); z-index:1;
-    transition:opacity 1.5s ease, filter 1.5s ease;}
-  .street-lamp.lit{opacity:1; filter:drop-shadow(0 0 6px rgba(255,200,100,.9)) drop-shadow(0 0 14px rgba(255,170,60,.6));}
 
   /* El aura/anillo de personajes y enemigos "nace" de sus pies y se inclina igual que la
      cámara — así se ve como un círculo de verdad apoyado en el suelo, no una etiqueta plana
@@ -1542,12 +1602,12 @@
 
   /* ---------- Mazmorras legendarias — mismo lenguaje visual que el Coliseo (.coliseo-sheet,
      .coliseo-buff-*), con sus propios elementos donde hace falta algo nuevo ---------- */
-  /* la insignia de piso vive AL LADO de la barra de vida del jugador (ahorra el espacio que antes
-     ocupaba su propia fila arriba del todo) */
-  .bar-with-badge{display:flex; align-items:center; gap:6px;}
-  .bar-with-badge .bar-wrap{flex:1;}
-  #dungeonBattleHud{background:rgba(28,10,40,.85); border:1px solid #9d3fff; border-radius:8px;
-    padding:2px 8px; font-size:10.5px; font-weight:800; color:#dcb8ff; white-space:nowrap; flex-shrink:0;}
+  /* Insignia de piso — pedido explícito: vivía DENTRO de la tarjeta del jugador junto a la barra
+     de vida y la tapaba (esa tarjeta tiene max-width:180px, ver .combatant, sin espacio de sobra
+     para las dos cosas). Ahora es hermana de .combatant.player dentro de .battle-bottom, usando el
+     espacio vacío a la derecha de la tarjeta — align-self la centra a la altura de las barras. */
+  #dungeonBattleHud{align-self:center; background:rgba(28,10,40,.85); border:1px solid #9d3fff; border-radius:8px;
+    padding:4px 10px; font-size:11px; font-weight:800; color:#dcb8ff; white-space:nowrap;}
 
   /* ---------- Maldición del Señor Oscuro: no es una insignia fija todo el combate — es un
      ataque de apertura dramático (llamarada infernal) que se ve UNA vez al empezar la pelea y
@@ -1868,6 +1928,90 @@
   #battleTutorialActions{display:flex; gap:8px; margin-top:12px;}
   #battleTutorialActions button{flex:1; font-size:11.5px; padding:8px 6px;}
 
+  /* ---------- Cinemática de bienvenida — pedido explícito: corre ANTES de Noe, solo la primera
+     vez (ver playWorldCinematic en main.js). #wcOpaqueLayer es la única capa con fondo sólido —
+     al desvanecerla (wc-fadeout) revela el mapa real que ya está cargado detrás, sin necesitar
+     una captura ni una imagen aparte de "mapa". #wcScene1 usa un PANEO vertical (no un recorte
+     progresivo, que se veía feo) — la imagen se renderiza COMPLETA todo el tiempo, más alta que
+     la pantalla (134%), y lo que se anima es su posición: empieza mostrando la parte de abajo y
+     "sube" la cámara lentamente hasta encuadrar la parte de arriba. #wcScene2 en cambio hace un
+     zoom Ken-Burns lento mientras está en pantalla. ---- */
+  #worldCinematicOverlay{position:fixed; inset:0; z-index:800; overflow:hidden;}
+  #worldCinematicOverlay.hidden{display:none;}
+  #wcOpaqueLayer{position:absolute; inset:0; background:#05040a; transition:opacity 1.4s ease;}
+  #wcOpaqueLayer.wc-fadeout{opacity:0; pointer-events:none;}
+  #wcScene1, #wcScene2{position:absolute; inset:0; overflow:hidden;}
+  #wcScene2 img{width:100%; height:100%; object-fit:cover; display:block;}
+  #wcScene1 img{position:absolute; left:0; width:100%; height:134%; object-fit:cover; display:block;
+    top:-34%; transition:top 13s ease-out;}
+  #wcScene1.wc-revealed img{top:0%;}
+  #wcScene2{opacity:0; transition:opacity 1.8s ease;}
+  #wcScene2.wc-visible{opacity:1;}
+  #wcScene2.wc-visible img{animation:wcScene2Zoom 11s ease-out forwards;}
+  @keyframes wcScene2Zoom{
+    from{transform:scale(1);}
+    to{transform:scale(1.14);}
+  }
+  #wcCaption{position:fixed; left:0; right:0; bottom:9%; z-index:2; text-align:center; padding:0 28px;
+    font-size:18px; font-weight:700; color:#fff; text-shadow:0 2px 10px rgba(0,0,0,.9), 0 0 22px rgba(0,0,0,.6);
+    pointer-events:none; min-height:1.4em;}
+  #wcWelcomeCard{position:fixed; inset:0; z-index:3; display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .6s ease; padding:24px;}
+  #wcWelcomeCard.wc-show{opacity:1; pointer-events:auto;}
+  #wcWelcomeText{background:linear-gradient(180deg,#1d2540,#121826); border:1px solid var(--line); border-radius:16px;
+    padding:22px 26px; max-width:min(84vw,420px); text-align:center; font-size:16px; line-height:1.5;
+    color:var(--text); box-shadow:0 14px 34px rgba(0,0,0,.55);}
+  #btnSkipCinematic{position:fixed; top:calc(14px + env(safe-area-inset-top)); right:calc(14px + env(safe-area-inset-right));
+    z-index:4; background:rgba(10,12,20,.55); color:#fff; border:1px solid rgba(255,255,255,.35); border-radius:20px;
+    padding:8px 14px; font-size:12.5px; font-weight:600;}
+  /* Monstruos decorativos que "nacen" sobre el mapa REAL (marcadores de Leaflet de verdad, ver
+     spawnCinematicStreetMonsters en main.js) — reusa el mismo pop+polvo que ya tienen los
+     monstruos reales al aparecer (.mon-spawn-pop/.mon-spawn-puff, ver más arriba en este archivo). */
+  .wc-street-mon{position:relative; width:56px; height:56px;}
+  .wc-street-mon img{width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 8px 14px rgba(0,0,0,.65));}
+
+  /* ---------- Puerta de ubicación — Noe pide activar el GPS antes de elegir personaje (ver
+     maybeShowGpsGate en main.js). Mismo #gpsGateOverlay/.sheet que authOverlay/classOverlay (la
+     "puerta de entrada" de siempre), con el retrato de Noe arriba en vez del layout de mapa. ---- */
+  #gpsGatePortraitWrap{width:132px; height:132px; margin:0 auto 10px; border-radius:50%;
+    overflow:hidden; border:2px solid var(--line); background:#05040a;}
+  #gpsGatePortrait{width:100%; height:100%; object-fit:cover; object-position:top center; display:block;}
+  #gpsGateOverlay .primarybtn, #gpsGateOverlay .ghostbtn{width:100%; margin-top:10px;}
+
+  /* ---------- Bienvenida del mundo — Noe, pedido explícito: aparece SOLO la primera vez que se
+     entra al mapa (ver maybeShowWorldIntro/player.seenWorldIntro en main.js), sin oscurecer el
+     mundo detrás (a propósito, distinto del tutorial de batalla) para que se vea igual que la
+     propuesta de diseño. mix-blend-mode:screen en el retrato "quita" su fondo negro sólido sin
+     necesitar recortarlo en la imagen: screen(negro, lo-que-sea-detrás) = lo-que-sea-detrás. ---- */
+  #worldIntroOverlay{position:fixed; inset:0; z-index:700; pointer-events:none;}
+  #worldIntroOverlay.hidden{display:none;}
+  #worldIntroPortraitWrap{position:fixed; left:-6vw; bottom:-2vh; width:min(56vw,400px);
+    pointer-events:none; filter:drop-shadow(0 12px 24px rgba(0,0,0,.55));}
+  #worldIntroPortrait{display:block; width:100%; height:auto; mix-blend-mode:screen;}
+  #worldIntroBox{position:fixed; left:min(48vw,300px); right:calc(14px + env(safe-area-inset-right));
+    bottom:calc(16px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,#1d2540,#121826); border:1px solid var(--line); border-radius:14px;
+    padding:14px 44px 16px 16px; box-shadow:0 10px 26px rgba(0,0,0,.5); pointer-events:auto; cursor:pointer;}
+  #worldIntroName{font-size:15px; font-weight:800; color:var(--accent); margin-bottom:6px; letter-spacing:.02em;}
+  #worldIntroText{font-size:13px; color:var(--text); line-height:1.5;}
+  #worldIntroNext{position:absolute; right:14px; bottom:12px; color:var(--dim); font-size:13px;
+    animation:worldIntroNextBounce 1.1s ease-in-out infinite;}
+  @keyframes worldIntroNextBounce{
+    0%,100%{transform:translateY(0);}
+    50%{transform:translateY(4px);}
+  }
+  /* Flecha que señala, en el mapa, al primer enemigo de nivel <= al del jugador — su posición se
+     recalcula en cada tick desde la pantalla real del marcador (ver updateWorldIntroArrowPosition
+     en main.js), así que acá solo hace falta la apariencia + el rebote. */
+  #worldIntroArrow{position:fixed; z-index:690; pointer-events:none; font-size:30px; line-height:1;
+    color:var(--accent); text-shadow:0 0 10px rgba(94,225,201,.85), 0 2px 4px rgba(0,0,0,.6);
+    transform:translate(-50%,-100%); animation:worldIntroArrowBounce 1s ease-in-out infinite;}
+  #worldIntroArrow.hidden{display:none;}
+  @keyframes worldIntroArrowBounce{
+    0%,100%{margin-top:0;}
+    50%{margin-top:8px;}
+  }
+
   /* battle */
   /* El fondo con imagen NO va en .battle-wrap (ese cubre TODA la pantalla, incluyendo detrás del
      panel sólido de vida/maná/log/botones) — si lo tuviera ahí, "background-position:bottom" ancla
@@ -1878,6 +2022,21 @@
      imagen es de verdad el borde inferior visible, y el suelo real de la imagen queda justo donde
      están parados los personajes. */
   .battle-wrap{position:absolute; inset:0; z-index:110; background:#0a0c11; display:flex; flex-direction:column;}
+  /* Rendimiento: mientras #battleWrap está visible (combate en curso), la lluvia/nieve/hojas/
+     luciérnagas del mapa quedan tapadas por este panel opaco pero seguían animándose infinito de
+     fondo, gastando CPU/GPU todo el combate para nada (pedido explícito: se notaba lag/calentamiento
+     en peleas largas contra manadas). body:has() las pausa mientras dure el combate sin tocar nada
+     de JS ni de las peleas 1vs1/manada/pvp/grupo (cualquier punto por el que se muestre #battleWrap
+     queda cubierto por este único selector). En un WebView tan viejo que no soporte :has() esta regla
+     simplemente no aplica — no rompe nada, solo no gana esta optimización puntual. */
+  body:has(#battleWrap:not(.hidden)) #weatherRain,
+  body:has(#battleWrap:not(.hidden)) #weatherSnow,
+  body:has(#battleWrap:not(.hidden)) #ambientEffects,
+  body:has(#battleWrap:not(.hidden)) #ambientEffects *,
+  body:has(#battleWrap:not(.hidden)) #ambientLeaves,
+  body:has(#battleWrap:not(.hidden)) #ambientLeaves *{
+    animation-play-state:paused !important;
+  }
   /* Contraste/atmósfera: degradado vertical más marcado (el suelo cercano queda casi en sombra,
      el horizonte se lee más luminoso) + viñeta radial en las esquinas — pedido explícito de "más
      profundidad", sin tocar las imágenes de fondo en sí, solo la capa de color encima. */
@@ -1909,7 +2068,7 @@
      explícito: sin degradado ni línea de transición, un solo color sólido de punta a punta. */
   #battleHudPanel{ background:#0a0c11; }
   .battle-top{padding:14px 14px 4px; display:flex; justify-content:flex-end; gap:10px;}
-  #btnFleeCorner{position:absolute; top:10px; left:10px; z-index:30; width:40px; height:40px; border-radius:12px;
+  #btnFleeCorner{position:absolute; top:calc(10px + env(safe-area-inset-top)); left:calc(10px + env(safe-area-inset-left)); z-index:30; width:40px; height:40px; border-radius:12px;
     background:var(--panel); border:1px solid var(--line); color:var(--text); font-size:19px;
     display:flex; align-items:center; justify-content:center; box-shadow:0 8px 20px rgba(0,0,0,.22); cursor:pointer;}
   .battle-bottom{padding:4px 14px 10px; display:flex; flex-wrap:wrap; justify-content:flex-start; align-items:flex-end; gap:8px;}
@@ -1930,7 +2089,7 @@
      .battle-top vía CSS normal, sin tocar el HTML — #battleScenePanel ya es position:relative
      (ver arriba), así que sirve de containing block para este panel absoluto. */
   .combatant.enemy.floating-hp{
-    position:absolute; z-index:24; flex:0 0 auto; width:170px; max-width:170px;
+    position:absolute; z-index:24; flex:0 0 auto; width:128px; max-width:128px;
     left:50%; top:8%; transform:translate(-50%,-100%);
     transition:left .18s ease, top .18s ease;
     /* Sin caja/fondo azul detrás — mismo criterio que ya se aplicó a la manada (.pack-stage-mon):
@@ -1990,8 +2149,21 @@
      positionEntityOnStage(), nunca por CSS puro (el tamaño/opacidad dependen de la escala de
      profundidad de cada entidad). */
   .perspective-shadow{position:absolute; border-radius:50%; pointer-events:none;
-    background:radial-gradient(ellipse at center, rgba(0,0,0,.62) 0%, rgba(0,0,0,.4) 55%, rgba(0,0,0,0) 78%);}
+    background:radial-gradient(ellipse at center, rgba(0,0,0,.62) 0%, rgba(0,0,0,.4) 55%, rgba(0,0,0,0) 78%);
+    animation:shadowBreathe 1.8s ease-in-out infinite;}
   .perspective-shadow.flying-shadow{opacity:.55; filter:blur(2px);}
+  /* La sombra respira en el mismo ritmo que .sprite/#spriteEnemy (mismos 1.8s — ver breathe/
+     breatheFlipped más abajo): se achica un poco cuando el personaje "infla el pecho" y crece de
+     nuevo al soltar el aire, sensación de peso apoyado en el suelo. positionEntityOnStage() fija
+     `transform:translate(-50%,-50%)` inline en JS en cada reposicionamiento (el ancla real del
+     punto de apoyo) — como las animaciones CSS pisan por completo la propiedad `transform` mientras
+     están activas (ganan sobre el inline no-!important), el keyframe repite ESE mismo translate en
+     cada paso para no perder el centrado, igual que breatheFlipped repite scaleX(-1) para no perder
+     el espejado. */
+  @keyframes shadowBreathe{
+    0%,100%{transform:translate(-50%,-50%) scale(1);}
+    50%{transform:translate(-50%,-50%) scale(.96);}
+  }
 
   /* Números flotantes de daño/curación — creados por spawnFloatingNumber() en main.js, uno por
      golpe, se auto-eliminan solos al terminar la animación (ver animationend en JS). Posición
@@ -2014,6 +2186,53 @@
     100%{transform:translate(calc(-50% + var(--fdn-drift, 0px)), -170%) scale(1); opacity:0;}
   }
 
+  /* Hojas/polvo/niebla a los pies del personaje (jugador O enemigo) cuando ataca — creados por
+     spawnAttackDustFx() en main.js, posición inicial (left/top) puesta inline en JS sobre los pies
+     del sprite que ataca. Pedido explícito: que el golpe se sienta más dinámico, con la variante
+     (hojas/polvo/niebla) sorteada al azar en cada golpe para que no se repita siempre la misma
+     — ver ATTACK_FX_VARIANTS en main.js. Cada partícula se auto-elimina sola (fill-mode forwards +
+     remove() del wrapper entero desde main.js, mismo patrón que floating-dmg-number). */
+  .attack-dust-wrap{position:absolute; transform:translate(-50%,-50%); pointer-events:none; z-index:5; width:0; height:0;}
+  /* Variante "hojas" */
+  .attack-dust-wrap .adb{position:absolute; left:0; top:0; font-size:13px; opacity:0; animation:attackDustBurst .7s ease-out forwards;}
+  .attack-dust-wrap .adb0{--adx:-22px; --ady:-10px; animation-delay:0s;}
+  .attack-dust-wrap .adb1{--adx:18px; --ady:-14px; animation-delay:.03s;}
+  .attack-dust-wrap .adb2{--adx:-10px; --ady:-22px; animation-delay:.06s;}
+  .attack-dust-wrap .adb3{--adx:14px; --ady:-6px; animation-delay:.02s;}
+  .attack-dust-wrap .adb4{--adx:2px; --ady:-18px; animation-delay:.08s;}
+  @keyframes attackDustBurst{
+    0%{transform:translate(0,0) scale(.5) rotate(0deg); opacity:0;}
+    25%{opacity:.9;}
+    100%{transform:translate(var(--adx),var(--ady)) scale(1) rotate(50deg); opacity:0;}
+  }
+  /* Variante "polvo de tierra" — motitas redondas color tierra, sin emoji, para que se lea como
+     polvo levantado del suelo y no como un ícono. */
+  .attack-dust-wrap .adp{position:absolute; left:0; top:0; width:7px; height:7px; border-radius:50%;
+    background:radial-gradient(circle, rgba(196,164,108,.9) 0%, rgba(196,164,108,.5) 60%, rgba(196,164,108,0) 100%);
+    opacity:0; animation:attackDustPuff .7s ease-out forwards;}
+  .attack-dust-wrap .adp0{--adx:-20px; --ady:-6px; animation-delay:0s;}
+  .attack-dust-wrap .adp1{--adx:16px; --ady:-10px; animation-delay:.03s;}
+  .attack-dust-wrap .adp2{--adx:-8px; --ady:-16px; animation-delay:.06s;}
+  .attack-dust-wrap .adp3{--adx:12px; --ady:-3px; animation-delay:.02s;}
+  .attack-dust-wrap .adp4{--adx:0px; --ady:-14px; animation-delay:.09s;}
+  @keyframes attackDustPuff{
+    0%{transform:translate(0,0) scale(.3); opacity:0;}
+    25%{opacity:.85;}
+    100%{transform:translate(var(--adx),var(--ady)) scale(1.6); opacity:0;}
+  }
+  /* Variante "niebla suave" — un par de manchas translúcidas difuminadas que se separan y
+     desvanecen, más lentas/anchas que hojas/polvo. */
+  .attack-dust-wrap .adm{position:absolute; left:0; top:0; width:20px; height:12px; border-radius:50%;
+    background:rgba(220,225,235,.4); filter:blur(3px); opacity:0; animation:attackMistDrift .75s ease-out forwards;}
+  .attack-dust-wrap .adm0{--adx:-16px; --ady:-8px; animation-delay:0s;}
+  .attack-dust-wrap .adm1{--adx:14px; --ady:-12px; animation-delay:.05s;}
+  .attack-dust-wrap .adm2{--adx:0px; --ady:-16px; animation-delay:.1s;}
+  @keyframes attackMistDrift{
+    0%{transform:translate(0,0) scale(.5); opacity:0;}
+    30%{opacity:.6;}
+    100%{transform:translate(var(--adx),var(--ady)) scale(1.4); opacity:0;}
+  }
+
   /* Recolección de recursos — creados por spawnResourceGatherFloat() en main.js: varios emojis
      pequeños salen del HUD de recolección y vuelan uno por uno hasta el chip de SU material en la
      barra fija de materiales (.map-mat-chip, ver .hud-materials-bar más arriba), sumando el total
@@ -2031,8 +2250,11 @@
   #oppPetStageSlot{position:relative; z-index:20;
     display:flex; flex-direction:column; align-items:center; gap:2px;}
   /* la mascota va al lado del jugador, como siempre — solo se le sube el z-index para que quede AL FRENTE
-     del sprite del jugador (antes quedaba tapada detrás de él). */
-  #petStageSlot{position:relative; z-index:20;
+     del sprite del jugador (antes quedaba tapada detrás de él), y se corre un poco a la derecha con
+     translateX (pedido explícito) para que no aparezca casi encima. translateX y NO margin-left a
+     propósito: margin cambia el layout del flex compartido (.ally-side) y de rebote corría también al
+     jugador — transform es puramente visual, no mueve ni redimensiona nada más a su alrededor. */
+  #petStageSlot{position:relative; z-index:20; transform:translateX(44px);
     display:flex; flex-direction:column; align-items:center; gap:2px;}
   #petStageSlot .pet-emoji, #oppPetStageSlot .pet-emoji{font-size:68px; filter:drop-shadow(0 7px 10px rgba(0,0,0,.32)) drop-shadow(0 0 8px rgba(79,214,122,.6));
     animation:petBob 1.8s ease-in-out infinite;}
@@ -2137,11 +2359,11 @@
      nivel más arriba) ni las poses de ataque propias de cada especie (que viven en el <img> de
      adentro, un nivel más abajo — ver #spriteEnemy img[data-*].attacking más arriba). #spriteEnemy/
      .psm-emoji usan la variante "Flipped" para no perder su espejado fijo (scaleX(-1)) mientras respiran. */
-  .sprite{animation:breathe 3.4s ease-in-out infinite;}
-  #spriteEnemy{animation:breatheFlipped 3.4s ease-in-out infinite;}
-  .sprite.hitshake{animation:breathe 3.4s ease-in-out infinite, shake .55s;}
-  .sprite.attackp{animation:breathe 3.4s ease-in-out infinite, lungeR .5s;}
-  .sprite.attacke{animation:breathe 3.4s ease-in-out infinite, lungeL .5s;}
+  .sprite{animation:breathe 1.8s ease-in-out infinite;}
+  #spriteEnemy{animation:breatheFlipped 1.8s ease-in-out infinite;}
+  .sprite.hitshake{animation:breathe 1.8s ease-in-out infinite, shake .55s;}
+  .sprite.attackp{animation:breathe 1.8s ease-in-out infinite, lungeR .5s;}
+  .sprite.attacke{animation:breathe 1.8s ease-in-out infinite, lungeL .5s;}
   /* Pedido explícito: al recibir un golpe, el enemigo ya no solo "tiembla" en el lugar (shake) —
      retrocede (se aleja del jugador, que está a la izquierda) por un instante y vuelve solo a su
      posición normal. IMPORTANTE — este retroceso anima `left`, NO `transform`: #spriteEnemy YA
@@ -2153,10 +2375,33 @@
      completamente aparte — se anima en paralelo sin pisarle nada a breatheFlipped, garantizado.
      #spriteEnemy/.psm-emoji ya son position:relative, así que `left` los desplaza visualmente sin
      afectar el layout de sus hermanos (mascota, barra de vida), igual que haría un transform. */
-  #spriteEnemy.hitshake{animation:breatheFlipped 3.4s ease-in-out infinite, enemyRecoil 1s ease-out;}
-  #spriteEnemy.attacke{animation:breatheFlipped 3.4s ease-in-out infinite, lungeL .5s;}
-  @keyframes breathe{0%,100%{transform:scale(1);}50%{transform:scale(1.022);}}
-  @keyframes breatheFlipped{0%,100%{transform:scaleX(-1) scale(1);}50%{transform:scaleX(-1) scale(1.022);}}
+  #spriteEnemy.hitshake{animation:breatheFlipped 1.8s ease-in-out infinite, enemyRecoil 1s ease-out;}
+  #spriteEnemy.attacke{animation:breatheFlipped 1.8s ease-in-out infinite, lungeLFlipped .5s;}
+  /* Pedido explícito (cuarta vuelta): +8%/-7px se sentía exagerado apenas se notó que el efecto
+     corría de verdad todo el combate (antes un bug lo cancelaba casi enseguida — ver
+     cancelNonBreathingAnimations — así que en la práctica casi nunca se veía sostenido, y por eso se
+     había ido subiendo la amplitud en vueltas anteriores). Ahora que respira sin cortes todo el
+     combate, alcanza con un pulso chico para leerse como natural — se deja el ciclo de 1.8s (ver
+     comentario anterior sobre por qué es más corto que el de aliados/manada), solo se baja la
+     amplitud. shadowBreathe (arriba) se ajusta IGUAL para seguir en sintonía. */
+  @keyframes breathe{0%,100%{transform:translateY(0) scale(1);}50%{transform:translateY(-3px) scale(1.03);}}
+  @keyframes breatheFlipped{0%,100%{transform:scaleX(-1) translateY(0) scale(1);}50%{transform:scaleX(-1) translateY(-3px) scale(1.03);}}
+  /* Pedido explícito: que el enemigo se desvanezca al ser derrotado en vez de quedarse plantado
+     hasta que la pantalla de resultado tapa todo de golpe (ver winBattle en main.js). Reemplaza por
+     completo la animación de respiración mientras dura (no tiene sentido seguir "respirando" al
+     desvanecerse) — anima opacity/filter, nunca transform, así no hace falta preocuparse por
+     combinarla con nada más; `forwards` sostiene el frame final (invisible) hasta que el próximo
+     combate lo limpia (ver spriteEnemy.classList.remove("defeat-fade") en startBattle).
+     Pedido explícito (segunda vuelta): que se sienta más el momento de "el combate terminó, lo
+     derrotaste" — antes eran .65s, casi un parpadeo. Ahora dura 1.6s (ver el setTimeout de 2200ms en
+     winBattle, que le da tiempo de sobra a terminar más una pausa extra en el escenario ya vacío
+     antes de pasar a la pantalla de resultado). */
+  #spriteEnemy.defeat-fade{animation:enemyDefeatFade 1.6s ease-in forwards;}
+  @keyframes enemyDefeatFade{
+    0%{opacity:1; filter:brightness(1) saturate(1);}
+    30%{opacity:.92; filter:brightness(1.7) saturate(1.3);}
+    100%{opacity:0; filter:brightness(2.6) saturate(0);}
+  }
   @keyframes enemyRecoil{
     0%{left:0;}
     18%{left:30px;}
@@ -2289,8 +2534,18 @@
   @keyframes flashPulseWhite{0%{opacity:0;}18%{opacity:1;}35%{opacity:.5;}55%{opacity:.85;}100%{opacity:0;}}
   @keyframes flashPulse{0%{opacity:0;}25%{opacity:1;}100%{opacity:0;}}
   @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
-  @keyframes lungeR{50%{transform:translateX(18px) scale(1.05)}}
-  @keyframes lungeL{50%{transform:translateX(-18px) scale(1.05)}}
+  @keyframes lungeR{50%{transform:translateX(26px) scale(1.08)}}
+  @keyframes lungeL{50%{transform:translateX(-26px) scale(1.08)}}
+  /* Pedido explícito: que el enemigo se note que avanza al atacar. Bug encontrado de paso: como
+     #spriteEnemy/.psm-emoji YA tienen una animación infinita sobre `transform` (breatheFlipped, para
+     no perder su espejado fijo scaleX(-1)), y dos @keyframes que animan la MISMA propiedad no se
+     combinan (el listado último gana por completo mientras está activo — mismo motivo documentado
+     arriba en enemyRecoil), usar el lungeL de arriba tal cual en su `animation:` los des-espejaba a
+     mitad del golpe (se veían "al revés" un instante). Esta variante repite scaleX(-1) para que el
+     embiste se vea sin perder el espejado — mismo criterio que breatheFlipped. */
+  @keyframes lungeLFlipped{50%{transform:scaleX(-1) translateX(26px) scale(1.08)}}
+  /* Mismo arreglo que lungeLFlipped, para .pack-stage-mon .psm-emoji.attackp (también espejado). */
+  @keyframes lungeRFlipped{50%{transform:scaleX(-1) translateX(-26px) scale(1.08)}}
   /* ---------- Movimiento definitivo: carga dorada + golpe pesado + impacto múltiple ---------- */
   .sprite.ultimate-charging::before, .am-sprite.ultimate-charging::before{
     content:""; position:absolute; inset:-14px; border-radius:50%; pointer-events:none; z-index:-1;
@@ -2527,8 +2782,8 @@
   .pack-stage-mon .psm-emoji img.pack-sprite-img{width:auto; height:auto;
     filter:drop-shadow(0 4px 6px rgba(0,0,0,.5));}
   .pack-stage-mon .psm-emoji{animation:breatheFlipped 3.2s ease-in-out infinite;}
-  .pack-stage-mon .psm-emoji.attackp{animation:breatheFlipped 3.2s ease-in-out infinite, lungeR .5s;}
-  .pack-stage-mon .psm-emoji.attacke{animation:breatheFlipped 3.2s ease-in-out infinite, lungeL .5s;}
+  .pack-stage-mon .psm-emoji.attackp{animation:breatheFlipped 3.2s ease-in-out infinite, lungeRFlipped .5s;}
+  .pack-stage-mon .psm-emoji.attacke{animation:breatheFlipped 3.2s ease-in-out infinite, lungeLFlipped .5s;}
   .pack-stage-mon .psm-emoji.hitshake{animation:breatheFlipped 3.2s ease-in-out infinite, enemyRecoil 1s ease-out;}
   .pack-stage-mon{position:relative;}
 
@@ -2872,6 +3127,12 @@
   .shop-grid-list .shop-card .sc-info{flex:1;}
   .shop-grid-list .shop-card button{width:auto; padding:8px 16px;}
   .stat-preview{font-size:9.5px; color:var(--accent); margin-top:2px;}
+
+  /* ---------- Tienda: página "Destacados" (resumen gancho, pestaña con la que abre la tienda) ---------- */
+  .shop-featured-banner{grid-column:1 / -1; background:linear-gradient(180deg,#241c0c,#161020);
+    border:1px solid var(--gold); border-radius:12px; padding:12px 14px; margin-bottom:2px;}
+  .shop-featured-banner .sfb-title{font-size:14px; font-weight:800; color:var(--gold);}
+  .shop-featured-banner .sfb-sub{font-size:11px; color:var(--dim); margin-top:3px; line-height:1.3;}
 
   /* ---------- Rareza de objetos (5 niveles) ---------- */
   .rarity-common{border-color:#5b6478;}

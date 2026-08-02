@@ -27,7 +27,7 @@
      síncrono y mínimo: window.Capacitor ya está inyectado por el WebView antes de que corra
      cualquier otro script, así que esto no tiene ningún parpadeo previo. En la web normal
      (window.Capacitor no existe) esto nunca se muestra. -->
-<div id="nativeSplashCover"><img src="./new_elements/splash.png" alt=""></div>
+<div id="nativeSplashCover"><img src="./new_elements/splash.png" alt=""><div id="nativeSplashStatus">Verificando contenido…</div></div>
 <script>
   if(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()){
     document.getElementById("nativeSplashCover").classList.add("show");
@@ -132,7 +132,7 @@
   </div>
   <div class="hud-materials-bar" id="hudMaterialsBar"></div>
   <div class="gps-banner" id="gpsBanner">
-    <div class="gtxt" id="gpsBannerText">📍 El GPS requiere <b>HTTPS</b> y permisos de ubicación. Toca <b>Activar</b> para usar tu posición real.</div>
+    <div class="gtxt" id="gpsBannerText">📍 El GPS requiere permisos de ubicación. Toca <b>Activar</b> para usar tu posición real.</div>
     <button id="btnActivateGps">Activar</button>
   </div>
   <button class="iconbtn hidden" id="btnGpsDiagnose" title="Diagnóstico GPS" style="align-self:flex-end;">🛠️</button>
@@ -1178,6 +1178,20 @@
   </div>
 </div>
 
+<!-- PUERTA DE UBICACIÓN — Noe pide activar el GPS ANTES de elegir personaje (ver
+     maybeShowGpsGate/enterGameFlow en main.js), para saber ciudad/calles desde antes de la
+     pantalla de carga. Nunca bloquea: siempre hay una salida a "seguir sin ubicación". -->
+<div class="overlay hidden" id="gpsGateOverlay">
+  <div class="sheet" style="text-align:center;">
+    <div id="gpsGatePortraitWrap"><img id="gpsGatePortrait" alt="Noe"></div>
+    <h1 class="title" style="margin-bottom:6px;">Noe</h1>
+    <p class="sub" id="gpsGateText">Es necesario activar los servicios de ubicación.</p>
+    <p class="sub" id="gpsGateStatus" style="min-height:1.4em;"></p>
+    <button class="primarybtn" id="btnGpsGateActivate">📍 Activar ubicación</button>
+    <button class="ghostbtn" id="btnGpsGateSkip">Continuar sin ubicación</button>
+  </div>
+</div>
+
 <!-- CLASS SELECT -->
 <div class="overlay hidden" id="classOverlay">
   <div class="sheet">
@@ -1320,15 +1334,19 @@
     <div class="battle-bottom">
       <div class="combatant player">
         <div class="name"><span id="bPName">—</span><span class="lvl" id="bPLvl">Nv.1</span><span id="bPStatus"></span></div>
-        <div class="bar-with-badge">
-          <div class="bar-wrap"><div class="bar-fill bar-hp" id="bPHp" style="width:100%"></div></div>
-          <span id="dungeonBattleHud" class="hidden">🏰 Piso 1/5</span>
-        </div>
+        <div class="bar-wrap"><div class="bar-fill bar-hp" id="bPHp" style="width:100%"></div></div>
         <div class="bar-wrap"><div class="bar-fill bar-mp" id="bPMp" style="width:100%"></div></div>
         <div class="bar-wrap hidden" id="bPDefWrap" title="Barra de defensa: absorbe el daño de golpes fuertes que bloquees. No se recarga ni se cura durante el combate.">
           <div class="bar-fill bar-def" id="bPDef" style="width:100%"></div>
+          <div class="hidden" id="bPDefExtraCharge" title="Bloqueo extra del Anillo Aqua — se gasta con el primer golpe bloqueado."></div>
         </div>
       </div>
+      <!-- Insignia de piso de mazmorra — pedido explícito: se movía adentro de la tarjeta del
+           jugador (junto a la barra de vida) y la tapaba, porque esa tarjeta tiene max-width:180px
+           (ver .combatant en main.css) y no le sobraba espacio. Ahora vive AL LADO de la tarjeta,
+           en el espacio vacío de .battle-bottom (align-self la centra verticalmente junto a las
+           barras de vida/maná). -->
+      <span id="dungeonBattleHud" class="hidden">🏰 Piso 1/5</span>
       <div id="partyStatusRow" class="hidden" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
     </div>
     <div id="battlelog">¡Comienza el combate!</div>
@@ -1352,6 +1370,36 @@
     </div>
   </div>
 </div>
+
+<!-- CINEMÁTICA DE BIENVENIDA — pedido explícito: corre ANTES de Noe, solo la primera vez (mismo
+     player.seenWorldIntro, ver playWorldCinematic/maybeShowWorldIntro en main.js). #wcOpaqueLayer
+     tapa la pantalla con escena1/escena2 y se desvanece para revelar el mapa REAL ya cargado
+     detrás (alejado, sin centrar todavía en el personaje) — ahí nacen marcadores reales de
+     monstruos en las calles cercanas (ver spawnCinematicStreetMonsters en main.js), y recién
+     después viene el zoom final al personaje. -->
+<div class="hidden" id="worldCinematicOverlay">
+  <div id="wcOpaqueLayer">
+    <div id="wcScene1"><img id="wcScene1Img" alt=""></div>
+    <div id="wcScene2"><img id="wcScene2Img" alt=""></div>
+  </div>
+  <div id="wcCaption"></div>
+  <div id="wcWelcomeCard"><div id="wcWelcomeText"></div></div>
+  <button id="btnSkipCinematic">Saltar ▶</button>
+</div>
+
+<!-- BIENVENIDA DEL MUNDO — Noe, aparece UNA sola vez por cuenta al entrar al mapa por primera vez
+     (ver maybeShowWorldIntro/player.seenWorldIntro en main.js). Se cierra tocando el cuadro, y al
+     cerrarse señala con #worldIntroArrow a un enemigo de nivel <= al del jugador. Fuera de #map a
+     propósito (mismo criterio que #battleTutorialOverlay): position:fixed, sibling, no clippeado. -->
+<div class="hidden" id="worldIntroOverlay">
+  <div id="worldIntroPortraitWrap"><img id="worldIntroPortrait" alt="Noe"></div>
+  <div id="worldIntroBox">
+    <div id="worldIntroName">Noe</div>
+    <div id="worldIntroText">¡Por fin has despertado! Ten cuidado a tu alrededor, hay monstruos cerca. Trata de comenzar luchando con los de menor nivel.</div>
+    <div id="worldIntroNext">▼</div>
+  </div>
+</div>
+<div class="hidden" id="worldIntroArrow">▼</div>
 
 <!-- LEVEL UP -->
 <div class="overlay hidden" id="levelupOverlay">
@@ -1403,6 +1451,10 @@
       </div>
     </div>
 
+    <!-- Deshabilitado por ahora (pedido explícito) — el código de generar la tarjeta y compartir
+         sigue entero en main.js (buildLevelUpShareCardBlob/shareLevelUpCard), solo se oculta el
+         botón. Sacar "hidden" para reactivarlo. -->
+    <button class="ghostbtn hidden" id="btnLevelupShare" style="margin-bottom:10px;">📤 Compartir (💎 primera vez del día)</button>
     <button class="lvup-btn" id="btnLevelupClose">⚔ CONTINUAR LA AVENTURA ⚔</button>
   </div>
 </div>

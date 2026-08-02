@@ -64,6 +64,17 @@ export const LOBO_SOMBRIO_TEMPLATE = {name:"Lobo Sombrío", emoji:"🐺", tier:6
   uncapturable:true, aggressive:true, isShadowWolf:true,
   fullHealOnceBelow:0.3, fleeBelow:0.2, evasionChance:0.45};
 
+/** Elemental Aqua — enemigo especial ligado al clima/agua real: solo aparece con lluvia o cerca
+ *  de agua real (lago/río/piscina, ver maybeSpawnElementalAqua en main.js). `dropsGem` marca qué
+ *  gema puede soltar al vencerlo (chance baja, 10%, ver winBattle) — material único para revelar
+ *  y forjar el Anillo Aqua en la Forja. */
+export const ELEMENTAL_AQUA_TEMPLATE = {name:"Elemental Aqua", emoji:"💧", tier:3, hpM:1.35, atkM:1.15, defM:1.1,
+  evasionChance:0.1, dropsGem:"aqua"};
+/** Elemental Fauto — enemigo especial ligado al calor real: solo aparece cuando la ciudad está a
+ *  30°C o más (ver maybeSpawnElementalFauto en main.js). Misma mecánica de gema que el Aqua. */
+export const ELEMENTAL_FAUTO_TEMPLATE = {name:"Elemental Fauto", emoji:"🔥", tier:3, hpM:1.4, atkM:1.25, defM:1.0,
+  evasionChance:0.08, dropsGem:"fauto"};
+
 export const BOSS_TEMPLATES = [
   {name:"Behemot de Piedra", emoji:"🗿", hpM:5.5, atkM:2.0, defM:2.2},
   {name:"Dragón Ancestral", emoji:"🐉", hpM:5.0, atkM:2.3, defM:1.8, flying:true},

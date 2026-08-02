@@ -227,12 +227,27 @@ function pagePointToContainerPct(pageX, pageY, containerRect){
  * propósito: el sprite adentro sigue usando sus propias animaciones de ataque/golpe (que ya
  * manipulan `transform` por su cuenta vía clases CSS), así que el posicionamiento y la animación
  * de combate nunca compiten por la misma propiedad del mismo elemento.
+ *
+ * `opts.offsetYPx` (opcional): corrimiento vertical fijo en px, solo del sprite, nunca de la
+ * sombra — ver el comentario junto a su desestructuración más abajo.
  */
 export function positionEntityOnStage(anchorEl, shadowEl, opts){
   const {
     fx, fy, sceneConfig, stageEl, backgroundEl,
     flying = false,
     shadowFx, shadowFy,
+    offsetXPx = 0, // corrimiento horizontal fijo en px (pedido explícito: separar jugador/mascota
+    // sin pelear con el transform que ya arma esta función más abajo — se suma ACÁ, antes del
+    // transform:translate(-50%,-100%) scale(...), así que sigue centrado/escalado normalmente,
+    // solo que sobre un punto corrido. Se aplica antes del clamp para que también respete el
+    // margen de seguridad de los bordes. 0 por defecto = mismo comportamiento de siempre.
+    offsetYPx = 0, // corrimiento vertical fijo en px, SOLO para el sprite — pedido explícito: varias
+    // ilustraciones de enemigo traen relleno transparente debajo de los pies (el PNG completo es más
+    // alto que el personaje dibujado), así que el punto de apoyo (el borde inferior de la caja) cae
+    // sobre ese aire vacío en vez de sobre los pies de verdad, y el enemigo se ve "flotando" encima
+    // de su propia sombra. Se aplica DESPUÉS de calcular la posición de la sombra (ver más abajo,
+    // shadowPos siempre usa `pos` sin este corrimiento) para que bajar al sprite nunca mueva la
+    // sombra con él — si no, el hueco seguiría exactamente igual.
   } = opts;
   if(!anchorEl || !stageEl) return null;
   const bgEl = backgroundEl || stageEl;
@@ -242,6 +257,7 @@ export function positionEntityOnStage(anchorEl, shadowEl, opts){
 
   const point = mapImageFractionToPagePoint(fx, fy, sceneConfig, bgRect);
   const pos = pagePointToContainerPct(point.pageX, point.pageY, stageRect);
+  if(offsetXPx) pos.leftPct += (offsetXPx / stageRect.width) * 100;
   // Red de seguridad: en aspect ratios muy angostos el recorte de "cover" puede empujar un anchor
   // cerca del borde de la imagen fuera del contenedor visible — nunca debería dejar a nadie a medio
   // salir de la pantalla, así que se recorta a un margen visible aunque la config quede imperfecta.
@@ -249,10 +265,11 @@ export function positionEntityOnStage(anchorEl, shadowEl, opts){
   pos.topPct = clamp(pos.topPct, 4, 96);
   const depthScale = calculatePerspectiveScale(fy, sceneConfig);
   const z = computeDepthZIndex(fy);
+  const anchorTopPct = offsetYPx ? pos.topPct + (offsetYPx / stageRect.height) * 100 : pos.topPct;
 
   anchorEl.style.position = "absolute";
   anchorEl.style.left = pos.leftPct + "%";
-  anchorEl.style.top = pos.topPct + "%";
+  anchorEl.style.top = anchorTopPct + "%";
   anchorEl.style.transform = `translate(-50%, -100%) scale(${depthScale})`;
   anchorEl.style.transformOrigin = "bottom center";
   anchorEl.style.zIndex = String(z);
