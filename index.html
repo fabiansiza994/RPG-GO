@@ -190,6 +190,12 @@
 </div>
 <div id="floatingSideBtns">
   <button class="floating-side-btn img-btn" id="btnShop" title="Tienda"><img src="/new_elements/btn_tienda.png" alt="Tienda" draggable="false"></button>
+  <!-- Calendario de recompensas: sin arte propio en new_elements/ todavía, mismo fallback de
+       emoji+fondo temático que btnFortune/btnDailyMissions en vez de <img>. -->
+  <button class="floating-side-btn daily-calendar-btn" id="btnDailyCalendar" title="Calendario de recompensas" aria-label="Calendario de recompensas">
+    <span class="daily-calendar-btn-icon" aria-hidden="true">📅</span>
+    <span class="notif-dot" id="dailyCalendarNotifDot"></span>
+  </button>
   <!-- Salón de la Fortuna: sin arte propio en new_elements/ todavía, así que sigue el mismo
        fallback que btnDailyMissions/btnAdventurerContract (span con emoji + fondo temático en vez
        de <img>) en lugar de inventar un ícono. Misma base .floating-side-btn que Tienda (mismo
@@ -258,6 +264,29 @@
   </div>
   <button class="fab-main" id="btnFabToggle"><img id="btnFabToggleImg" src="/new_elements/btn_menu1.png" alt="Menú" draggable="false"></button>
   <button class="fab-corner-settings" id="btnSettingsCorner" title="Ajustes">⚙️</button>
+</div>
+
+<!-- CALENDARIO DE RECOMPENSAS -->
+<div class="overlay hidden" id="dailyCalendarOverlay">
+  <div class="daily-cal-sheet" role="dialog" aria-modal="true" aria-labelledby="dailyCalTitle">
+    <div class="daily-cal-header">
+      <div class="daily-cal-header-icon" aria-hidden="true">📅</div>
+      <div class="daily-cal-header-text">
+        <div class="daily-cal-title" id="dailyCalTitle">Calendario de recompensas</div>
+        <div class="daily-cal-subtitle" id="dailyCalSubtitle"></div>
+      </div>
+      <button class="daily-cal-close-btn" id="btnCloseDailyCalendar" title="Cerrar" aria-label="Cerrar calendario de recompensas">✕</button>
+    </div>
+    <div class="daily-cal-body">
+      <div class="daily-cal-legend">
+        <span><span class="dcd-icon">💰</span> Oro</span>
+        <span><span class="dcd-icon">💎</span> Diamantes</span>
+        <span><span class="dcd-icon">🪵</span> Materiales</span>
+        <span><span class="dcd-icon">🗡️</span> Equipo especial</span>
+      </div>
+      <div class="daily-cal-grid" id="dailyCalGrid"></div>
+    </div>
+  </div>
 </div>
 
 <!-- MISIONES DIARIAS -->

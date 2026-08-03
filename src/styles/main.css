@@ -2702,7 +2702,8 @@
   .move-btn::after{bottom:3px; right:3px; border-bottom:2px solid; border-right:2px solid;}
   .move-btn:active:not(:disabled){transform:translateY(2px);
     box-shadow:0 0 0 1px rgba(0,0,0,.4) inset, 0 1px 0 rgba(0,0,0,.4);}
-  .move-btn .mname{font-weight:800; font-size:12.5px; color:var(--gold);}
+  .move-btn .mname{font-weight:800; font-size:12.5px; color:var(--gold); display:flex; align-items:center; gap:5px; flex-wrap:wrap;}
+  .move-btn .move-icon{font-size:14px; line-height:1; flex-shrink:0;}
   .move-btn .mmeta{font-size:9.5px; color:var(--dim); margin-top:2px;}
   .move-mp-cost{color:var(--mp); font-weight:800; text-shadow:0 0 6px rgba(74,163,224,.55);}
   .move-btn.ultimate-move{border-color:#c98bf0; background:
@@ -3261,6 +3262,76 @@
     .daily-missions-btn-glow{animation:none;}
     .daily-mission-final-card--available{animation:none;}
     .daily-missions-progress-fill, .daily-mission-progress-fill{transition:none;}
+  }
+
+  /* ============================================================
+     CALENDARIO DE RECOMPENSAS — botón flotante debajo de la Tienda (#floatingSideBtns) +
+     panel con la grilla del mes en curso. Mismo lenguaje visual que Misiones Diarias
+     (sheet/header/close-btn) pero con clases propias para poder ajustar cada uno por separado. */
+  .daily-calendar-btn{
+    background:
+      radial-gradient(circle at 32% 26%, rgba(255,255,255,.14), transparent 55%),
+      linear-gradient(160deg, #234a3a 0%, #102420 62%, #0a1512 100%);
+    border:2px solid #5eE1C9; font-size:22px;}
+  .daily-calendar-btn-icon{filter:drop-shadow(0 1px 2px rgba(0,0,0,.55));}
+
+  .daily-cal-sheet{width:100%; max-width:560px; max-height:90vh; background:linear-gradient(180deg, #131826 0%, #0c1019 100%);
+    border:1px solid var(--line); border-radius:22px; box-shadow:0 20px 60px rgba(0,0,0,.5);
+    display:flex; flex-direction:column; overflow:hidden;}
+  .daily-cal-header{display:flex; align-items:flex-start; gap:12px; padding:18px 18px 14px;
+    border-bottom:1px solid var(--line); background:rgba(0,0,0,.18); flex-shrink:0;}
+  .daily-cal-header-icon{font-size:30px; line-height:1; filter:drop-shadow(0 2px 4px rgba(0,0,0,.5));}
+  .daily-cal-header-text{flex:1; min-width:0;}
+  .daily-cal-title{font-size:19px; font-weight:900; color:var(--gold);}
+  .daily-cal-subtitle{font-size:12.5px; color:var(--dim); margin-top:2px;}
+  .daily-cal-close-btn{flex-shrink:0; width:38px; height:38px; border-radius:50%; border:1px solid var(--line);
+    background:var(--panel2); color:var(--text); font-size:16px; line-height:1;}
+  .daily-cal-close-btn:active{filter:brightness(1.3);}
+
+  .daily-cal-body{flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; padding:16px 18px 24px;}
+  .daily-cal-legend{display:flex; gap:14px; justify-content:center; font-size:11.5px; color:var(--dim); margin-bottom:12px;}
+  .daily-cal-legend .dcd-icon{font-size:13px; margin-right:3px;}
+
+  /* Timeline horizontal con scroll: cada día es un "nodo" (círculo) sobre una línea continua que
+     arma cada nodo con su propio segmento de la izquierda (dcd-line) — el segmento se pinta dorado
+     si ese día ya se alcanzó (día <= hoy), gris si todavía no. Así la línea se va poniendo amarilla
+     a medida que avanza el mes, en vez de una grilla fija. */
+  .daily-cal-grid{display:flex; align-items:flex-start; gap:0; overflow-x:auto; overflow-y:hidden;
+    -webkit-overflow-scrolling:touch; scroll-behavior:smooth; padding:26px 16px 10px;}
+  .daily-cal-day{position:relative; flex:0 0 auto; width:50px; display:flex; flex-direction:column;
+    align-items:center;}
+  .daily-cal-day .dcd-line{position:absolute; top:15px; left:0; right:0; height:3px; border-radius:2px;
+    background:rgba(255,255,255,.1); z-index:0;}
+  .daily-cal-day:first-child .dcd-line{left:50%;}
+  .daily-cal-day--reached .dcd-line{background:linear-gradient(90deg, #8a6a2a, var(--gold));
+    box-shadow:0 0 6px rgba(232,196,104,.5);}
+  .daily-cal-day .dcd-dot{position:relative; z-index:1; width:34px; height:34px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; border:2px solid var(--line);
+    background:var(--panel2);}
+  .daily-cal-day .dcd-icon{font-size:15px; line-height:1;}
+  .daily-cal-day .dcd-num{margin-top:5px; font-size:9.5px; font-weight:700; color:var(--dim);}
+  .daily-cal-day--future{opacity:.4;}
+  .daily-cal-day--missed{opacity:.35; filter:grayscale(1);}
+  .daily-cal-day--claimed .dcd-dot{border-color:#2fae66; opacity:.7;}
+  .daily-cal-day--claimed .dcd-dot::after{content:"✓"; position:absolute; top:-6px; right:-6px; width:16px; height:16px;
+    border-radius:50%; background:#2fae66; color:#fff; font-size:9.5px; font-weight:900; line-height:16px;
+    text-align:center; box-shadow:0 2px 6px rgba(0,0,0,.4);}
+  .daily-cal-day--today .dcd-dot{border-color:var(--gold); cursor:pointer;
+    background:linear-gradient(160deg, rgba(232,196,104,.28), var(--panel2));
+    animation: dailyCalTodayPulse 1.4s ease-in-out infinite;}
+  .daily-cal-day--today .dcd-num{color:var(--gold); font-weight:900;}
+  /* Días de equipo especial (arma/armadura/botas/talismán) se distinguen con un anillo violeta
+     tipo "épico" mientras siguen sin reclamar (futuros u olvidados), para que se noten de lejos;
+     una vez reclamado o siendo hoy, gana la coloración normal de ese estado (verde/dorado). */
+  .daily-cal-day--gear.daily-cal-day--future .dcd-dot, .daily-cal-day--gear.daily-cal-day--missed .dcd-dot{
+    border-color:#c98bf0; box-shadow:0 0 8px rgba(201,139,240,.45);}
+  @keyframes dailyCalTodayPulse{
+    0%,100%{box-shadow:0 0 0 0 rgba(232,196,104,.5);}
+    50%{box-shadow:0 0 0 5px rgba(232,196,104,0);}
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .daily-cal-day--today .dcd-dot{animation:none;}
   }
 
   /* ============================================================

@@ -3712,6 +3712,14 @@ $("btnCloseDailyMissions").onclick = ()=>{
   stopDailyMissionsCountdown();
 };
 
+$("btnDailyCalendar").onclick = ()=>{
+  $("dailyCalendarOverlay").classList.remove("hidden");
+  renderDailyCalendar();
+};
+$("btnCloseDailyCalendar").onclick = ()=>{
+  $("dailyCalendarOverlay").classList.add("hidden");
+};
+
 /* ============================================================
    CONTRATO DEL AVENTURERO — UI (botón flotante + Tablón). Igual que la UI de
    Misiones Diarias: todo lo que sigue solo LEE el estado vía
@@ -5099,10 +5107,10 @@ $("btnStart").onclick = async ()=>{
   // desde el primer momento, no solo tras la próxima mutación de stats.
   refreshHud();
   saveGame();
-  // Pedido explícito: la primera vez (cinemática + Noe todavía sin ver), el bono diario debe
-  // aparecer DESPUÉS de esa bienvenida, no antes — se dispara al final desde closeWorldIntro().
-  // Si ya se vio antes (seenWorldIntro), no hay bienvenida que esperar: sale ya mismo, como siempre.
-  if(player.seenWorldIntro) checkDailyBonus();
+  // Pedido explícito: el bono diario ya NO se auto-reclama solo — el jugador tiene que entrar al
+  // calendario (botón debajo de la Tienda) y tocar el día de hoy. Acá solo se refresca el puntito
+  // rojo del botón para avisar que hay algo para reclamar.
+  updateDailyCalendarButton();
   await dailyMissionsService.init();
   gameEventBus.emit({ type: "CHARACTER_SELECTED", payload: { amount: 1 }, dedupeKey: selectedClass });
   updateDailyMissionsButton();
@@ -5113,28 +5121,148 @@ $("btnStart").onclick = async ()=>{
   updateFortuneHallButton();
 };
 
-/** Recompensa por jugar cada día: +50 de oro gratis la primera vez que abres el juego en el día. */
-function todayStr(){ const d=new Date(); return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`; }
+/** Calendario de recompensa diaria: cada día del mes calendario tiene su propia recompensa fija
+ *  (ciclo de 3: oro / diamantes+oro, tope 5 diamantes / materiales+oro, más 4 días especiales de
+ *  equipo curado — ver DAILY_CAL_GEAR_DAYS), visible en el panel que abre btnDailyCalendar debajo
+ *  de la Tienda. Reemplaza al bono plano de antes (50 oro + 1 diamante todos los días por igual) y
+ *  ya no se auto-reclama solo: hay que entrar al calendario y tocar el día de hoy (ver el onclick
+ *  en renderDailyCalendar). Un día no reclamado se pierde — solo se puede reclamar el día de hoy,
+ *  nunca atrasados. */
+function localDateKey(d = new Date()){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+const DAILY_CAL_MATERIAL_CYCLE = ["wood","stone","iron"];
+// 4 días especiales bien separados a lo largo del mes: en vez del ciclo de oro/diamantes/materiales
+// de siempre, ese día se gana una pieza de equipo curada (arma/armadura/botas/talismán, rareza
+// épica — buena, pero no la mejor del juego) además de oro. El arma es la única que depende de la
+// clase del jugador, así que se arma recién al reclamar (ver buildDailyCalGearItem).
+const DAILY_CAL_GEAR_DAYS = {5:"weapon", 12:"armor", 19:"boots", 26:"accessory"};
+const DAILY_CAL_GEAR_ICON = {weapon:"🗡️", armor:"🛡️", boots:"👢", accessory:"🧿"};
+function buildDailyCalGearItem(slot){
+  if(slot === "weapon"){
+    const base = WEAPON_BASE[player.classKey];
+    const bonuses = scaleBonuses(base.bonuses, 4);
+    return {id:`cal_weapon_${player.classKey}_${Date.now()}`, name:`${base.name} del Peregrino`, emoji:base.emoji,
+      type:"equip", slot:"weapon", classKey:player.classKey, rarity:"epic", bonuses, value:0,
+      desc:`${bonusDesc(bonuses)} · regalo del calendario mensual`};
+  }
+  const presets = {
+    armor:     {name:"Armadura del Peregrino",   emoji:"🛡️", bonuses:{def:12, maxHp:20}},
+    boots:     {name:"Botas del Viento Errante", emoji:"👢", bonuses:{spd:8,  def:4}},
+    accessory: {name:"Talismán del Constante",   emoji:"🧿", bonuses:{spd:4,  matk:8}},
+  };
+  const p = presets[slot];
+  return {id:`cal_${slot}_${Date.now()}`, name:p.name, emoji:p.emoji, type:"equip", slot, classKey:null,
+    rarity:"epic", bonuses:p.bonuses, value:0, desc:`${bonusDesc(p.bonuses)} · regalo del calendario mensual`};
+}
+function dailyCalReward(dayOfMonth){
+  const gearSlot = DAILY_CAL_GEAR_DAYS[dayOfMonth];
+  if(gearSlot){
+    const gold = 60 + dayOfMonth;
+    return {type:"equip", slot:gearSlot, gold, icon:DAILY_CAL_GEAR_ICON[gearSlot], label:`Equipo especial y +${gold} oro`};
+  }
+  const slot = (dayOfMonth - 1) % 3;
+  if(slot === 0){
+    const gold = 40 + dayOfMonth*2;
+    return {type:"gold", gold, icon:"💰", label:`+${gold} oro`};
+  }
+  if(slot === 1){
+    const diamonds = Math.min(5, 1 + Math.floor((dayOfMonth-1)/6));
+    const gold = 40 + dayOfMonth;
+    return {type:"diamonds", diamonds, gold, icon:"💎", label:`+${diamonds} diamante${diamonds>1?"s":""} y +${gold} oro`};
+  }
+  const materialId = DAILY_CAL_MATERIAL_CYCLE[Math.floor((dayOfMonth-1)/3) % DAILY_CAL_MATERIAL_CYCLE.length];
+  const qty = 3 + Math.floor(dayOfMonth/6);
+  const gold = 50 + dayOfMonth;
+  return {type:"materials", materialId, qty, gold, icon: materialEmoji(materialId), label:`+${qty} ${materialDisplayName(materialId)} y +${gold} oro`};
+}
+function grantDailyCalReward(reward){
+  if(reward.gold) player.gold += reward.gold;
+  if(reward.type==="diamonds") player.crystals = (player.crystals||0) + reward.diamonds;
+  else if(reward.type==="materials") grantMaterial(reward.materialId, reward.qty);
+  else if(reward.type==="equip"){
+    reward.grantedItem = buildDailyCalGearItem(reward.slot);
+    pushItemSafe({...reward.grantedItem});
+  }
+}
 function checkDailyBonus(){
-  const today = todayStr();
-  if(player.lastDailyBonus === today) return;
-  player.lastDailyBonus = today;
-  const goldReward = 50, crystalReward = 1;
-  player.gold += goldReward;
-  player.crystals = (player.crystals||0) + crystalReward;
+  const todayKey = localDateKey();
+  if(player.lastDailyBonus === todayKey) return;
+  player.lastDailyBonus = todayKey;
+  if(!player.dailyCalendarClaimedDays) player.dailyCalendarClaimedDays = [];
+  if(!player.dailyCalendarClaimedDays.includes(todayKey)) player.dailyCalendarClaimedDays.push(todayKey);
+  // acota el historial guardado (no hace falta más que el mes en curso para pintar el calendario)
+  const cutoffMs = Date.now() - 40*86400000;
+  player.dailyCalendarClaimedDays = player.dailyCalendarClaimedDays.filter(k=> new Date(k).getTime() >= cutoffMs);
+  const reward = dailyCalReward(new Date().getDate());
+  grantDailyCalReward(reward);
   refreshHud();
   saveGame();
-  // Pedido explícito: mostrar en un modal QUÉ se dio exactamente, en vez de un toast que se
-  // desvanece solo — reusa showAlert (icono+título+mensaje+un botón), mismo mecanismo que ya usa
-  // el resto del juego para avisos de un solo paso.
+  updateDailyCalendarButton();
+  renderDailyCalendar();
+  // Pedido explícito: mostrar en un modal QUÉ se dio exactamente (con botón Aceptar que cierra el
+  // modal y vuelve al calendario, que sigue abierto detrás) — reusa showAlert, mismo mecanismo que
+  // ya usa el resto del juego para avisos de un solo paso.
+  const rewardHtml = reward.type==="equip"
+    ? `<div style="text-align:center; margin:10px 0 2px;">
+         <div style="font-size:15px; font-weight:800; color:${(RARITY_BY_KEY[reward.grantedItem.rarity]||{}).color||"var(--text)"};">${reward.grantedItem.emoji} ${reward.grantedItem.name}</div>
+         <div style="font-size:11.5px; color:var(--dim); margin-top:2px;">${bonusDesc(reward.grantedItem.bonuses)} · ${rarityLabel(reward.grantedItem.rarity)}</div>
+         <div style="margin-top:8px; font-size:16px; font-weight:800; color:var(--text);">💰 +${reward.gold} oro</div>
+       </div>`
+    : `<div style="display:flex; gap:18px; justify-content:center; margin:12px 0 2px; font-size:16px; font-weight:800; color:var(--text);">
+         <span>${reward.icon} ${reward.label}</span>
+       </div>`;
   showAlert(
-    `Por entrar a jugar hoy, recibiste:
-     <div style="display:flex; gap:18px; justify-content:center; margin:12px 0 2px; font-size:16px; font-weight:800; color:var(--text);">
-       <span>💰 +${goldReward} oro</span>
-       <span>💎 +${crystalReward} diamante</span>
-     </div>`,
-    {icon:"🎁", title:"¡Bono diario!", confirmLabel:"¡Genial!"}
+    `Por entrar a jugar hoy, recibiste:${rewardHtml}`,
+    {icon:"🎁", title:"¡Bono diario!", confirmLabel:"Aceptar"}
   );
+}
+function updateDailyCalendarButton(){
+  const dot = $("dailyCalendarNotifDot");
+  if(!dot) return;
+  dot.classList.toggle("show", player.lastDailyBonus !== localDateKey());
+}
+function renderDailyCalendar(){
+  const grid = $("dailyCalGrid");
+  if(!grid) return;
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const todayNum = now.getDate();
+  const claimed = new Set(player.dailyCalendarClaimedDays || []);
+  const subtitle = $("dailyCalSubtitle");
+  if(subtitle){
+    const monthLabel = now.toLocaleDateString("es-ES", {month:"long", year:"numeric"});
+    subtitle.textContent = monthLabel.charAt(0).toUpperCase()+monthLabel.slice(1);
+  }
+  grid.innerHTML = "";
+  let todayEl = null;
+  for(let day=1; day<=daysInMonth; day++){
+    const dateKey = `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    const reward = dailyCalReward(day);
+    const isClaimed = claimed.has(dateKey);
+    const isToday = day === todayNum;
+    const isPast = day < todayNum;
+    const cell = document.createElement("div");
+    let stateClass = "daily-cal-day--future";
+    if(isClaimed) stateClass = "daily-cal-day--claimed";
+    else if(isToday) stateClass = "daily-cal-day--today";
+    else if(isPast) stateClass = "daily-cal-day--missed";
+    // el tramo de línea hacia este día se pinta dorado apenas se alcanza la fecha en el calendario,
+    // reclamado o no — así la línea avanza sola con el paso de los días, no con lo que reclamás.
+    cell.className = "daily-cal-day " + stateClass + (day <= todayNum ? " daily-cal-day--reached" : "")
+      + (reward.type==="equip" ? " daily-cal-day--gear" : "");
+    cell.innerHTML = `<div class="dcd-line"></div><div class="dcd-dot"><span class="dcd-icon">${reward.icon}</span></div><span class="dcd-num">${day}</span>`;
+    cell.title = reward.label;
+    if(isToday && !isClaimed) cell.onclick = ()=> checkDailyBonus();
+    if(isToday) todayEl = cell;
+    grid.appendChild(cell);
+  }
+  // desliza el timeline para dejar hoy cerca del borde izquierdo, así los próximos días quedan a
+  // la derecha para descubrirlos deslizando (pedido explícito, en vez de una grilla fija del mes).
+  if(todayEl){
+    requestAnimationFrame(()=>{ grid.scrollLeft = Math.max(0, todayEl.offsetLeft - 30); });
+  }
 }
 
 /* ============================================================
@@ -5185,6 +5313,7 @@ async function saveGame(){
       worldEvents: player.worldEvents||[], lastEventResolvedAt: player.lastEventResolvedAt||null,
       lastRegionId: player.lastRegionId||null,
       lastDailyBonus: player.lastDailyBonus || null,
+      dailyCalendarClaimedDays: player.dailyCalendarClaimedDays || [],
       lastShareDay: player.lastShareDay || null,
       totalDistanceM: player.totalDistanceM || 0,
       medals: player.medals || [],
@@ -5333,7 +5462,7 @@ function freshAccountData(name){
     forgeCraft: null, equipUpgrade: null,
     shadowWolfNightKey: null, shadowWolfEscapes: 0,
     dynamicEntities: [], worldEvents: [], lastEventResolvedAt: null, lastRegionId: null,
-    lastDailyBonus: null, lastShareDay: null, totalDistanceM: 0, medals: [], zoneDistanceM: {},
+    lastDailyBonus: null, dailyCalendarClaimedDays: [], lastShareDay: null, totalDistanceM: 0, medals: [], zoneDistanceM: {},
     parkWeaponsObtained: [], parkGuardianState: {}, visitedZones: [], pets: [],
     everGotCaptureCard: false, everFoundGemAqua: false, everFoundGemFauto: false,
     redeemedCodes: [], coliseumStats: null, ownedTowers: null,
@@ -5404,6 +5533,7 @@ function rebuildPlayer(accountData, heroData){
     attributePoints: heroData.attributePoints||0,
     attrSpent: heroData.attrSpent || {maxHp:0,maxMp:0,atk:0,matk:0,def:0,spd:0},
     lastDailyBonus: accountData.lastDailyBonus || null,
+    dailyCalendarClaimedDays: accountData.dailyCalendarClaimedDays || [],
     lastShareDay: accountData.lastShareDay || null,
     totalDistanceM: accountData.totalDistanceM || 0,
     medals: accountData.medals || [],
@@ -5553,10 +5683,9 @@ async function initContinueScreen(){
       refreshHud();
       if(activeQuest && !activeQuest.itemObtained) drawQuestRoute();
       renderQuestTracker();
-      // Igual que en btnStart: si la bienvenida todavía no se vio, el bono diario espera a que
-      // termine esa cadena completa (cinemática + Noe + tutorial de batalla + despedida — ver
-      // closeWorldIntro) en vez de salir ya mismo, para no adelantarse a Noe.
-      if(player.seenWorldIntro) checkDailyBonus();
+      // El bono diario ya no se auto-reclama solo — ver checkDailyBonus/btnDailyCalendar. Acá solo
+      // se refresca el puntito rojo del botón.
+      updateDailyCalendarButton();
       await dailyMissionsService.init();
       gameEventBus.emit({ type: "CHARACTER_SELECTED", payload: { amount: 1 }, dedupeKey: key });
       updateDailyMissionsButton();
@@ -11650,7 +11779,7 @@ function maybeDoPetTurn(afterCallback){
     const btn = document.createElement("button");
     btn.className = "move-btn";
     btn.style.borderColor = "#4fd67a";
-    btn.innerHTML = `<div class="mname" style="color:#4fd67a;">${mv.name}</div><div class="mmeta">Poder ${mv.power}</div>`;
+    btn.innerHTML = `<div class="mname" style="color:#4fd67a;"><span class="move-icon">${moveIcon(mv)}</span>${mv.name}</div><div class="mmeta">Poder ${mv.power}</div>`;
     btn.onclick = ()=> resolvePetMove(pet, mv, afterCallback);
     grid.appendChild(btn);
   });
@@ -12955,7 +13084,7 @@ function renderMoveGrid(){
     // hasta que recuperes maná para volver a ver tus movimientos normales.
     const basicBtn = document.createElement("button");
     basicBtn.className = "move-btn";
-    basicBtn.innerHTML = `<div class="mname">👊 Golpe Básico</div><div class="mmeta">Poder 0.85 · MP 0 · no tienes maná para tus otros movimientos</div>`;
+    basicBtn.innerHTML = `<div class="mname"><span class="move-icon">👊</span>Golpe Básico</div><div class="mmeta">Poder 0.85 · MP 0 · no tienes maná para tus otros movimientos</div>`;
     basicBtn.onclick = ()=> battleState.isPack ? packPlayerAction(BASIC_ATTACK_MOVE) : playerAction(BASIC_ATTACK_MOVE);
     grid.appendChild(basicBtn);
   } else {
@@ -12965,7 +13094,7 @@ function renderMoveGrid(){
       const canAfford = canAffordMove(mv, player.mp, player.hp, player.maxHp);
       btn.disabled = !canAfford;
       const costLabel = mv.costsAllMp ? `<span class="move-mp-cost">TODO tu maná</span>` : `<span class="move-mp-cost">MP ${mv.cost||0}</span>`;
-      btn.innerHTML = `<div class="mname">${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
+      btn.innerHTML = `<div class="mname"><span class="move-icon">${moveIcon(mv)}</span>${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
       btn.onclick = ()=> battleState.isPack ? packPlayerAction(mv) : playerAction(mv);
       attachMoveTooltip(btn, mv);
       grid.appendChild(btn);
@@ -13454,10 +13583,9 @@ function closeWorldIntro(){
   if(worldIntroMode === "resourceTip") return; // solo fue el tip de recolección (ver showNoeResourceTip) — el flag ya se guardó antes de mostrarlo
   if(worldIntroMode === "gemTip") return; // solo fue el comentario sobre la gema (ver showNoeGemTip) — nada más que cerrar
   if(worldIntroMode === "farewell"){
-    // Pedido explícito: recién ACÁ (después de la cinemática + bienvenida + tutorial de batalla)
-    // sale el bono diario — ver el guard `if(player.seenWorldIntro)` en btnStart, que se salta
-    // esto el primer día porque a esa altura seenWorldIntro todavía era false.
-    checkDailyBonus();
+    // El bono diario ya no se auto-reclama al terminar la bienvenida — solo se refresca el
+    // puntito rojo del botón del calendario, el jugador lo reclama entrando y tocando el día de hoy.
+    updateDailyCalendarButton();
     return;
   }
   if(worldIntroMode === "tutorialRevive"){
@@ -17763,6 +17891,33 @@ function moveUtilityScore(mv){
   return avgDmg - (mv.cost||0)*3;
 }
 
+/** Pequeño emoji representativo del movimiento (arma/elemento), para mostrar a la izquierda de
+ *  su nombre en la grilla de combate. Busca palabras clave en id+name; si no matchea nada, cae a
+ *  un ícono genérico según mv.type. */
+const MOVE_ICON_RULES = [
+  [/fuego|incendi|llama|meteor/, "🔥"],
+  [/hielo|helad|congel/, "❄️"],
+  [/rayo|trueno|electric|tormenta/, "⚡"],
+  [/veneno|toxic/, "☠️"],
+  [/sangre|drenar/, "🩸"],
+  [/luz|sanad|bendicion/, "💚"],
+  [/escudo|muro|arcan/, "🛡️"],
+  [/flecha|disparo|tiro|viento/, "🏹"],
+  [/golpe|hachazo|embestida|sismic|terremoto/, "💥"],
+  [/grito|furia|ira/, "😡"],
+  [/explosion|cataclismo|singularidad|vacio/, "🌀"],
+  [/ejecucion|sentencia|verdugo|ocaso/, "💀"],
+];
+function moveIcon(mv){
+  const text = ((mv.id||"") + " " + (mv.name||"")).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
+  for(const [re, emoji] of MOVE_ICON_RULES){ if(re.test(text)) return emoji; }
+  if(mv.type==="magic") return "🔮";
+  if(mv.type==="buff") return "🛡️";
+  if(mv.type==="debuff") return "💢";
+  if(mv.type==="heal") return "💚";
+  return "⚔️";
+}
+
 /** Ícono para distinguir de un vistazo qué movimientos afectan a varios objetivos. */
 function moveTargetIcon(mv){
   let icon = "";
@@ -18517,7 +18672,7 @@ function renderPvpMoveGrid(){
     const canAfford = canAffordMove(mv, pvp.mp[pvp.role], pvp.hp[pvp.role], maxHpFor(pvp.role));
     btn.disabled = !canAfford;
     const costLabel = mv.costsAllMp ? `<span class="move-mp-cost">TODO tu maná</span>` : `<span class="move-mp-cost">MP ${mv.cost||0}</span>`;
-    btn.innerHTML = `<div class="mname">${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
+    btn.innerHTML = `<div class="mname"><span class="move-icon">${moveIcon(mv)}</span>${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
     btn.onclick = ()=> pvpPlayerAction(mv);
     attachMoveTooltip(btn, mv);
     grid.appendChild(btn);
@@ -21417,7 +21572,7 @@ function renderGroupMoveGrid(){
     const canAfford = canAffordMove(mv, me.mp, me.hp, me.maxHp);
     btn.disabled = !canAfford;
     const costLabel = mv.costsAllMp ? `<span class="move-mp-cost">TODO tu maná</span>` : `<span class="move-mp-cost">MP ${mv.cost||0}</span>`;
-    btn.innerHTML = `<div class="mname">${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
+    btn.innerHTML = `<div class="mname"><span class="move-icon">${moveIcon(mv)}</span>${mv.name}${moveTargetIcon(mv)}</div><div class="mmeta">${moveInfoLine(mv)} · ${costLabel}</div>`;
     btn.onclick = ()=> groupPlayerAction(mv);
     attachMoveTooltip(btn, mv);
     grid.appendChild(btn);
