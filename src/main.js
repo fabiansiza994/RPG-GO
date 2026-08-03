@@ -10022,10 +10022,17 @@ function bossDifficultyTier(bossLevel){
 
 function tryEngage(mon){
   if(pvp || groupBattle){ toast("Estás en un duelo — termínalo antes de pelear contra monstruos."); return; }
-  // Mientras la flecha de bienvenida sigue señalando un enemigo fácil (ver worldIntroArrowMonId/
-  // pointArrowAtWeakEnemy), intentar pelear contra otro de MAYOR nivel no arranca el combate — Noe
-  // avisa en su lugar. No aplica a jefes (ya tienen su propia advertencia en openBossInfoModal).
-  if(worldIntroArrowMonId && !mon.isBoss && mon.level > player.level){
+  // Pedido explícito: mientras Noe todavía no señaló ningún enemigo puntual (cuadro de bienvenida
+  // recién abierto, sin flecha todavía — ver worldIntroTutorialActive) no se puede iniciar NINGÚN
+  // combate por las suyas. No aplica a jefes (tienen su propio flujo vía openBossInfoModal).
+  if(!mon.isBoss && worldIntroTutorialActive){
+    toast("Espera a que Noe termine de hablar.");
+    return;
+  }
+  // Mientras la flecha de bienvenida sigue señalando a un enemigo puntual (ver worldIntroArrowMonId/
+  // pointArrowAtWeakEnemy), intentar pelear contra CUALQUIER OTRO no arranca el combate — Noe avisa
+  // en su lugar, aunque el otro sea igual o más débil. No aplica a jefes.
+  if(worldIntroArrowMonId && !mon.isBoss && mon.id !== worldIntroArrowMonId){
     showNoeChooseWiselyWarning();
     return;
   }
@@ -10102,6 +10109,11 @@ function checkAmbush(){
   let nearest = null, nearestDist = Infinity;
   for(const m of monsters){
     if(!isAmbushEligible(m)) continue;
+    // Mismo criterio que tryEngage: mientras dure el tutorial de bienvenida, ningún otro enemigo
+    // puede emboscar por su cuenta — ni antes de que la flecha señale a uno puntual, ni después
+    // (solo ESE puede iniciar combate, el resto no emboscan aunque el jugador pase cerca).
+    if(worldIntroTutorialActive) continue;
+    if(worldIntroArrowMonId && m.id !== worldIntroArrowMonId) continue;
     const d = distMeters(playerLatLng, m);
     if(d <= 25 && d < nearestDist){ nearest = m; nearestDist = d; }
   }
@@ -13344,16 +13356,26 @@ const NOE_WELCOME_TEXT = "¡Por fin has despertado! Ten cuidado a tu alrededor, 
 const NOE_CHOOSE_WISELY_TEXT = "Recuerda elegir bien tus batallas.";
 const NOE_TUTORIAL_REVIVE_TEXT = "Vuelve a intentarlo, recuerda atacar.";
 const NOE_FAREWELL_TEXT = "Tu ciudad esconde misterios en cada calle... ve con cuidado en tu aventura, nos veremos luego.";
-const NOE_RESOURCE_TIP_TEXT = "Puedes recolectar recursos para fabricar armas. Para esto debes comprar un Pico en la tienda. En la tienda también hay objetos que puedes comprar con esos recursos, y en la Forja hay recetas que puedes usar para conseguir armas muy poderosas.";
+// Pedido explícito: es muy largo para un solo cuadro — se muestra hasta el primer punto y el
+// resto en dos partes más, avanzando de a una con cada toque (ver worldIntroQueue en closeWorldIntro).
+const NOE_RESOURCE_TIP_TEXTS = [
+  "Puedes recolectar recursos para fabricar armas.",
+  "Para esto debes comprar un Pico en la tienda.",
+  "En la tienda también hay objetos que puedes comprar con esos recursos, y en la Forja hay recetas que puedes usar para conseguir armas muy poderosas.",
+];
 const NOE_GEM_TIP_TEXT = "Esa gema es muy especial... deberías visitar la Forja para ver qué podemos hacer. Seguramente algo interesante puede construirse.";
 const NOE_TYPE_SPEED_MS = 22;
 
 let worldIntroTypeTimer = null;
 let worldIntroCurrentText = "";
 let worldIntroMode = "welcome"; // "welcome" | "warning" | "farewell" | "tutorialRevive" | "resourceTip" — decide qué pasa al cerrar (ver closeWorldIntro)
+let worldIntroQueue = null; // pedido explícito: partes restantes de un texto largo (ver NOE_RESOURCE_TIP_TEXTS) — cada toque avanza una hasta que se acaba
+let worldIntroQueueIndex = 0;
 
 /** Efecto de máquina de escribir — pedido explícito: el texto de Noe no debe salir todo de golpe. */
 function typeNoeText(text){
+  worldIntroQueue = null; // por si el cuadro anterior era de varias partes (ver showNoeResourceTip)
+  worldIntroQueueIndex = 0;
   worldIntroCurrentText = text;
   const el = $("worldIntroText");
   clearInterval(worldIntroTypeTimer);
@@ -13382,6 +13404,7 @@ function showNoeWelcomeDialogue(){
   if(!player || player.seenWorldIntro) return;
   $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
   worldIntroMode = "welcome";
+  worldIntroTutorialActive = true; // pedido explícito: bloquea CUALQUIER combate hasta que la flecha señale a un enemigo puntual (ver tryEngage)
   typeNoeText(NOE_WELCOME_TEXT);
   $("worldIntroOverlay").classList.remove("hidden");
 }
@@ -13420,6 +13443,12 @@ function closeWorldIntro(){
     $("worldIntroText").textContent = worldIntroCurrentText;
     return;
   }
+  if(worldIntroQueue && worldIntroQueueIndex < worldIntroQueue.length - 1){
+    worldIntroQueueIndex++;
+    typeNoeText(worldIntroQueue[worldIntroQueueIndex]);
+    return;
+  }
+  worldIntroQueue = null;
   $("worldIntroOverlay").classList.add("hidden");
   if(worldIntroMode === "warning") return; // solo fue un aviso (ver showNoeChooseWiselyWarning) — no toca el flag ni vuelve a buscar enemigo
   if(worldIntroMode === "resourceTip") return; // solo fue el tip de recolección (ver showNoeResourceTip) — el flag ya se guardó antes de mostrarlo
@@ -13460,7 +13489,9 @@ function showNoeChooseWiselyWarning(){
 function showNoeResourceTip(){
   worldIntroMode = "resourceTip";
   $("worldIntroPortrait").src = NOE_PORTRAIT_PATH;
-  typeNoeText(NOE_RESOURCE_TIP_TEXT);
+  typeNoeText(NOE_RESOURCE_TIP_TEXTS[0]);
+  worldIntroQueue = NOE_RESOURCE_TIP_TEXTS; // el resto sale de a una parte por toque (ver closeWorldIntro)
+  worldIntroQueueIndex = 0;
   $("worldIntroOverlay").classList.remove("hidden");
 }
 /** Pedido explícito: al cerrar la pantalla de victoria donde dropeó una gema elemental (Aqua o
@@ -13475,6 +13506,12 @@ function showNoeGemTip(){
 let worldIntroArrowMonId = null;
 let worldIntroArrowTickTimer = null;
 let worldIntroArrowRetryTimer = null;
+// Pedido explícito: true desde que se muestra el cuadro de bienvenida hasta que la flecha logra
+// señalar a un enemigo puntual — mientras esté activo, tryEngage() bloquea CUALQUIER combate (el
+// mapa de atrás queda clickeable a propósito, ver #worldIntroOverlay en main.css, así que sin este
+// guard un enemigo que spawneó pegado a otro rompía el tutorial). Una vez señalado, el bloqueo pasa
+// a ser específico vía worldIntroArrowMonId (solo ESE enemigo se puede pelear).
+let worldIntroTutorialActive = false;
 /** Busca el enemigo real (no NPC/jefe, ver isAmbushEligible) más cercano de nivel <= al del
  *  jugador. Los monstruos iniciales de spawnMonsters() ya deberían estar puestos para cuando el
  *  jugador cierra el cuadro (initMap los crea de entrada, antes del flyTo), pero por si ninguno
@@ -13483,7 +13520,7 @@ function pointArrowAtWeakEnemy(){
   clearInterval(worldIntroArrowRetryTimer);
   let attempts = 0;
   const tryPick = ()=>{
-    if(battleState || pvp || groupBattle) return true; // ya entró en combate por su cuenta, no hace falta señalar nada
+    if(battleState || pvp || groupBattle){ worldIntroTutorialActive = false; return true; } // ya entró en combate por su cuenta, no hace falta señalar nada
     const candidates = monsters.filter(m=> isAmbushEligible(m) && m.level <= player.level);
     if(!candidates.length) return false;
     candidates.sort((a,b)=> distMeters(playerLatLng,a) - distMeters(playerLatLng,b));
@@ -13493,11 +13530,15 @@ function pointArrowAtWeakEnemy(){
   if(tryPick()) return;
   worldIntroArrowRetryTimer = setInterval(()=>{
     attempts++;
-    if(tryPick() || attempts>=20) clearInterval(worldIntroArrowRetryTimer);
+    if(tryPick() || attempts>=20){
+      clearInterval(worldIntroArrowRetryTimer);
+      worldIntroTutorialActive = false; // pedido explícito: si nunca apareció un enemigo elegible, no dejar el combate bloqueado para siempre
+    }
   }, 1000);
 }
 function showWorldIntroArrowOnMonster(mon){
   worldIntroArrowMonId = mon.id;
+  worldIntroTutorialActive = false; // ya hay un objetivo puntual — de acá en más manda el guard por id en tryEngage
   $("worldIntroArrow").classList.remove("hidden");
   updateWorldIntroArrowPosition();
   clearInterval(worldIntroArrowTickTimer);
